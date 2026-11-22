@@ -251,7 +251,11 @@ SQL
 P -q -f "$MIG_COTA" >/dev/null
 P -q -f "$MIG" >/dev/null 2>"$TMP/mig.err" || { echo "INFRA: migration falhou"; cat "$TMP/mig.err"; exit 1; }
 # idempotência: reaplicar não pode falhar
-P -q -f "$MIG" >/dev/null 2>"$TMP/mig2.err" && ok "A0 migration reaplicada sem erro (idempotente)" || { bad "A0 reaplicar a migration falhou"; head -3 "$TMP/mig2.err"; }
+if P -q -f "$MIG" >/dev/null 2>"$TMP/mig2.err"; then
+  ok "A0 migration reaplicada sem erro (idempotente)"
+else
+  bad "A0 reaplicar a migration falhou"; head -3 "$TMP/mig2.err"
+fi
 
 # ── Fixtures + helpers de tempo (só no banco de prova) ──
 P -q <<'SQL' >/dev/null
@@ -345,7 +349,7 @@ eq "C2 nova vez na mesma hora: negada" "$(E "SELECT motivo FROM omie_pv_proxima_
 P -q -c "SELECT t_passar_vez(61)"
 EX2="$(E "SELECT execucao_id FROM omie_pv_execucao_iniciar('oben', repeat('a',32))")"
 P -q -c "UPDATE omie_pv_execucao SET identidade_confirmada=true WHERE id=$EX2"
-P -q -c "UPDATE omie_pv_conferencia SET ultima_ausencia_registrada_em=now() - interval '1 minute' WHERE omie_pedido_id=2001"
+P -q -c "UPDATE omie_pv_conferencia SET ultima_ausencia_registrada_em=now() - interval '1 minute' WHERE omie_pedido_id=2001 AND ausencias_afirmadas > 0"
 # a seleção pede 1h; força X como candidato para provar a régua da RPC de registro
 LOGC="$(E "INSERT INTO omie_pv_consulta_log (execucao_id, account, omie_pedido_id) VALUES ($EX2,'oben',2001) RETURNING id")"
 eq "C3 2ª ausência iniciada < 1h depois da 1ª resposta NÃO conta" "$(E "SELECT omie_pv_consulta_registrar($LOGC,'ausente','{}')->>'efeito'")" "ausencia_cedo_demais"
@@ -377,12 +381,12 @@ eq "C8 teto de erros: ≥ 4 tentativas cobradas em 24h → sem vez" "$(E "SELECT
 L1="$(E "SELECT max(id) FROM omie_pv_consulta_log")"
 eq "C9 registro idempotente pelo log_id" "$(E "SELECT omie_pv_consulta_registrar($L1,'ausente','{}')->>'efeito'")" "ja_registrada"
 eq "C10 'existe' na consulta zera e resolve" \
-  "$(P -q -c "SELECT t_passar(24*60+1)" >/dev/null; E "SELECT (t_consultar(t_ciclo('oben', $PRES),'existe'))->>'efeito'")" "presenca"
+  "$(P -q -t -c "SELECT t_passar(24*60+1)" >/dev/null; E "SELECT (t_consultar(t_ciclo('oben', $PRES),'existe'))->>'efeito'")" "presenca"
 eq "C10b Y resolvido" "$(E "SELECT ausencias_afirmadas||'/'||(resolvido_em IS NOT NULL) FROM omie_pv_conferencia WHERE omie_pedido_id=2002")" "0/true"
 
 echo "── B. baixa"
 P -q -c "UPDATE omie_pv_conferencia SET contradicao=NULL, ausencias_afirmadas=0, primeira_ausencia_afirmada_em=NULL, ultima_ausencia_afirmada_em=NULL, ultima_ausencia_registrada_em=NULL, primeira_ausencia_log_id=NULL WHERE omie_pedido_id=2001 AND aplicado_em IS NULL"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
 eq "B0 X: 1ª ausência" "$(E "SELECT (t_consultar($EX,'ausente'))->>'pid'")" "2001"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
@@ -395,7 +399,7 @@ eq "B4b ledger: aplicado com prova de 2 consultas e valor da linha do KPI" "$(E 
 # Z = 2003 com reserva DIVERGENTE: o par aponta Z, mas sales_order_id aponta para um pedido de OUTRO PV
 P -q -c "INSERT INTO sales_orders (id,account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('00000000-0000-0000-0000-00000000c003','oben','importado',200,2003,'omie_oben_2003',t_seg(),now()-interval '3 days')"
 P -q -c "INSERT INTO estoque_reservas (pool,omie_codigo_produto,quantidade,checkout_id,sales_order_id,status,omie_pedido_id,omie_account,created_at) VALUES ('oben',778,1,'00000000-0000-0000-0000-0000000000c3',(SELECT id FROM sales_orders WHERE omie_pedido_id=1001),'ativa',2003,'oben',now()-interval '3 days')"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
 eq "B5 reserva divergente (sales_order_id de outro PV) → revisão, nada liberado" "$(E "SELECT t_consultar($EX,'ausente')->>'motivo'")" "reserva_divergente"
@@ -403,14 +407,14 @@ eq "B5b reserva de Z segue ativa e Z vivo" "$(E "SELECT (SELECT status FROM esto
 
 # W = 2004 (R$ 2.500 > teto de R$ 2.000 por PV na Oben)
 P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('oben','importado',2500,2004,'omie_oben_2004',t_seg(),now()-interval '3 days')"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
 eq "B6 PV acima do teto por PV → revisão" "$(E "SELECT t_consultar($EX,'ausente')->>'motivo'")" "teto_valor_pv"
 
 # Teto de 2 PVs/24h: V1=2005, V2=2006, V3=2007 baixam em sequência no mesmo dia (já há a baixa de X? não: X foi há > 24h)
 P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) SELECT 'oben','importado',100,p,'omie_oben_'||p,t_seg(),now()-interval '3 days' FROM generate_series(2005,2007) p"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 for _ in 1 2 3 4 5 6; do
   EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
   P -q -c "SELECT t_passar_vez(24*60)" >/dev/null   # libera o orçamento de ERROS, não o de baixas (aplicado_em não anda)
@@ -421,10 +425,10 @@ eq "B7 teto de 2 baixas/24h na conta: a 3ª fica adiada" \
 echo "── C11. linha vira faturado ENTRE as ausências"
 P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('oben','importado',100,2008,'omie_oben_2008',t_seg(),now()-interval '3 days')"
 P -q -c "UPDATE omie_pv_conferencia SET contradicao='parado_no_teste' WHERE omie_pedido_id BETWEEN 2005 AND 2007 AND aplicado_em IS NULL"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
 P -q -c "UPDATE sales_orders SET status='faturado' WHERE omie_pedido_id=2008"
-P -q -c "SELECT t_passar(61)"
+P -q -t -c "SELECT t_passar(61)"
 EX2="$(E "SELECT execucao_id FROM omie_pv_execucao_iniciar('oben', repeat('a',32))")"
 P -q -c "UPDATE omie_pv_execucao SET identidade_confirmada=true WHERE id=$EX2"
 eq "C11 faturado na hora da baixa → revisão, linha viva" "$(E "SELECT (t_consultar($EX2,'ausente'))->>'motivo'")/$(E "SELECT count(*) FROM sales_orders WHERE omie_pedido_id=2008 AND deleted_at IS NULL")" "linha_terminal/1"
@@ -446,28 +450,28 @@ echo "── S. concorrência (2 sessões)"
 # linha, espera o commit do sync e RELÊ: tem de ver a presença e não baixar.
 P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('oben','importado',100,2009,'omie_oben_2009',t_seg(),now()-interval '3 days')"
 P -q -c "UPDATE omie_pv_conferencia SET contradicao='parado_no_teste' WHERE omie_pedido_id=2008"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
 ( P -q -c "BEGIN; UPDATE sales_orders SET omie_reconciliado_em = now() + interval '1 minute' WHERE omie_pedido_id=2009; SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 ) &
 SYNC=$!
 sleep 0.5
 R="$(E "SELECT t_consultar($EX,'ausente')->>'efeito'")"
-wait $SYNC
+wait "$SYNC" || true
 eq "S1 releitura do sync em voo durante a baixa → presença, sem baixa" "$R/$(E "SELECT count(*) FROM sales_orders WHERE omie_pedido_id=2009 AND deleted_at IS NULL")" "presenca_do_sync/1"
 # S2: o front começa o rollback (deleted_at=NULL) de uma linha OCULTA de outro PV baixado enquanto a baixa corre — e
 # a baixa termina primeiro: o rollback, ao ser liberado, encontra a marca durável.
 P -q -c "INSERT INTO sales_orders (id,account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('00000000-0000-0000-0000-00000000c010','oben','importado',100,2010,'omie_oben_2010',t_seg(),now()-interval '3 days')"
 P -q -c "UPDATE omie_pv_conferencia SET contradicao='parado_no_teste' WHERE omie_pedido_id=2009"
-P -q -c "SELECT t_passar(24*60+1)"
+P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
-LOGS2="$(E "SELECT log_id FROM omie_pv_proxima_consulta($EX)")"
+LOGS2="$(E "SELECT coalesce(log_id::text, 'NULL') FROM omie_pv_proxima_consulta($EX)")"
 ( P -q -c "BEGIN; SELECT omie_pv_consulta_registrar($LOGS2,'ausente','{}'); SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 ) &
 BAIXA=$!
 sleep 0.7
 P -q -c "UPDATE sales_orders SET deleted_at=NULL WHERE id='00000000-0000-0000-0000-00000000c010'" >/dev/null
-wait $BAIXA
+wait "$BAIXA" || true
 eq "S2 rollback do front concorrente com a baixa: linha fica oculta" "$(E "SELECT (deleted_at IS NOT NULL)::text FROM sales_orders WHERE id='00000000-0000-0000-0000-00000000c010'")/$(E "SELECT (aplicado_em IS NOT NULL)::text FROM omie_pv_conferencia WHERE omie_pedido_id=2010")" "true/true"
 
 echo "── A. ACL / RLS / histórico"

@@ -144,23 +144,44 @@ CREATE TABLE IF NOT EXISTS public.omie_pv_baixa_reserva (
 CREATE INDEX IF NOT EXISTS omie_pv_baixa_reserva_sku_em ON public.omie_pv_baixa_reserva (pool, sku, aplicado_em DESC);
 
 -- RLS: staff lê; ninguém além das RPCs (SECURITY DEFINER) escreve. A identidade não é lida nem por staff.
-DO $rls$
-DECLARE t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['omie_pv_conferencia', 'omie_pv_identidade', 'omie_pv_execucao', 'omie_pv_triagem_cursor',
-                           'omie_pv_triagem_log', 'omie_pv_consulta_log', 'omie_pv_baixa_reserva'] LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated, service_role', t);
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_select_staff', t);
-    IF t <> 'omie_pv_identidade' THEN
-      EXECUTE format('GRANT SELECT ON TABLE public.%I TO authenticated, service_role', t);
-      EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING ('
-                     '(SELECT public.has_role(auth.uid(), ''employee''::public.app_role)) '
-                     'OR (SELECT public.has_role(auth.uid(), ''master''::public.app_role)))', t || '_select_staff', t);
-    END IF;
-  END LOOP;
-END
-$rls$;
+ALTER TABLE public.omie_pv_conferencia ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_conferencia FROM PUBLIC, anon, authenticated, service_role;
+ALTER TABLE public.omie_pv_execucao ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_execucao FROM PUBLIC, anon, authenticated, service_role;
+ALTER TABLE public.omie_pv_triagem_cursor ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_triagem_cursor FROM PUBLIC, anon, authenticated, service_role;
+ALTER TABLE public.omie_pv_triagem_log ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_triagem_log FROM PUBLIC, anon, authenticated, service_role;
+ALTER TABLE public.omie_pv_consulta_log ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_consulta_log FROM PUBLIC, anon, authenticated, service_role;
+ALTER TABLE public.omie_pv_baixa_reserva ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_baixa_reserva FROM PUBLIC, anon, authenticated, service_role;
+ALTER TABLE public.omie_pv_identidade ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_identidade FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE public.omie_pv_conferencia TO authenticated, service_role;
+DROP POLICY IF EXISTS omie_pv_conferencia_select_staff ON public.omie_pv_conferencia;
+CREATE POLICY omie_pv_conferencia_select_staff ON public.omie_pv_conferencia FOR SELECT TO authenticated USING (
+  (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+GRANT SELECT ON TABLE public.omie_pv_execucao TO authenticated, service_role;
+DROP POLICY IF EXISTS omie_pv_execucao_select_staff ON public.omie_pv_execucao;
+CREATE POLICY omie_pv_execucao_select_staff ON public.omie_pv_execucao FOR SELECT TO authenticated USING (
+  (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+GRANT SELECT ON TABLE public.omie_pv_triagem_cursor TO authenticated, service_role;
+DROP POLICY IF EXISTS omie_pv_triagem_cursor_select_staff ON public.omie_pv_triagem_cursor;
+CREATE POLICY omie_pv_triagem_cursor_select_staff ON public.omie_pv_triagem_cursor FOR SELECT TO authenticated USING (
+  (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+GRANT SELECT ON TABLE public.omie_pv_triagem_log TO authenticated, service_role;
+DROP POLICY IF EXISTS omie_pv_triagem_log_select_staff ON public.omie_pv_triagem_log;
+CREATE POLICY omie_pv_triagem_log_select_staff ON public.omie_pv_triagem_log FOR SELECT TO authenticated USING (
+  (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+GRANT SELECT ON TABLE public.omie_pv_consulta_log TO authenticated, service_role;
+DROP POLICY IF EXISTS omie_pv_consulta_log_select_staff ON public.omie_pv_consulta_log;
+CREATE POLICY omie_pv_consulta_log_select_staff ON public.omie_pv_consulta_log FOR SELECT TO authenticated USING (
+  (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+GRANT SELECT ON TABLE public.omie_pv_baixa_reserva TO authenticated, service_role;
+DROP POLICY IF EXISTS omie_pv_baixa_reserva_select_staff ON public.omie_pv_baixa_reserva;
+CREATE POLICY omie_pv_baixa_reserva_select_staff ON public.omie_pv_baixa_reserva FOR SELECT TO authenticated USING (
+  (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
 
 -- ── 3. execução: identidade, cadência e orçamento de listagem ─────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.omie_pv_execucao_iniciar(p_account text, p_app_hash text)
@@ -903,6 +924,11 @@ BEGIN
       RAISE EXCEPTION 'A3 FALHOU: % legível por anon ou gravável fora das RPCs', t;
     END IF;
   END LOOP;
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename LIKE 'omie\_pv\_%'
+        AND policyname = tablename || '_select_staff' AND cmd = 'SELECT') <> 6
+     OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'omie_pv_identidade') THEN
+    RAISE EXCEPTION 'A3c FALHOU: policies de leitura de staff ≠ 6 (ou a identidade ganhou policy)';
+  END IF;
   IF has_table_privilege('authenticated', 'public.omie_pv_identidade', 'SELECT') THEN
     RAISE EXCEPTION 'A3b FALHOU: omie_pv_identidade legível por authenticated';
   END IF;

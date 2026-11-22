@@ -33,10 +33,10 @@ BEGIN
    WHERE account = 'oben'
      AND omie_pedido_id IN (12049288140, 12121835342, 12121839465, 12122021156, 12136268451,
                             12156020937, 12158135460, 12169921125, 12172563575, 12172847394);
-  IF v_vivas <> 0 THEN
+  IF v_vivas IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'P1_FALHOU: % linha(s) desses PVs seguem sem deleted_at (status fora de importado/separacao/enviado?)', v_vivas;
   END IF;
-  IF v_apagadas <> 11 THEN
+  IF v_apagadas IS DISTINCT FROM 11 THEN
     RAISE EXCEPTION 'P2_FALHOU: esperado 11 linhas apagadas (10 importadas + 1 do app), achei %', v_apagadas;
   END IF;
   IF EXISTS (SELECT 1 FROM public.estoque_reservas
