@@ -153,3 +153,21 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });
 });
+
+// ── PR 2.2, 4ª rodada do Codex: a pergunta "é o mesmo pedido?" fica pendente NA ABA ──
+describe('useUnifiedOrder — pergunta de outra cópia barra o envio até a escolha', () => {
+  it('no mesmo contexto, o envio mostra a pergunta e PARA antes da reserva', () => {
+    const corpo = corpoDo('submitOrder');
+    const barra = corpo.indexOf('if (perguntaAindaVale(perguntaOutraCopiaRef.current, contextoAgora)) {\n          mostrarPerguntaOutraCopia(perguntaOutraCopiaRef.current);\n          return;\n        }');
+    expect(barra).toBeGreaterThan(-1);
+    expect(barra).toBeLessThan(corpo.indexOf('reservarEnvio(arm, {'));
+    expect(corpo).toContain('perguntaOutraCopiaRef.current = pergunta;\n        mostrarPerguntaOutraCopia(pergunta);\n        return;');
+  });
+  it('as duas ações conferem o contexto NO CLIQUE antes de agir', () => {
+    const ini = hook.indexOf('const mostrarPerguntaOutraCopia = useCallback(');
+    const corpo = hook.slice(ini, hook.indexOf('\n  }, [definirNonce]);', ini));
+    expect(corpo.match(/if \(!aindaVale\(\)\) return;/g)?.length).toBe(2);
+    expect(corpo).toContain("label: 'É o mesmo pedido'");
+    expect(corpo).toContain("label: 'É outro pedido'");
+  });
+});
