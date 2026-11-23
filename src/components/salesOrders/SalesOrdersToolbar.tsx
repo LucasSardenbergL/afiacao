@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Package, Printer, Search, Loader2 } from 'lucide-react';
+import { Plus, Package, Printer, Search, Loader2, UserRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatPrecoOuAusente } from '@/lib/format';
 import { type Account } from './types';
-import type { FiltroStatusFeed, OrdemFeed, PeriodoFeed } from './feed';
+import { textoValorRecorte, type FiltroStatusFeed, type OrdemFeed, type PeriodoFeed, type ValorRecorte } from './feed';
 
 /** Chips de status, na ordem da tela. "Rascunhos" vem em destaque: é o que ainda pede ação. */
 const CHIPS_STATUS: readonly { valor: FiltroStatusFeed; rotulo: string; destaque?: boolean }[] = [
@@ -47,6 +48,9 @@ interface SalesOrdersToolbarProps {
   buscando?: boolean;
   /** O atalho "/" da página foca a busca por aqui. */
   buscaRef?: RefObject<HTMLInputElement>;
+  /** "Meus pedidos" (`?meus=1`). Sem o setter, o chip não aparece. */
+  meus?: boolean;
+  setMeus?: (ligado: boolean) => void;
 }
 
 export const BUSCA_DEBOUNCE_MS = 300;
@@ -64,6 +68,8 @@ export function SalesOrdersToolbar({
   setSearch,
   buscando = false,
   buscaRef,
+  meus = false,
+  setMeus,
 }: SalesOrdersToolbarProps) {
   // O input é controlado por um rascunho LOCAL: cada tecla re-renderiza só a toolbar, e o termo
   // sobe (URL → query no servidor) quando a digitação pausa.
@@ -139,6 +145,26 @@ export function SalesOrdersToolbar({
             </button>
           );
         })}
+        {setMeus && (
+          <>
+            <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+            <button
+              type="button"
+              aria-pressed={meus}
+              onClick={() => setMeus(!meus)}
+              title="Só os pedidos em que você é o vendedor no Omie. Afiação e pedidos sem vendedor identificado não entram."
+              className={cn(
+                'inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors',
+                meus
+                  ? 'border-foreground/20 bg-foreground text-background'
+                  : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <UserRound className="h-3 w-3" aria-hidden />
+              Meus pedidos
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-2 md:ml-auto">
@@ -185,6 +211,24 @@ export function SalesOrdersAcoes({ onNavigate }: { onNavigate: (path: string) =>
         <Plus className="w-4 h-4" />
         Novo pedido
       </Button>
+    </div>
+  );
+}
+
+/**
+ * Valor do recorte: soma do `total` de TODOS os pedidos do filtro atual (não só os carregados),
+ * calculada no servidor com os mesmos filtros da lista. Em "Todos" entram cancelados e rascunhos —
+ * a linha diz isso, em vez de tirá-los só da soma (contagem e valor descreveriam conjuntos diferentes).
+ */
+export function ValorDoRecorte({ valor, statusTodos, meus }: { valor: ValorRecorte; statusTodos: boolean; meus: boolean }) {
+  const { valor: texto, detalhe } = textoValorRecorte(valor, formatPrecoOuAusente);
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground" aria-live="polite">
+      <span>Valor dos pedidos do filtro:</span>
+      <span className="font-medium tabular-nums text-foreground" data-testid="valor-recorte">{texto}</span>
+      {detalhe && <span>· {detalhe}</span>}
+      {statusTodos && <span>· inclui cancelados e rascunhos</span>}
+      {meus && <span>· só pedidos com você como vendedor no Omie (afiação e sem vendedor não entram)</span>}
     </div>
   );
 }

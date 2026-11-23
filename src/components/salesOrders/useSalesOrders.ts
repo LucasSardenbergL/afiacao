@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useUrlState } from '@/hooks/useUrlState';
 import { toast } from 'sonner';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
@@ -22,8 +23,9 @@ import {
   type PaginaFeed,
 } from './types';
 import {
-  COLUNAS_PAGINA_FEED, cursorDaPagina, dedupeFeedRows, ehFiltroStatus, ehOrdem, ehPeriodo, feedRowDaLinha, filtroDaPaginaFeed, filtroDoPeriodo,
-  padraoBuscaFeed, STATUS_DO_FILTRO, type FiltroStatusFeed, type OrdemFeed, type PeriodoFeed,
+  COLUNAS_PAGINA_FEED, corteDoPeriodo, cursorDaPagina, dedupeFeedRows, ehFiltroStatus, ehOrdem, ehPeriodo, feedRowDaLinha, filtroDaPaginaFeed,
+  filtrosDoRecorte, orDoCorte, padraoBuscaFeed, paramsTotalDoRecorte, termoBuscaFeed, valorDaResposta,
+  type FiltroStatusFeed, type OrdemFeed, type PeriodoFeed, type RecorteFeed, type ValorRecorte,
 } from './feed';
 import { track } from '@/lib/analytics';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
@@ -38,11 +40,15 @@ import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export const FEED_PAGE_SIZE = 50;
+// Ordem do feed: [total DESC NULLS LAST,] created_at DESC, origin, id (a do cursor, em feed.ts).
+const DESC = { ascending: false } as const;
+const ASC = { ascending: true } as const;
+const NULOS_NO_FIM = { ascending: false, nullsFirst: false } as const;
 
 const EMPRESAS: readonly Account[] = ['all', 'oben', 'colacor', 'colacor_sc'];
 const ehEmpresa = (v: string): v is Account => (EMPRESAS as readonly string[]).includes(v);
 
-const FILTROS_PADRAO = { q: '', empresa: 'all', status: 'todos', periodo: 'tudo', ordem: 'recentes', customer: '' };
+const FILTROS_PADRAO = { q: '', empresa: 'all', status: 'todos', periodo: 'tudo', ordem: 'recentes', customer: '', meus: '' };
 
 /** `?customer=` válido (uuid do `customer_user_id`) ou `null`. Valor torto cai no padrão (todos). */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,6 +61,9 @@ export function useSalesOrders() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, isStaff, loading: authLoading, role } = useAuth();
+  // "Meus pedidos" é LEITURA: na lente "Ver como", é o vendedor efetivo (impersonation.md). A
+  // autorização da RPC segue sendo do usuário real.
+  const { effectiveUserId } = useImpersonation();
   // Filtros na URL (compartilháveis, sobrevivem ao F5). `q` chega aqui já com debounce: quem segura
   // a digitação é a toolbar, para cada tecla não re-renderizar a lista inteira.
   const [filtros, setFiltros] = useUrlState(FILTROS_PADRAO);
@@ -67,6 +76,12 @@ export function useSalesOrders() {
   // Pedidos de UM cliente (a ficha manda `/sales?customer=<id>`): antes o parâmetro era ignorado e o
   // "Ver todos" do cliente abria todos os pedidos da empresa.
   const clienteFiltro = clienteDoFiltro(filtros.customer);
+  // `?meus=1`: só os pedidos em que o usuário (efetivo) é o vendedor identificado no Omie.
+  const meus = filtros.meus === '1';
+  const setMeus = (ligado: boolean) => {
+    track('sales.lista_filtro', { tipo: 'meus', valor: ligado ? '1' : '0' });
+    setFiltros({ meus: ligado ? '1' : '' });
+  };
   const limparCliente = () => setFiltros({ customer: '' });
   const setSearch = (q: string) => setFiltros({ q });
   const setAccountFilter = (empresa: Account) => {
@@ -87,7 +102,7 @@ export function useSalesOrders() {
   };
   // Uma escrita só: TODAS as chaves voltam ao padrão juntas na URL.
   const limparFiltros = () => setFiltros(FILTROS_PADRAO);
-  const comFiltro = !!search.trim() || accountFilter !== 'all' || statusFilter !== 'todos' || periodo !== 'tudo' || !!clienteFiltro;
+  const comFiltro = !!search.trim() || accountFilter !== 'all' || statusFilter !== 'todos' || periodo !== 'tudo' || !!clienteFiltro || meus;
   // Seleção guarda a LINHA, não só o id: trocar a busca tira o pedido da tela, e o bulk delete ainda
   // precisa dele (omie_pedido_id, origin).
   const [selecionados, setSelecionados] = useState<Map<string, OrderFeedRow>>(new Map());
@@ -103,36 +118,48 @@ export function useSalesOrders() {
   const feedKeyBase = useMemo(() => ['order-feed', user?.id] as const, [user?.id]);
   const padrao = padraoBuscaFeed(search);
   // O corte do período entra na key já calculado: virar o dia muda o corte e a key (sem cache velho).
-  const cortePeriodo = filtroDoPeriodo(periodo);
+  const corte = corteDoPeriodo(periodo);
+  const cortePeriodo = orDoCorte(corte);
+  // "Meus" sem usuário efetivo (lente carregando) NÃO consulta: mandar vendedor nulo abriria o
+  // recorte inteiro com o rótulo "Meus" (Codex).
+  const vendedor = meus ? effectiveUserId : null;
+  const recortePronto = !meus || !!vendedor;
+  // UMA fonte para a página E para o valor do recorte: a soma não diverge dos filtros da lista.
+  const recorte: RecorteFeed = {
+    empresa: accountFilter, status: statusFilter, corte, cliente: clienteFiltro, busca: termoBuscaFeed(search), vendedor,
+  };
   const feedQuery = useInfiniteQuery({
-    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem, clienteFiltro],
-    enabled: isStaff && !!user,
+    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem, clienteFiltro, vendedor],
+    enabled: isStaff && !!user && recortePronto,
     staleTime: 60_000,
     // Trocar a busca mantém a lista anterior na tela até a nova chegar (sem piscar o skeleton).
     placeholderData: keepPreviousData,
     initialPageParam: null as CursorFeed | null,
     queryFn: async ({ pageParam }): Promise<PaginaFeed> => {
       // count só na 1ª página e só sem busca: com busca ele seria um 2º scan dos ~32 k na mesma query.
-      let query = supabase
-        .from('order_feed')
-        .select(COLUNAS_PAGINA_FEED, { count: pageParam === null && !padrao ? 'exact' : undefined });
-      if (accountFilter !== 'all') query = query.eq('account', accountFilter);
-      if (clienteFiltro) query = query.eq('customer_user_id', clienteFiltro);
-      if (padrao) query = query.ilike('busca', padrao);
-      if (statusFilter === 'rascunhos') query = query.eq('status', 'rascunho');
-      else if (statusFilter !== 'todos') query = query.in('status', [...STATUS_DO_FILTRO[statusFilter]]);
+      const contar = pageParam === null && !padrao ? 'exact' as const : undefined;
+      // "Meus": a MESMA projeção da view, restrita pela função do vendedor (a coluna do vendedor é
+      // fechada para `authenticated`; migration 20261123120000). Filtros, ordem e cursor iguais.
+      // Ordem estável + janela junto da fonte (a rpc set-returning também tem a capa de 1.000).
+      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
+      const fonte = vendedor
+        ? supabase.rpc('order_feed_do_vendedor', { p_vendedor: vendedor }, { count: contar }).select(COLUNAS_PAGINA_FEED)
+        : supabase.from('order_feed').select(COLUNAS_PAGINA_FEED, { count: contar });
+      let query = (ordem === 'valor' ? fonte.order('total', NULOS_NO_FIM) : fonte)
+        .order('created_at', DESC).order('origin', ASC).order('id', ASC).range(0, FEED_PAGE_SIZE - 1);
+      for (const f of filtrosDoRecorte(recorte)) {
+        if (f.op === 'eq') query = query.eq(f.coluna, f.valor);
+        else if (f.op === 'in') query = query.in(f.coluna, [...f.valores]);
+        else query = query.ilike(f.coluna, f.padrao);
+      }
       // Corte do período e/ou "depois da última linha lida" (keyset) — um `.or()` só.
       const predicado = filtroDaPaginaFeed(pageParam, ordem, cortePeriodo);
       if (predicado) query = query.or(predicado);
-      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
-      if (ordem === 'valor') query = query.order('total', { ascending: false, nullsFirst: false });
-      const { data, error, count } = await query
-        .order('created_at', { ascending: false })
-        .order('origin', { ascending: true })
-        .order('id', { ascending: true })
-        .range(0, FEED_PAGE_SIZE - 1);
+      const { data, error, count } = await query;
       if (error) throw error;
-      const linhas = data ?? [];
+      // data nulo sem erro não é "acabou": encerraria a rolagem com a lista parcial.
+      if (!data) throw new Error('order_feed: página sem dados e sem erro');
+      const linhas = data;
       return {
         rows: linhas.map(({ total_cursor: _cursor, ...linha }) => feedRowDaLinha(linha)),
         count: count ?? null,
@@ -145,6 +172,24 @@ export function useSalesOrders() {
     // `cheia`/`cursor` vêm da LEITURA, então o optimistic da exclusão não encerra nem recua a rolagem.
     getNextPageParam: (ultima) => (ultima.cheia ? ultima.cursor : undefined),
   });
+
+  /* ─── Valor do recorte (mesmos filtros; ordem e cursor não entram) ─── */
+  // Prefixo PRÓPRIO: o optimistic da exclusão varre `feedKeyBase` lendo `.pages`.
+  const totalKeyBase = useMemo(() => ['order-feed-total', user?.id] as const, [user?.id]);
+  const totalQuery = useQuery({
+    queryKey: [...totalKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, clienteFiltro, vendedor],
+    enabled: isStaff && !!user && recortePronto,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('order_feed_total', paramsTotalDoRecorte(recorte));
+      if (error) throw error;
+      return valorDaResposta(data);
+    },
+  });
+  // Carregando, erro ou dado de OUTRO recorte: nunca um número — a tela mostra "—".
+  const valorRecorte: ValorRecorte = totalQuery.isError
+    ? { estado: 'erro' }
+    : totalQuery.data && !totalQuery.isPlaceholderData ? totalQuery.data : { estado: 'carregando' };
 
   const orders = useMemo(
     () => dedupeFeedRows(feedQuery.data?.pages.flatMap((p) => p.rows) ?? []),
@@ -298,7 +343,11 @@ export function useSalesOrders() {
       };
     });
   };
-  const reconciliar = () => queryClient.invalidateQueries({ queryKey: feedKeyBase });
+  const reconciliar = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: feedKeyBase }),
+    // A exclusão muda o valor do recorte também.
+    queryClient.invalidateQueries({ queryKey: totalKeyBase }),
+  ]);
 
   // Trava por pedido, COMPARTILHADA entre a exclusão individual e a em lote, e adquirida antes do
   // 1º await: duas exclusões do MESMO pedido não se sobrepõem (cada uma re-carimbaria deleted_at e
@@ -487,6 +536,11 @@ export function useSalesOrders() {
     comFiltro,
     clienteFiltro,
     limparCliente,
+    meus,
+    setMeus,
+    // "Meus" ligado sem usuário efetivo ainda (lente carregando): as consultas esperam.
+    meusAguardando: meus && !vendedor,
+    valorRecorte,
     selectedIds,
     // As LINHAS selecionadas (inclusive as que a busca/aba atual tirou da tela) — o diálogo de
     // exclusão em lote mostra o alcance real, não só a contagem.
