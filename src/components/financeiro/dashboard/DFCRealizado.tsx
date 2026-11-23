@@ -13,6 +13,7 @@ import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { mesesFechados } from '@/lib/financeiro/dfc-helpers';
 import { ALL_COMPANIES, type CompanySelection } from '@/contexts/CompanyContext';
 import { cn } from '@/lib/utils';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const MES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const rotuloMes = (m: string) => `${MES_ABREV[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
@@ -48,7 +49,7 @@ export function DFCRealizado({ view, versaoDados }: { view: CompanySelection; ve
         {isLoading && <Skeleton className="h-60" />}
         {error && (
           <p role="alert" className="text-sm text-status-error">
-            DFC indisponível — a leitura falhou: {error instanceof Error ? error.message : String(error)}
+            DFC indisponível — a leitura falhou: {mensagemDeErro(error) ?? 'erro sem mensagem'}
           </p>
         )}
         {data && !data.temDados && (

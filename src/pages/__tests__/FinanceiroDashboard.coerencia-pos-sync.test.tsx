@@ -113,6 +113,8 @@ const triggerFinanceiroSync = vi.fn(async () => {
   return {};
 });
 
+// A seção DFC (master pela lente "Ver como", react-query próprio) tem testes próprios; aqui o alvo é o resto da aba.
+vi.mock('@/components/financeiro/dashboard/DFCRealizado', () => ({ DFCRealizado: () => null }));
 vi.mock('@/services/financeiroService', () => ({
   getResumoFinanceiro: (...a: unknown[]) => getResumoFinanceiro(...(a as [string[]])),
   getFluxoCaixa: (...a: unknown[]) => getFluxoCaixa(...(a as [])),
