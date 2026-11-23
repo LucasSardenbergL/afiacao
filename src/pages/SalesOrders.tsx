@@ -16,7 +16,7 @@ import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosItensPedido';
-import { SalesOrdersAcoes, SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
+import { SalesOrdersAcoes, SalesOrdersToolbar, ValorDoRecorte } from '@/components/salesOrders/SalesOrdersToolbar';
 import { GRADE_LINHA_PEDIDO, SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
 import { SELETOR_LINHA, useTecladoPedidos } from '@/components/salesOrders/useTecladoPedidos';
 import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
@@ -54,6 +54,9 @@ const SalesOrders = () => {
     comFiltro,
     clienteFiltro,
     limparCliente,
+    meus,
+    setMeus,
+    valorRecorte,
     selectedIds,
     linhasSelecionadas,
     toggleSelect,
@@ -231,7 +234,10 @@ const SalesOrders = () => {
         setSearch={setSearch}
         buscando={buscando}
         buscaRef={buscaRef}
+        meus={meus}
+        setMeus={setMeus}
       />
+      {valorRecorte && <ValorDoRecorte valor={valorRecorte} statusTodos={statusFilter === 'todos'} meus={!!meus} />}
 
       {!online && orders.length > 0 && (
         <p role="status" className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs text-status-warning">

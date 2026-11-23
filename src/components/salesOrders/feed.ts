@@ -85,14 +85,120 @@ const DIAS_ANTES: Record<Exclude<PeriodoFeed, 'tudo'>, number> = { hoje: 0, '7d'
  * Limite aceito: fuso a leste de UTC+12 incluiria a data-pura das 12:00Z da véspera.
  */
 export function filtroDoPeriodo(periodo: PeriodoFeed, agora: Date = new Date()): string | null {
+  return orDoCorte(corteDoPeriodo(periodo, agora));
+}
+
+/**
+ * O corte do período ESTRUTURADO: `created_at >= desde` OU `created_at` = um dos `puros` (ISO com
+ * `Z`). É daqui que saem os DOIS consumidores — o `.or()` da listagem (`orDoCorte`) e os parâmetros
+ * da RPC do valor do recorte (`paramsTotalDoRecorte`): calculado uma vez, nos mesmos instantes.
+ */
+export interface CortePeriodo {
+  desde: string;
+  puros: string[];
+}
+
+export function corteDoPeriodo(periodo: PeriodoFeed, agora: Date = new Date()): CortePeriodo | null {
   if (periodo === 'tudo') return null;
   const inicio = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() - DIAS_ANTES[periodo]);
-  const clausulas = [`created_at.gte.${inicio.toISOString()}`];
+  const puros: string[] = [];
   for (const hora of [0, 12]) {
     const puro = Date.UTC(inicio.getFullYear(), inicio.getMonth(), inicio.getDate(), hora);
-    if (puro < inicio.getTime()) clausulas.push(`created_at.eq.${new Date(puro).toISOString()}`);
+    if (puro < inicio.getTime()) puros.push(new Date(puro).toISOString());
   }
-  return orFilter(...clausulas);
+  return { desde: inicio.toISOString(), puros };
+}
+
+export function orDoCorte(corte: CortePeriodo | null): string | null {
+  if (!corte) return null;
+  return orFilter(`created_at.gte.${corte.desde}`, ...corte.puros.map((p) => `created_at.eq.${p}`));
+}
+
+/* ─── Recorte da listagem: UMA fonte para a página e para o valor do recorte ─── */
+
+/**
+ * Tudo o que decide QUAIS pedidos a listagem mostra (a ordem e o cursor decidem só a página).
+ * `vendedor` = "Meus pedidos" (o usuário EFETIVO da lente); `null` = todos.
+ */
+export interface RecorteFeed {
+  empresa: 'all' | 'oben' | 'colacor' | 'colacor_sc';
+  status: FiltroStatusFeed;
+  corte: CortePeriodo | null;
+  cliente: string | null;
+  /** O padrão de `padraoBuscaFeed` (já com `%`), ou `null` sem busca. */
+  busca: string | null;
+  vendedor: string | null;
+}
+
+/** Os filtros de igualdade/lista/ilike, como a listagem os aplica — o período vai no `.or()`. */
+export type FiltroRecorte =
+  | { op: 'eq'; coluna: 'account' | 'status' | 'customer_user_id'; valor: string }
+  | { op: 'in'; coluna: 'status'; valores: readonly string[] }
+  | { op: 'ilike'; coluna: 'busca'; padrao: string };
+
+export function filtrosDoRecorte(r: RecorteFeed): FiltroRecorte[] {
+  const f: FiltroRecorte[] = [];
+  if (r.empresa !== 'all') f.push({ op: 'eq', coluna: 'account', valor: r.empresa });
+  if (r.cliente) f.push({ op: 'eq', coluna: 'customer_user_id', valor: r.cliente });
+  if (r.busca) f.push({ op: 'ilike', coluna: 'busca', padrao: r.busca });
+  if (r.status === 'rascunhos') f.push({ op: 'eq', coluna: 'status', valor: 'rascunho' });
+  else if (r.status !== 'todos') f.push({ op: 'in', coluna: 'status', valores: STATUS_DO_FILTRO[r.status] });
+  return f;
+}
+
+/**
+ * Parâmetros de `order_feed_total` para o MESMO recorte. Cada um espelha 1:1 um filtro da
+ * listagem (migration 20261123120000; a paridade SQL é provada em db/test-order-feed-vendedor-total.sh).
+ * "Todos" vai como `null` — `= ANY('{}')` não acharia linha nenhuma.
+ */
+export function paramsTotalDoRecorte(r: RecorteFeed) {
+  return {
+    p_account: r.empresa === 'all' ? null : r.empresa,
+    p_status: r.status === 'todos' ? null : [...STATUS_DO_FILTRO[r.status]],
+    p_desde: r.corte?.desde ?? null,
+    p_puros: r.corte ? [...r.corte.puros] : null,
+    p_customer: r.cliente,
+    p_busca: r.busca,
+    p_vendedor: r.vendedor,
+  };
+}
+
+/** Leitura do valor do recorte — ausente nunca vira 0. */
+export type ValorRecorte =
+  | { estado: 'carregando' }
+  | { estado: 'erro' }
+  | { estado: 'ok'; pedidos: number; soma: number | null; semTotal: number };
+
+/**
+ * O texto do valor do recorte. Ausente é "—", nunca "R$ 0,00": recorte vazio ("0 pedidos · —"),
+ * todos sem valor, carregando e erro. Soma com pedidos fora dela sai marcada como PARCIAL.
+ */
+export function textoValorRecorte(v: ValorRecorte, formatar: (n: number | null) => string): {
+  valor: string;
+  detalhe: string | null;
+} {
+  if (v.estado !== 'ok') return { valor: '—', detalhe: v.estado === 'erro' ? 'não consegui calcular' : null };
+  const n = (x: number) => x.toLocaleString('pt-BR');
+  const pedidos = `${n(v.pedidos)} ${v.pedidos === 1 ? 'pedido' : 'pedidos'}`;
+  if (v.soma === null) return { valor: '—', detalhe: v.pedidos === 0 ? pedidos : `${pedidos} sem valor` };
+  if (v.semTotal > 0) {
+    return { valor: `${formatar(v.soma)} parcial`, detalhe: `${pedidos} · ${n(v.semTotal)} sem valor fora da soma` };
+  }
+  return { valor: formatar(v.soma), detalhe: pedidos };
+}
+
+/** Resposta crua da RPC → `ValorRecorte`. Forma inesperada LANÇA (vira estado de erro, nunca 0). */
+export function valorDaResposta(data: unknown): Extract<ValorRecorte, { estado: 'ok' }> {
+  const linha = Array.isArray(data) ? data[0] : data;
+  if (typeof linha !== 'object' || linha === null) throw new Error('order_feed_total: resposta sem linha');
+  const { pedidos, soma, sem_total } = linha as Record<string, unknown>;
+  const inteiro = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null);
+  const p = inteiro(pedidos);
+  const s = inteiro(sem_total);
+  if (p === null || s === null || !(soma === null || (typeof soma === 'number' && Number.isFinite(soma)))) {
+    throw new Error('order_feed_total: resposta fora da forma {pedidos, soma, sem_total}');
+  }
+  return { estado: 'ok', pedidos: p, soma: soma as number | null, semTotal: s };
 }
 
 /**

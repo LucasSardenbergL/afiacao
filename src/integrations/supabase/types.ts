@@ -28076,6 +28076,53 @@ export type Database = {
         Args: { p_account: string }
         Returns: Json
       }
+      order_feed_do_vendedor: {
+        Args: { p_vendedor: string }
+        Returns: {
+          account: string | null
+          busca: string | null
+          created_at: string | null
+          customer_name: string | null
+          customer_user_id: string | null
+          id: string | null
+          item_names: string[] | null
+          item_quantity: number | null
+          omie_pedido_id: number | null
+          order_number: string | null
+          origin: string | null
+          status: string | null
+          subtotal: number | null
+          total: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "order_feed"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      order_feed_total: {
+        Args: {
+          p_account?: string | null
+          p_busca?: string | null
+          p_customer?: string | null
+          p_desde?: string | null
+          p_puros?: string[] | null
+          p_status?: string[] | null
+          p_vendedor?: string | null
+        }
+        Returns: {
+          pedidos: number
+          sem_total: number
+          soma: number
+        }[]
+      }
+      pedidos_ids_do_vendedor: {
+        Args: { p_vendedor: string }
+        Returns: {
+          id: string
+        }[]
+      }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
