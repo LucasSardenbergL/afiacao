@@ -5,7 +5,7 @@
 // de sales_orders | orders) pro shape SalesOrder que painel/impressão/share consomem.
 import type { Json } from '@/integrations/supabase/types';
 import { exigirColunas } from '@/lib/linha-view';
-import { filtroKeysetApos, grupoAnd, grupoOr, ilikeContainsPattern, orFilter } from '@/lib/postgrest';
+import { filtroKeysetApos, grupoAnd, grupoOr, ilikeContainsPattern, orFilter, sanitizeIlikeTerm } from '@/lib/postgrest';
 import {
   COLUNAS_FEED_EXIGIDAS,
   type CursorFeed,
@@ -37,7 +37,19 @@ const COLUNAS_LISTAGEM_FEED =
  * acha o total 250.50. Os curingas do usuário (`%`, `_`, `*`) saem em `ilikeContainsPattern`.
  */
 export function padraoBuscaFeed(search: string): string | null {
-  return ilikeContainsPattern(normalizar(search.trim()));
+  const termo = termoBuscaFeed(search);
+  return termo ? ilikeContainsPattern(termo) : null;
+}
+
+/**
+ * O TERMO da busca (normalizado, sem `%`/`_`/`*` e sem `\`), ou `null` quando não sobra nada útil.
+ * A lista usa `%termo%` (`padraoBuscaFeed`); a RPC do valor recebe o termo e monta o MESMO padrão com
+ * `private.padrao_like_contem(termo) ESCAPE '\'`. Sem metacaractere no termo, os dois são idênticos —
+ * o `\` sai porque o PostgREST o leria como escape e o helper, como literal.
+ */
+export function termoBuscaFeed(search: string): string | null {
+  const termo = sanitizeIlikeTerm(normalizar(search.trim())).replace(/\\/g, '');
+  return termo.trim() ? termo : null;
 }
 
 /* ─── Filtros da listagem (status · período · ordem) — todos aplicados no SERVIDOR ─── */
@@ -125,7 +137,7 @@ export interface RecorteFeed {
   status: FiltroStatusFeed;
   corte: CortePeriodo | null;
   cliente: string | null;
-  /** O padrão de `padraoBuscaFeed` (já com `%`), ou `null` sem busca. */
+  /** O TERMO de `termoBuscaFeed` (sem curinga), ou `null` sem busca. */
   busca: string | null;
   vendedor: string | null;
 }
@@ -140,7 +152,8 @@ export function filtrosDoRecorte(r: RecorteFeed): FiltroRecorte[] {
   const f: FiltroRecorte[] = [];
   if (r.empresa !== 'all') f.push({ op: 'eq', coluna: 'account', valor: r.empresa });
   if (r.cliente) f.push({ op: 'eq', coluna: 'customer_user_id', valor: r.cliente });
-  if (r.busca) f.push({ op: 'ilike', coluna: 'busca', padrao: r.busca });
+  const padrao = r.busca ? ilikeContainsPattern(r.busca) : null;
+  if (padrao) f.push({ op: 'ilike', coluna: 'busca', padrao });
   if (r.status === 'rascunhos') f.push({ op: 'eq', coluna: 'status', valor: 'rascunho' });
   else if (r.status !== 'todos') f.push({ op: 'in', coluna: 'status', valores: STATUS_DO_FILTRO[r.status] });
   return f;

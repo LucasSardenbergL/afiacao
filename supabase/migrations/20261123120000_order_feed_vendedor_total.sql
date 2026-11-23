@@ -18,7 +18,9 @@
 --    1:1 os filtros do front (src/components/salesOrders/feed.ts → recorteDoFeed):
 --      p_account → .eq('account')     p_status → .in('status')  (NULL = "todos")
 --      p_desde/p_puros → .or(created_at.gte.<desde>, created_at.eq.<puro>…)  (corte do período)
---      p_customer → .eq('customer_user_id')   p_busca → .ilike('busca', <padrão já com %>)
+--      p_customer → .eq('customer_user_id')
+--      p_busca → .ilike('busca', '%termo%'): a RPC recebe o TERMO (sem curinga; termoBuscaFeed) e monta
+--               o mesmo padrão pelo idioma da casa, private.padrao_like_contem(termo) ESCAPE '\'
 --      p_vendedor → lê de order_feed_do_vendedor em vez da view
 --    soma = round(sum(total), 2): NULL quando nenhum total é conhecido (ausente ≠ zero — "—").
 --    sem_total = linhas fora da soma (a tela marca a soma como parcial).
@@ -114,7 +116,7 @@ BEGIN
         AND (p_status   IS NULL OR f.status = ANY (p_status))
         AND (p_desde    IS NULL OR f.created_at >= p_desde OR f.created_at = ANY (COALESCE(p_puros, '{}'::timestamptz[])))
         AND (p_customer IS NULL OR f.customer_user_id = p_customer)
-        AND (p_busca    IS NULL OR f.busca ILIKE p_busca);
+        AND (p_busca    IS NULL OR f.busca ILIKE private.padrao_like_contem(p_busca) ESCAPE '\');
   ELSE
     RETURN QUERY
       SELECT count(*)::bigint, round(sum(f.total), 2), count(*) FILTER (WHERE f.total IS NULL)::bigint
@@ -123,7 +125,7 @@ BEGIN
         AND (p_status   IS NULL OR f.status = ANY (p_status))
         AND (p_desde    IS NULL OR f.created_at >= p_desde OR f.created_at = ANY (COALESCE(p_puros, '{}'::timestamptz[])))
         AND (p_customer IS NULL OR f.customer_user_id = p_customer)
-        AND (p_busca    IS NULL OR f.busca ILIKE p_busca);
+        AND (p_busca    IS NULL OR f.busca ILIKE private.padrao_like_contem(p_busca) ESCAPE '\');
   END IF;
 END
 $fn$;

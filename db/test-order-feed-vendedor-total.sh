@@ -160,7 +160,7 @@ case "${SABOTAGEM:-}" in
   sem_gate)          sabotar 's/  IF NOT \(coalesce\(auth\.role\(\)/  IF false AND NOT (coalesce(auth.role()/' ;;
   created_by)        sabotar 's/WHERE so\.vendedor_user_id = p_vendedor/WHERE COALESCE(so.vendedor_user_id, so.created_by) = p_vendedor/' ;;
   sem_param)         sabotar 's/IF p_vendedor IS NULL THEN\n    RAISE EXCEPTION .PEDIDOS_IDS_DO_VENDEDOR_PARAM/IF false THEN\n    RAISE EXCEPTION \x27PEDIDOS_IDS_DO_VENDEDOR_PARAM/' ;;
-  busca_fora)        sabotar 's/\n        AND \(p_busca    IS NULL OR f\.busca ILIKE p_busca\);\n  ELSE/;\n  ELSE/' ;;
+  busca_fora)        sabotar 's/\n        AND \(p_busca    IS NULL OR f\.busca ILIKE private\.padrao_like_contem\(p_busca\) ESCAPE .\\.\);\n  ELSE/;\n  ELSE/' ;;
   vend_sem_conta)    sabotar 's/(FROM public\.order_feed_do_vendedor\(p_vendedor\) f\n      WHERE )\(p_account  IS NULL OR f\.account = p_account\)\n        AND /$1/' ;;
   periodo_sem_puros) sabotar 's/ OR f\.created_at = ANY \(COALESCE\(p_puros, .\{\}.::timestamptz\[\]\)\)//g' ;;
   zero_fabricado)    sabotar 's/round\(sum\(f\.total\), 2\)/round(COALESCE(sum(f.total), 0), 2)/g' ;;
@@ -258,7 +258,7 @@ BEGIN
     s := (ARRAY[NULL, '{faturado,entregue}', '{rascunho}', '{cancelado}']::text[])[si]::text[];
   FOR per IN 0..1 LOOP
   FOREACH c IN ARRAY ARRAY[NULL, '00000000-0000-0000-0000-0000000000c1']::uuid[] LOOP
-  FOREACH b IN ARRAY ARRAY[NULL, '%alice%', '%joao & filhos%', '%verniz%'] LOOP
+  FOREACH b IN ARRAY ARRAY[NULL, 'alice', 'joao & filhos', 'verniz'] LOOP
   FOREACH v IN ARRAY ARRAY[NULL, '$V1']::uuid[] LOOP
     n := n + 1;
     SELECT * INTO r FROM public.order_feed_total(a, s,
@@ -272,7 +272,7 @@ BEGIN
       AND (s IS NULL OR l.status IN (SELECT unnest(s)))
       AND (per = 0 OR (l.created_at >= '2026-11-10 03:00:00+00' OR l.created_at = '2026-11-10 00:00:00+00'))
       AND (c IS NULL OR l.customer_user_id = c)
-      AND (b IS NULL OR l.busca ILIKE b);
+      AND (b IS NULL OR l.busca ILIKE '%' || b || '%');  -- o .ilike('busca', '%termo%') da lista
     IF e.pedidos > 0 THEN cheios := cheios + 1; END IF;
     IF (r.pedidos, r.soma, r.sem_total) IS DISTINCT FROM (e.pedidos, e.soma, e.sem_total) THEN
       dif := dif + 1;

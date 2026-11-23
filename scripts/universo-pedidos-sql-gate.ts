@@ -73,6 +73,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.reconciliar_pedidos_omie': { tipo: 'escritor', motivo: 'sincronização Omie: reconcilia TODO status, cancelado inclusive' },
   // ── propósito ───────────────────────────────────────────────────────────────────────────────
   'public.order_feed': { tipo: 'proposito', motivo: 'feed de pedidos da equipe: mostra todo status (orçamento, rascunho, cancelado); só esconde o apagado' },
+  'public.pedidos_ids_do_vendedor': { tipo: 'proposito', motivo: '"Meus pedidos" do /sales: ids do vendedor no MESMO universo do order_feed (todo status, só esconde o apagado) — cruzado com a view' },
   'public.selfservice_meus_pedidos': { tipo: 'proposito', motivo: 'self-service: o cliente vê os próprios pedidos em todo status (view-gate)' },
   'public.listar_pedidos_a_separar': { tipo: 'proposito', motivo: 'picking: universo OPERACIONAL do que falta separar (não do que foi vendido)' },
   'public.get_whatsapp_funil': { tipo: 'proposito', motivo: 'funil de propostas: conta toda proposta, orçamento inclusive (0 pedidos com conversa em 2026-10-01)' },

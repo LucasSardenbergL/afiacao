@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows, corteDoPeriodo, filtroDoPeriodo, orDoCorte,
-  paramsTotalDoRecorte, textoValorRecorte, valorDaResposta, type RecorteFeed,
+  paramsTotalDoRecorte, termoBuscaFeed, textoValorRecorte, valorDaResposta, type RecorteFeed,
 } from '../feed';
 import type { OrderFeedRow } from '../types';
 
@@ -146,5 +146,16 @@ describe('valor do recorte — params, resposta e texto (ausente ≠ zero)', () 
     expect(textoValorRecorte({ estado: 'ok', pedidos: 1, soma: 0, semTotal: 0 }, brl)).toEqual({ valor: 'R$ 0.00', detalhe: '1 pedido' });
     expect(textoValorRecorte({ estado: 'carregando' }, brl)).toEqual({ valor: '—', detalhe: null });
     expect(textoValorRecorte({ estado: 'erro' }, brl)).toEqual({ valor: '—', detalhe: 'não consegui calcular' });
+  });
+});
+
+describe('termoBuscaFeed — o termo que a RPC do valor recebe', () => {
+  it('sem curinga nem barra, e o padrão da lista é exatamente %termo%', () => {
+    expect(termoBuscaFeed('AFIAÇÃO 50%_off*')).toBe('afiacao 50off');
+    expect(termoBuscaFeed('a\\b')).toBe('ab'); // a barra seria escape no PostgREST e literal no helper SQL
+    expect(padraoBuscaFeed('a\\b')).toBe('%ab%');
+    expect(termoBuscaFeed('  %  ')).toBeNull(); // só espaço depois de sanitizar: sem busca nas DUAS pontas
+    expect(padraoBuscaFeed('  %  ')).toBeNull();
+    expect(termoBuscaFeed('')).toBeNull();
   });
 });
