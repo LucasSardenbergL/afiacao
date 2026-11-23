@@ -52,7 +52,7 @@ export type OrdemFeed = 'recentes' | 'valor';
  * chamá-los de "em andamento" fabricaria um dado. Aparecem em "Todos". Os de afiação (`orders`)
  * entram pelos nomes de `ORDER_STATUS` (`src/types`).
  */
-export const STATUS_DO_FILTRO: Record<Exclude<FiltroStatusFeed, 'todos'>, readonly string[]> = {
+const STATUS_DO_FILTRO: Record<Exclude<FiltroStatusFeed, 'todos'>, readonly string[]> = {
   rascunhos: ['rascunho'],
   em_andamento: [
     'enviado', 'separacao',

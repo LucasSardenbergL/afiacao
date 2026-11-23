@@ -154,6 +154,7 @@ sabotar() { # $1 = expressão perl; exige que MUDE o arquivo (sabotagem que não
   [ "$antes" != "$depois" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
 }
 # A PÓS mede ACL; nas sabotagens de comportamento ela fica de pé (nenhuma delas mexe em ACL).
+# shellcheck disable=SC2016  # $1 nas expressões é do PERL (grupo capturado), não do shell
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_gate)          sabotar 's/  IF NOT \(coalesce\(auth\.role\(\)/  IF false AND NOT (coalesce(auth.role()/' ;;

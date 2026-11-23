@@ -276,7 +276,7 @@ describe('useSalesOrders — abertura', () => {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 function ordenar(ls: Linha[], porValor = false): string[] {
   return [...ls]
-    .sort((x, y) => (porValor ? y.total - x.total : 0) || -cmp(x.created_at, y.created_at) || cmp(x.origin, y.origin) || cmp(x.id, y.id))
+    .sort((x, y) => (porValor ? (y.total ?? 0) - (x.total ?? 0) : 0) || -cmp(x.created_at, y.created_at) || cmp(x.origin, y.origin) || cmp(x.id, y.id))
     .map((l) => l.id);
 }
 async function rolarAte(r: ReturnType<typeof montar>['result'], n: number) {

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows } from '../feed';
+import {
+  padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows, corteDoPeriodo, filtroDoPeriodo, orDoCorte,
+  paramsTotalDoRecorte, textoValorRecorte, valorDaResposta, type RecorteFeed,
+} from '../feed';
 import type { OrderFeedRow } from '../types';
 
 const row = (p: Partial<OrderFeedRow> = {}): OrderFeedRow => ({
@@ -102,5 +105,46 @@ describe('dedupeFeedRows', () => {
   it('lista sem duplicatas passa intacta', () => {
     const rows = [row({ id: '1' }), row({ id: '2' })];
     expect(dedupeFeedRows(rows)).toEqual(rows);
+  });
+});
+
+describe('valor do recorte — params, resposta e texto (ausente ≠ zero)', () => {
+  const recorte = (p: Partial<RecorteFeed> = {}): RecorteFeed => ({
+    empresa: 'all', status: 'todos', corte: null, cliente: null, busca: null, vendedor: null, ...p,
+  });
+  const brl = (v: number | null) => (v === null ? '—' : `R$ ${v.toFixed(2)}`);
+
+  it('o corte estruturado e o .or() da lista saem dos MESMOS instantes', () => {
+    const agora = new Date(2026, 10, 23, 15);
+    const corte = corteDoPeriodo('7d', agora)!;
+    expect(filtroDoPeriodo('7d', agora)).toBe(orDoCorte(corte));
+    expect(paramsTotalDoRecorte(recorte({ corte }))).toMatchObject({ p_desde: corte.desde, p_puros: corte.puros });
+    expect(corteDoPeriodo('tudo', agora)).toBeNull();
+  });
+
+  it('"Todos" vai como null (= ANY(\'{}\') não acharia nada); chips viram a lista do filtro', () => {
+    expect(paramsTotalDoRecorte(recorte()).p_status).toBeNull();
+    expect(paramsTotalDoRecorte(recorte({ status: 'rascunhos' })).p_status).toEqual(['rascunho']);
+    expect(paramsTotalDoRecorte(recorte({ status: 'faturados' })).p_status).toEqual(['faturado', 'entregue']);
+    expect(paramsTotalDoRecorte(recorte({ empresa: 'oben', vendedor: 'u9', busca: '%x%' })))
+      .toMatchObject({ p_account: 'oben', p_vendedor: 'u9', p_busca: '%x%' });
+  });
+
+  it('resposta fora da forma LANÇA (vira erro na tela, nunca 0)', () => {
+    expect(valorDaResposta([{ pedidos: 3, soma: 150.01, sem_total: 1 }])).toEqual({ estado: 'ok', pedidos: 3, soma: 150.01, semTotal: 1 });
+    expect(valorDaResposta([{ pedidos: 0, soma: null, sem_total: 0 }]).soma).toBeNull();
+    expect(() => valorDaResposta([])).toThrow('order_feed_total: resposta sem linha');
+    expect(() => valorDaResposta([{ pedidos: 1, soma: '10', sem_total: 0 }])).toThrow('order_feed_total: resposta fora da forma');
+    expect(() => valorDaResposta([{ pedidos: 1, soma: 10 }])).toThrow('order_feed_total: resposta fora da forma');
+  });
+
+  it('texto: vazio, todos sem valor, parcial, zero conhecido, carregando e erro', () => {
+    expect(textoValorRecorte({ estado: 'ok', pedidos: 0, soma: null, semTotal: 0 }, brl)).toEqual({ valor: '—', detalhe: '0 pedidos' });
+    expect(textoValorRecorte({ estado: 'ok', pedidos: 2, soma: null, semTotal: 2 }, brl)).toEqual({ valor: '—', detalhe: '2 pedidos sem valor' });
+    expect(textoValorRecorte({ estado: 'ok', pedidos: 3, soma: 150, semTotal: 1 }, brl))
+      .toEqual({ valor: 'R$ 150.00 parcial', detalhe: '3 pedidos · 1 sem valor fora da soma' });
+    expect(textoValorRecorte({ estado: 'ok', pedidos: 1, soma: 0, semTotal: 0 }, brl)).toEqual({ valor: 'R$ 0.00', detalhe: '1 pedido' });
+    expect(textoValorRecorte({ estado: 'carregando' }, brl)).toEqual({ valor: '—', detalhe: null });
+    expect(textoValorRecorte({ estado: 'erro' }, brl)).toEqual({ valor: '—', detalhe: 'não consegui calcular' });
   });
 });
