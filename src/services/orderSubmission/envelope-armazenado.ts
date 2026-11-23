@@ -177,11 +177,11 @@ export interface AlvoPendente {
 
 export interface Pendente { chave: string; envelope: CheckoutEnvelope }
 
-export type LeituraPendentes = { estado: 'ilegivel' } | { estado: 'ok'; pendentes: Pendente[] };
+type LeituraPendentes = { estado: 'ilegivel' } | { estado: 'ok'; pendentes: Pendente[] };
 
 /** Todo envio COMPROMETIDO deste cliente, em qualquer chave dele ou no legado. Ilegível em qualquer uma →
  *  `ilegivel` (nunca "não há pendente"). O legado ilegível também barra: não dá para saber de quem é. */
-export function lerPendentesDoCliente(arm: ArmazemEnvelope, alvo: AlvoPendente): LeituraPendentes {
+function lerPendentesDoCliente(arm: ArmazemEnvelope, alvo: AlvoPendente): LeituraPendentes {
   const pendentes: Pendente[] = [];
   for (const chave of Array.from(new Set(alvo.chaves))) {
     const l = lerEnvelopeEstrito(arm, chave);
