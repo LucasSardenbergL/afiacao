@@ -135,6 +135,7 @@ P -q -f "$TMPD/view.sql" >/dev/null 2>"$TMPD/view.err" || { echo "INFRA: 2026110
 # ACL de prod (psql-ro, 2026-11-23): sales_orders por COLUNA, vendedor_user_id fora; o resto table-level.
 P -q <<'SQL' >/dev/null
 GRANT USAGE ON SCHEMA auth TO authenticated, anon;
+GRANT USAGE ON SCHEMA private TO authenticated;  -- prod: has_schema_privilege = t (o helper do LIKE mora lá)
 REVOKE SELECT, UPDATE ON public.sales_orders FROM authenticated;
 GRANT SELECT (id, customer_user_id, created_by, items, subtotal, total, status, omie_pedido_id, omie_numero_pedido,
               created_at, account, deleted_at) ON public.sales_orders TO authenticated;

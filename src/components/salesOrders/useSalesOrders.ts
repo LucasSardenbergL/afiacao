@@ -136,11 +136,14 @@ export function useSalesOrders() {
       const contar = pageParam === null && !padrao ? 'exact' as const : undefined;
       // "Meus": a MESMA projeção da view, restrita pela função do vendedor (a coluna do vendedor é
       // fechada para `authenticated`; migration 20261123120000). Filtros, ordem e cursor iguais.
-      // A janela (`.range`) vai junto da fonte: a rpc set-returning também tem a capa de 1.000.
-      let query = vendedor
-        ? supabase.rpc('order_feed_do_vendedor', { p_vendedor: vendedor }, { count: contar })
-          .select(COLUNAS_PAGINA_FEED).range(0, FEED_PAGE_SIZE - 1)
-        : supabase.from('order_feed').select(COLUNAS_PAGINA_FEED, { count: contar }).range(0, FEED_PAGE_SIZE - 1);
+      const fonte = vendedor
+        ? supabase.rpc('order_feed_do_vendedor', { p_vendedor: vendedor }, { count: contar }).select(COLUNAS_PAGINA_FEED)
+        : supabase.from('order_feed').select(COLUNAS_PAGINA_FEED, { count: contar });
+      // Ordem estável + janela junto da fonte (a rpc set-returning também tem a capa de 1.000).
+      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
+      let query = (ordem === 'valor' ? fonte.order('total', { ascending: false, nullsFirst: false }) : fonte)
+        .order('created_at', { ascending: false }).order('origin', { ascending: true }).order('id', { ascending: true })
+        .range(0, FEED_PAGE_SIZE - 1);
       for (const f of filtrosDoRecorte(recorte)) {
         if (f.op === 'eq') query = query.eq(f.coluna, f.valor);
         else if (f.op === 'in') query = query.in(f.coluna, [...f.valores]);
@@ -149,12 +152,7 @@ export function useSalesOrders() {
       // Corte do período e/ou "depois da última linha lida" (keyset) — um `.or()` só.
       const predicado = filtroDaPaginaFeed(pageParam, ordem, cortePeriodo);
       if (predicado) query = query.or(predicado);
-      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
-      if (ordem === 'valor') query = query.order('total', { ascending: false, nullsFirst: false });
-      const { data, error, count } = await query
-        .order('created_at', { ascending: false })
-        .order('origin', { ascending: true })
-        .order('id', { ascending: true });
+      const { data, error, count } = await query;
       if (error) throw error;
       // data nulo sem erro não é "acabou": encerraria a rolagem com a lista parcial.
       if (!data) throw new Error('order_feed: página sem dados e sem erro');
