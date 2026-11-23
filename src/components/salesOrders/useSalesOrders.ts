@@ -40,6 +40,10 @@ import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export const FEED_PAGE_SIZE = 50;
+// Ordem do feed: [total DESC NULLS LAST,] created_at DESC, origin, id (a do cursor, em feed.ts).
+const DESC = { ascending: false } as const;
+const ASC = { ascending: true } as const;
+const NULOS_NO_FIM = { ascending: false, nullsFirst: false } as const;
 
 const EMPRESAS: readonly Account[] = ['all', 'oben', 'colacor', 'colacor_sc'];
 const ehEmpresa = (v: string): v is Account => (EMPRESAS as readonly string[]).includes(v);
@@ -136,14 +140,13 @@ export function useSalesOrders() {
       const contar = pageParam === null && !padrao ? 'exact' as const : undefined;
       // "Meus": a MESMA projeção da view, restrita pela função do vendedor (a coluna do vendedor é
       // fechada para `authenticated`; migration 20261123120000). Filtros, ordem e cursor iguais.
+      // Ordem estável + janela junto da fonte (a rpc set-returning também tem a capa de 1.000).
+      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
       const fonte = vendedor
         ? supabase.rpc('order_feed_do_vendedor', { p_vendedor: vendedor }, { count: contar }).select(COLUNAS_PAGINA_FEED)
         : supabase.from('order_feed').select(COLUNAS_PAGINA_FEED, { count: contar });
-      // Ordem estável + janela junto da fonte (a rpc set-returning também tem a capa de 1.000).
-      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
-      let query = (ordem === 'valor' ? fonte.order('total', { ascending: false, nullsFirst: false }) : fonte)
-        .order('created_at', { ascending: false }).order('origin', { ascending: true }).order('id', { ascending: true })
-        .range(0, FEED_PAGE_SIZE - 1);
+      let query = (ordem === 'valor' ? fonte.order('total', NULOS_NO_FIM) : fonte)
+        .order('created_at', DESC).order('origin', ASC).order('id', ASC).range(0, FEED_PAGE_SIZE - 1);
       for (const f of filtrosDoRecorte(recorte)) {
         if (f.op === 'eq') query = query.eq(f.coluna, f.valor);
         else if (f.op === 'in') query = query.in(f.coluna, [...f.valores]);
