@@ -17,9 +17,9 @@ export type LinhaViewDFC = {
   lancamentos: number;
 };
 
-export type Atividade = 'operacional' | 'investimento' | 'financiamento';
-export const ATIVIDADES: readonly Atividade[] = ['operacional', 'investimento', 'financiamento'];
-export const ROTULO_ATIVIDADE: Record<Atividade, string> = {
+type Atividade = 'operacional' | 'investimento' | 'financiamento';
+const ATIVIDADES: readonly Atividade[] = ['operacional', 'investimento', 'financiamento'];
+const ROTULO_ATIVIDADE: Record<Atividade, string> = {
   operacional: 'Atividades operacionais',
   investimento: 'Atividades de investimento',
   financiamento: 'Atividades de financiamento',
@@ -27,7 +27,7 @@ export const ROTULO_ATIVIDADE: Record<Atividade, string> = {
 
 // Ordem do demonstrativo e rótulos. Linha que a view devolver e não estiver aqui entra no fim da
 // atividade dela com o código cru — nunca some.
-export const ROTULO_LINHA: Record<string, string> = {
+const ROTULO_LINHA: Record<string, string> = {
   op_recebimento_clientes: 'Recebimentos de clientes',
   op_outros_recebimentos: 'Outros recebimentos',
   op_fornecedores: 'Pagamentos a fornecedores',
@@ -51,15 +51,15 @@ export const ROTULO_LINHA: Record<string, string> = {
 };
 const ORDEM_LINHA = Object.keys(ROTULO_LINHA);
 
-export type LinhaDFC = { linha: string; rotulo: string; porMes: Record<string, number>; total: number };
+type LinhaDFC = { linha: string; rotulo: string; porMes: Record<string, number>; total: number };
 /** `total` null = nenhuma observação na janela (R$ 0 seria afirmar movimento conferido — Codex). */
-export type BlocoDFC = { atividade: Atividade; rotulo: string; linhas: LinhaDFC[]; porMes: Record<string, number>; total: number | null };
-export type ForaDasAtividades = { porMes: Record<string, number>; total: number; entradas: number; saidas: number; lancamentos: number };
-export type ItemFora = ForaDasAtividades & { linha: string; rotulo: string; explicacao: string };
+type BlocoDFC = { atividade: Atividade; rotulo: string; linhas: LinhaDFC[]; porMes: Record<string, number>; total: number | null };
+type ForaDasAtividades = { porMes: Record<string, number>; total: number; entradas: number; saidas: number; lancamentos: number };
+type ItemFora = ForaDasAtividades & { linha: string; rotulo: string; explicacao: string };
 
 // Fora das três atividades, na ordem da tela. Linha que não é op_/inv_/fin_ nem está aqui cai em
 // `nao_classificado` (nunca some).
-export const FORA_DAS_ATIVIDADES: ReadonlyArray<{ linha: string; rotulo: string; explicacao: string }> = [
+const FORA_DAS_ATIVIDADES: ReadonlyArray<{ linha: string; rotulo: string; explicacao: string }> = [
   { linha: 'transferencia_interna', rotulo: 'Transferências entre contas da empresa', explicacao: 'Saem e entram no mesmo CNPJ — não mudam o caixa da empresa.' },
   { linha: 'equivalente_caixa', rotulo: 'Aplicações de liquidez (equivalentes de caixa)', explicacao: 'Resgate ou aplicação de liquidez imediata — troca entre caixa e equivalente.' },
   { linha: 'pendente_identidade', rotulo: 'Pendente de identidade', explicacao: 'Baixa sem identificador do Omie igual a uma baixa já contada (provável versão antiga) — fora para não dobrar.' },

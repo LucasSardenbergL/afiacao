@@ -24,7 +24,7 @@ function num(v: unknown, onde: string): number {
   return n;
 }
 
-export function normalizarLinhaDFC(r: Record<string, unknown>): LinhaViewDFC {
+function normalizarLinhaDFC(r: Record<string, unknown>): LinhaViewDFC {
   const onde = `${String(r.company)}/${String(r.mes)}/${String(r.fluxo_linha)}`;
   return {
     company: String(r.company),
