@@ -32,7 +32,8 @@ export const ROTULO_LINHA: Record<string, string> = {
   op_outros_recebimentos: 'Outros recebimentos',
   op_fornecedores: 'Pagamentos a fornecedores',
   op_pessoal: 'Pessoal e encargos',
-  op_impostos: 'Tributos',
+  op_impostos: 'Tributos sobre vendas e demais',
+  op_impostos_lucro: 'IRPJ e CSLL',
   op_impostos_parcelamento: 'Parcelamento de tributos',
   op_despesas: 'Despesas operacionais',
   op_tarifas_bancarias: 'Tarifas bancárias',
@@ -42,7 +43,7 @@ export const ROTULO_LINHA: Record<string, string> = {
   inv_aplicacoes: 'Aplicações e resgates',
   inv_rendimentos: 'Juros e rendimentos recebidos',
   fin_captacao: 'Captação de empréstimos',
-  fin_amortizacao: 'Pagamento de empréstimos (principal + juros)',
+  fin_amortizacao: 'Parcelas de empréstimo (principal + juros, sem abertura)',
   fin_juros: 'Juros pagos',
   fin_aporte: 'Aporte de capital',
   fin_distribuicao: 'Distribuição de lucros',
@@ -53,15 +54,25 @@ const ORDEM_LINHA = Object.keys(ROTULO_LINHA);
 export type LinhaDFC = { linha: string; rotulo: string; porMes: Record<string, number>; total: number };
 export type BlocoDFC = { atividade: Atividade; rotulo: string; linhas: LinhaDFC[]; porMes: Record<string, number>; total: number };
 export type ForaDasAtividades = { porMes: Record<string, number>; total: number; entradas: number; saidas: number; lancamentos: number };
+export type ItemFora = ForaDasAtividades & { linha: string; rotulo: string; explicacao: string };
+
+// Fora das três atividades, na ordem da tela. Linha que não é op_/inv_/fin_ nem está aqui cai em
+// `nao_classificado` (nunca some).
+export const FORA_DAS_ATIVIDADES: ReadonlyArray<{ linha: string; rotulo: string; explicacao: string }> = [
+  { linha: 'transferencia_interna', rotulo: 'Transferências entre contas da empresa', explicacao: 'Saem e entram no mesmo CNPJ — não mudam o caixa da empresa.' },
+  { linha: 'equivalente_caixa', rotulo: 'Aplicações de liquidez (equivalentes de caixa)', explicacao: 'Resgate ou aplicação de liquidez imediata — troca entre caixa e equivalente.' },
+  { linha: 'pendente_identidade', rotulo: 'Pendente de identidade', explicacao: 'Baixa sem identificador do Omie igual a uma baixa já contada (provável versão antiga) — fora para não dobrar.' },
+  { linha: 'pendente_revisao', rotulo: 'Pendente de revisão', explicacao: 'Baixa sem identificador num título que já tem outra baixa de valor diferente — pode ser parcela legítima; revise no Omie.' },
+  { linha: 'nao_classificado', rotulo: 'Não classificado', explicacao: 'Categoria sem decisão no mapa de fluxo — entra aqui até alguém classificar.' },
+];
 
 export type DFC = {
   meses: string[];
   blocos: BlocoDFC[];
   /** Σ das três atividades por mês — a variação de caixa explicada pelo demonstrativo. */
   variacao: { porMes: Record<string, number>; total: number };
-  transferencias: ForaDasAtividades;
-  pendenteIdentidade: ForaDasAtividades;
-  naoClassificado: ForaDasAtividades;
+  /** Na ordem de FORA_DAS_ATIVIDADES; só os que tiveram movimento na janela. */
+  fora: ItemFora[];
 };
 
 const soma = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0);
@@ -87,15 +98,18 @@ function acumularFora(acc: ForaDasAtividades, r: LinhaViewDFC) {
 export function montarDFC(rows: LinhaViewDFC[], meses: string[]): DFC {
   const dentro = new Set(meses);
   const porLinha = new Map<string, LinhaDFC & { atividade: Atividade }>();
-  const transferencias = vazioFora();
-  const pendenteIdentidade = vazioFora();
-  const naoClassificado = vazioFora();
+  const fora = new Map<string, ForaDasAtividades>();
+  const conhecidosFora = new Set(FORA_DAS_ATIVIDADES.map((f) => f.linha));
 
   for (const r of rows) {
     if (!dentro.has(r.mes)) continue;
-    if (r.fluxo_linha === 'transferencia_interna') { acumularFora(transferencias, r); continue; }
-    if (r.fluxo_linha === 'pendente_identidade') { acumularFora(pendenteIdentidade, r); continue; }
-    if (!(ATIVIDADES as readonly string[]).includes(r.atividade)) { acumularFora(naoClassificado, r); continue; }
+    if (!(ATIVIDADES as readonly string[]).includes(r.atividade)) {
+      const chave = conhecidosFora.has(r.fluxo_linha) ? r.fluxo_linha : 'nao_classificado';
+      const acc = fora.get(chave) ?? vazioFora();
+      acumularFora(acc, r);
+      fora.set(chave, acc);
+      continue;
+    }
     const atividade = r.atividade as Atividade;
     const item = porLinha.get(r.fluxo_linha) ?? { linha: r.fluxo_linha, rotulo: ROTULO_LINHA[r.fluxo_linha] ?? r.fluxo_linha, porMes: {}, total: 0, atividade };
     item.porMes[r.mes] = arred((item.porMes[r.mes] ?? 0) + r.liquido);
@@ -121,9 +135,7 @@ export function montarDFC(rows: LinhaViewDFC[], meses: string[]): DFC {
     meses,
     blocos,
     variacao: { porMes: variacaoPorMes, total: arred(soma(variacaoPorMes)) },
-    transferencias,
-    pendenteIdentidade,
-    naoClassificado,
+    fora: FORA_DAS_ATIVIDADES.filter((f) => fora.has(f.linha)).map((f) => ({ ...f, ...fora.get(f.linha)! })),
   };
 }
 

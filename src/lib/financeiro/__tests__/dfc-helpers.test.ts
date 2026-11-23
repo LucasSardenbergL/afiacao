@@ -34,10 +34,12 @@ describe('montarDFC', () => {
     expect(d.variacao.total).toBe(570);
   });
 
-  it('transferência, pendente de identidade e não classificado ficam FORA das atividades e visíveis', () => {
-    expect(d.transferencias).toMatchObject({ total: 0, entradas: 50, saidas: 50 });
-    expect(d.pendenteIdentidade).toMatchObject({ total: 40, entradas: 40 });
-    expect(d.naoClassificado).toMatchObject({ total: -20, saidas: 20 });
+  it('transferência, pendente de identidade e não classificado ficam FORA das atividades e visíveis, na ordem', () => {
+    expect(d.fora.map((f) => f.linha)).toEqual(['transferencia_interna', 'pendente_identidade', 'nao_classificado']);
+    const F = (l: string) => d.fora.find((f) => f.linha === l)!;
+    expect(F('transferencia_interna')).toMatchObject({ total: 0, entradas: 50, saidas: 50 });
+    expect(F('pendente_identidade')).toMatchObject({ total: 40, entradas: 40 });
+    expect(F('nao_classificado')).toMatchObject({ total: -20, saidas: 20 });
     // se o não classificado entrasse na operacional, outubro daria 480
     expect(d.blocos.find((b) => b.atividade === 'operacional')!.porMes['2026-10-01']).toBe(500);
   });
@@ -50,6 +52,12 @@ describe('montarDFC', () => {
   it('linha desconhecida da view entra na atividade com o código cru (nunca some)', () => {
     const x = montarDFC([L('2026-09-01', 'op_linha_nova', 'operacional', 0, 7)], MESES);
     expect(x.blocos[0].linhas).toEqual([{ linha: 'op_linha_nova', rotulo: 'op_linha_nova', porMes: { '2026-09-01': -7 }, total: -7 }]);
+  });
+
+  it('fora desconhecido (atividade fora das três) cai em nao_classificado, nunca some', () => {
+    const x = montarDFC([L('2026-09-01', 'balde_novo', 'balde_novo', 0, 3), L('2026-09-01', 'equivalente_caixa', 'equivalente_caixa', 25, 0), L('2026-09-01', 'pendente_revisao', 'pendente_revisao', 60, 0)], MESES);
+    expect(x.fora.map((f) => `${f.linha}=${f.total}`)).toEqual(['equivalente_caixa=25', 'pendente_revisao=60', 'nao_classificado=-3']);
+    expect(x.variacao.total).toBe(0);
   });
 
   it('consolidado de empresas é soma de exibição (mesma linha de CNPJs diferentes)', () => {
