@@ -52,8 +52,12 @@ CREATE TABLE public.fin_movimentacoes (
   categoria_descricao text, valor numeric, data_movimento date, omie_ncodbaixa bigint,
   omie_codigo_lancamento bigint, omie_ncodcc bigint, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
 ALTER TABLE public.fin_movimentacoes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mov_master ON public.fin_movimentacoes FOR SELECT
-  USING (EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role = 'master'));
+-- como em PROD (fin_user_can_access): STAFF lê a movimentação — quem barra o funcionário é a VIEW.
+CREATE POLICY mov_staff ON public.fin_movimentacoes FOR SELECT
+  USING (EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role IN ('master', 'employee')));
+CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $f$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $f$;
 GRANT USAGE ON SCHEMA public TO authenticated, anon;
 GRANT SELECT ON public.fin_movimentacoes, public.user_roles TO authenticated;
 INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-00000000000a', 'master'), ('00000000-0000-0000-0000-00000000000b', 'employee');
@@ -87,7 +91,17 @@ INSERT INTO public.fin_movimentacoes (company, natureza, categoria_codigo, categ
  ('oben','EXTP','2.05.01','CONTA_CORRENTE_PAG',40,'2026-09-15',NULL,NULL,7,now(),now()),
  -- 12: empréstimo pago (parcela) ⇒ fin_amortizacao; aporte ⇒ fin_aporte
  ('oben','BAXP','2.05.03','CONTA_CORRENTE_PAG',300,'2026-09-16',3,50,7,now(),now()),
- ('oben','BAXR','1.04.04','CONTA_CORRENTE_REC',70,'2026-09-17',4,60,7,now(),now());
+ ('oben','BAXR','1.04.04','CONTA_CORRENTE_REC',70,'2026-09-17',4,60,7,now(),now()),
+ -- 13: baixa B5 CORRIGIDA para 0 (versão nova) — a velha de 80 NÃO pode ressuscitar
+ ('oben','BAXP','2.04.01','CONTA_CORRENTE_PAG',80,'2026-09-18',5,70,7,'2026-09-18','2026-09-18'),
+ ('oben','BAXP','2.04.01','CONTA_CORRENTE_PAG',0,'2026-09-18',5,70,7,'2026-09-18','2026-11-01'),
+ -- 14: sem identificador, título 10 com baixa vencedora de VALOR diferente ⇒ pendente_revisao
+ ('oben','BAXR','1.01.03','CONTA_CORRENTE_REC',60,'2026-09-19',NULL,10,7,'2026-09-19','2026-09-19'),
+ -- 15: sem identificador, título 10, mas no sentido OPOSTO (pagamento) ⇒ não é a baixa do recebimento: entra
+ ('oben','BAXP','2.04.01','CONTA_CORRENTE_PAG',100,'2026-09-20',NULL,10,7,'2026-09-20','2026-09-20'),
+ -- 16: IRPJ ⇒ linha própria; 17: resgate de aplicação de liquidez (colacor) ⇒ equivalente_caixa
+ ('oben','BAXP','2.06.05','CONTA_CORRENTE_PAG',9,'2026-09-21',6,80,7,now(),now()),
+ ('colacor','EXTR','1.04.01','CONTA_CORRENTE_REC',25,'2026-09-22',NULL,NULL,9,now(),now());
 SQL
 
 # ── PARTE 1: migration ──
@@ -102,6 +116,7 @@ sab_mig() {
 sab_mig "view-sem-invoker" "s/WITH (security_invoker = on) AS/AS/"
 sab_mig "sem-rls" "s/^ALTER TABLE public.fin_categoria_fluxo_mapping ENABLE ROW LEVEL SECURITY;/SELECT 1;/"
 sab_mig "aceita-default" "s/CHECK (company = ANY (ARRAY\['oben', 'colacor', 'colacor_sc'\]))/CHECK (true)/"
+sab_mig "view-sem-predicado-master" "s/     AND public.has_role(auth.uid(), 'master'::public.app_role)/     AND true/"
 sab_mig "anon-le-view" "s/^REVOKE ALL ON public.v_fin_fluxo_caixa_realizado FROM anon;/GRANT SELECT ON public.v_fin_fluxo_caixa_realizado TO anon;/"
 
 P -q -f "$MIG" && ok "M0 migration real aplicou (controle verde, mesma invocação)"
@@ -141,17 +156,23 @@ eq "V5 tarifas iguais no mesmo dia entram as duas" "$(LINHA op_tarifas_bancarias
 eq "V6 conta sem decisão fica visível" "$(LINHA nao_classificado)" "nao_classificado=0.00/20.00"
 eq "V7 juros pagos em financiamento" "$(LINHA fin_juros)" "fin_juros=0.00/40.00"
 eq "V8 parcela de empréstimo e aporte" "$(LINHA fin_amortizacao) $(LINHA fin_aporte)" "fin_amortizacao=0.00/300.00 fin_aporte=70.00/0.00"
-eq "V9 atividade derivada do prefixo" "$(P -tA -c "SELECT string_agg(DISTINCT fluxo_linha||':'||atividade, ' ' ORDER BY fluxo_linha||':'||atividade) FROM v_fin_fluxo_caixa_realizado WHERE fluxo_linha IN ('fin_juros','op_fornecedores','transferencia_interna');" | tail -1)" "fin_juros:financiamento op_fornecedores:operacional transferencia_interna:transferencia_interna"
-eq "V10 ótica do título, valor 0 e versão velha fora (total de lançamentos)" "$(P -tA -c "SELECT sum(lancamentos) FROM v_fin_fluxo_caixa_realizado;" | tail -1)" "12"
-# RLS pelo INVOKER: quem não lê fin_movimentacoes não vê nada pela view
-eq "V11 employee (sem RLS na movimentação) vê 0 linhas pela view" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000b'; SELECT count(*) FROM v_fin_fluxo_caixa_realizado;" | tail -1)" "0"
+eq "V9 atividade derivada do prefixo" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT string_agg(DISTINCT fluxo_linha||':'||atividade, ' ' ORDER BY fluxo_linha||':'||atividade) FROM v_fin_fluxo_caixa_realizado WHERE fluxo_linha IN ('fin_juros','op_fornecedores','transferencia_interna');" | tail -1)" "fin_juros:financiamento op_fornecedores:operacional transferencia_interna:transferencia_interna"
+eq "V10 ótica do título, valor 0 e versões velhas fora (total de lançamentos)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(lancamentos) FROM v_fin_fluxo_caixa_realizado;" | tail -1)" "16"
+eq "V13 baixa corrigida para 0 não ressuscita a versão de 80" "$(LINHA op_despesas)" "op_despesas=0.00/100.00"
+eq "V14 só o título coincide (valor diferente) ⇒ pendente_revisao" "$(LINHA pendente_revisao)" "pendente_revisao=60.00/0.00"
+eq "V15 IRPJ em linha própria" "$(LINHA op_impostos_lucro)" "op_impostos_lucro=0.00/9.00"
+eq "V16 resgate de aplicação (colacor) ⇒ equivalente_caixa, fora das atividades" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT fluxo_linha||'|'||atividade||'|'||entradas FROM v_fin_fluxo_caixa_realizado WHERE company='colacor';" | tail -1)" "equivalente_caixa|equivalente_caixa|25.00"
+# Funcionário LÊ fin_movimentacoes (política de prod) — só o predicado master da view o barra
+eq "V11a employee lê a movimentação direto (pré-condição do teste)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000b'; SELECT count(*) > 0 FROM fin_movimentacoes;" | tail -1)" "t"
+eq "V11 employee vê 0 linhas pela view" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000b'; SELECT count(*) FROM v_fin_fluxo_caixa_realizado;" | tail -1)" "0"
 
 # F-view: cada regra sabotada na migration (copiada) tem de deixar um assert V vermelho.
 sab_view() { # $1 rótulo · $2 sed · $3 linha a conferir · $4 valor correto (tem de MUDAR)
   local f="$TMPD/sab-view.sql" got
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "F-view-$1: sed não aplicou"; return; fi
-  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$f" >/dev/null
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;"
+  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-view-$1: cópia sabotada NÃO aplicou (assert ficaria vermelho por ausência — teatro)"; P -q -f "$MIG" >/dev/null; return; fi
   if [ "$3" = TOTAL ]; then got="$(TOTAL)"; else got="$(LINHA "$3")"; fi
   if [ "$got" != "$4" ]; then ok "F-view-$1: sabotagem muda $3 ($got)"; else bad "F-view-$1: SEM dente ($got)"; fi
   P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$MIG" >/dev/null
@@ -159,9 +180,9 @@ sab_view() { # $1 rótulo · $2 sed · $3 linha a conferir · $4 valor correto (
 # recebimento de clientes em TODOS os meses (a versão velha está em agosto): com dedupe = 100
 TOTAL() { P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(entradas) FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND fluxo_linha='op_recebimento_clientes';" | tail -1; }
 eq "V12 recebimento de clientes em todos os meses: a versão velha não aparece em agosto" "$(TOTAL)" "100.00"
-sab_view "sem-dedupe" "s/   WHERE cc.omie_ncodbaixa IS NULL OR cc.rn = 1/   WHERE true/" TOTAL "100.00"
+sab_view "sem-dedupe" "s/  SELECT \* FROM cc WHERE cc.omie_ncodbaixa IS NOT NULL AND cc.rn = 1/  SELECT * FROM cc WHERE cc.omie_ncodbaixa IS NOT NULL/" TOTAL "100.00"
 sab_view "sem-pendente" "s/             THEN 'pendente_identidade'/             THEN NULL/" op_recebimento_clientes "op_recebimento_clientes=100.00/0.00"
-sab_view "transferencia-pela-categoria" "s/           WHEN cc.natureza IN ('TRAP', 'TRAR') THEN 'transferencia_interna'/           WHEN false THEN 'transferencia_interna'/" transferencia_interna "transferencia_interna=30.00/37.00"
+sab_view "transferencia-pela-categoria" "s/  SELECT e.company, date_trunc('month', e.data_movimento)::date AS mes,/&/; s/         CASE WHEN e.natureza IN ('TRAP', 'TRAR') THEN 'transferencia_interna'/         CASE WHEN false THEN 'transferencia_interna'/" transferencia_interna "transferencia_interna=30.00/37.00"
 sab_view "dedupe-mantem-velha" "s/ORDER BY m.updated_at DESC, m.created_at DESC, m.id DESC/ORDER BY m.updated_at ASC, m.created_at ASC, m.id ASC/" op_recebimento_clientes "op_recebimento_clientes=100.00/0.00"
 eq "F-view-controle: view restaurada volta ao verde" "$(LINHA op_recebimento_clientes)" "op_recebimento_clientes=100.00/0.00"
 

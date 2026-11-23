@@ -12,6 +12,8 @@ BEGIN;
 --   investimento inv_* — inclui juros/rendimentos e dividendos RECEBIDOS
 --   financiamento fin_* — inclui juros PAGOS e a parcela de empréstimo (principal+juros não separados)
 --   transferencia_interna — entre contas da MESMA empresa: fora do fluxo (a origem TRAP/TRAR também decide)
+--   equivalente_caixa — aplicação/resgate de liquidez imediata: troca entre caixa e equivalente, fora do fluxo
+--   op_impostos_lucro — IRPJ/CSLL pagos em linha PRÓPRIA (CPC 03 item 35)
 -- Sem `_default`: código Omie NÃO é global entre as empresas (1.04.04 = aporte na oben, empréstimo na SC).
 -- Desenho: docs/superpowers/specs/2026-11-22-dre-fluxo-caixa-mapa-proprio-design.md §4
 -- ============================================================
@@ -22,10 +24,10 @@ CREATE TABLE IF NOT EXISTS public.fin_categoria_fluxo_mapping (
   omie_codigo text NOT NULL,
   fluxo_linha text NOT NULL CONSTRAINT fin_categoria_fluxo_mapping_linha_check CHECK (fluxo_linha = ANY (ARRAY[
     'op_recebimento_clientes', 'op_outros_recebimentos', 'op_fornecedores', 'op_pessoal', 'op_impostos',
-    'op_impostos_parcelamento', 'op_despesas', 'op_tarifas_bancarias', 'op_adiantamentos',
+    'op_impostos_lucro', 'op_impostos_parcelamento', 'op_despesas', 'op_tarifas_bancarias', 'op_adiantamentos',
     'inv_imobilizado', 'inv_venda_ativo', 'inv_aplicacoes', 'inv_rendimentos',
     'fin_captacao', 'fin_amortizacao', 'fin_juros', 'fin_aporte', 'fin_distribuicao', 'fin_intercompany',
-    'transferencia_interna'
+    'transferencia_interna', 'equivalente_caixa'
   ]::text[])),
   notas text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -59,9 +61,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.fin_categoria_fluxo_mapping TO au
 -- Identidade (medida em prod, histórico inteiro):
 --   • baixa identificada: ÚLTIMA observação por (empresa, omie_ncodbaixa) — 4 grupos tinham versão
 --     congelada (hash de ncodmov mudou; mesmo valor, data e conta).
---   • baixa SEM omie_ncodbaixa em título que JÁ tem baixa identificada: versão anterior à captura do
---     identificador (nenhuma atualizada depois de 2026-10-09) ⇒ linha `pendente_identidade`, FORA das
---     atividades mas visível. Órfã (título sem baixa identificada) entra no fluxo — é a única evidência.
+--   • baixa SEM omie_ncodbaixa: comparada só com as baixas VENCEDORAS do mesmo título e sentido. Mesmo
+--     valor ⇒ `pendente_identidade` (provável versão anterior à captura do identificador); só o título
+--     ⇒ `pendente_revisao` (pode ser parcela legítima). Os dois ficam FORA das atividades e visíveis.
+--     Órfã (título sem baixa vencedora) entra no fluxo — é a única evidência do pagamento.
 --   • extrato/transferência não têm identificador; chaves naturais repetidas são lançamentos distintos
 --     (descrições diferentes, nenhuma versão congelada) ⇒ entram todas.
 --   • TRAP/TRAR ⇒ `transferencia_interna` pela ORIGEM, qualquer que seja a categoria (pareamento medido:
@@ -72,31 +75,46 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.fin_categoria_fluxo_mapping TO au
 CREATE OR REPLACE VIEW public.v_fin_fluxo_caixa_realizado
 WITH (security_invoker = on) AS
 WITH cc AS (
+  -- SEM filtro de valor aqui: a versão vencedora é escolhida ANTES (uma baixa corrigida para 0 não pode
+  -- ressuscitar o valor da versão anterior — Codex). Master-only DENTRO da view: a RLS de
+  -- fin_movimentacoes (fin_user_can_access) libera também funcionário, e o invoker sozinho vazaria o DFC.
   SELECT m.id, m.company, m.natureza, m.categoria_codigo, m.categoria_descricao, m.valor, m.data_movimento,
          m.omie_ncodbaixa, m.omie_codigo_lancamento,
          row_number() OVER (PARTITION BY m.company, m.omie_ncodbaixa
                             ORDER BY m.updated_at DESC, m.created_at DESC, m.id DESC) AS rn
     FROM public.fin_movimentacoes m
    WHERE m.categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')
-     AND m.valor > 0
+     AND public.has_role(auth.uid(), 'master'::public.app_role)
+),
+vencedoras AS (
+  SELECT * FROM cc WHERE cc.omie_ncodbaixa IS NOT NULL AND cc.rn = 1
 ),
 eventos AS (
-  SELECT cc.*,
+  SELECT v.company, v.natureza, v.categoria_codigo, v.categoria_descricao, v.valor, v.data_movimento,
+         NULL::text AS linha_forcada
+    FROM vencedoras v
+   WHERE v.valor > 0
+  UNION ALL
+  SELECT n.company, n.natureza, n.categoria_codigo, n.categoria_descricao, n.valor, n.data_movimento,
          CASE
-           WHEN cc.natureza IN ('TRAP', 'TRAR') THEN 'transferencia_interna'
-           WHEN cc.omie_ncodbaixa IS NULL AND cc.natureza IN ('BAXR', 'BAXP', 'APBR')
-                AND EXISTS (SELECT 1 FROM cc c2
-                             WHERE c2.company = cc.company
-                               AND c2.omie_codigo_lancamento = cc.omie_codigo_lancamento
-                               AND c2.omie_ncodbaixa IS NOT NULL)
-             THEN 'pendente_identidade'
-         END AS linha_forcada
-    FROM cc
-   WHERE cc.omie_ncodbaixa IS NULL OR cc.rn = 1
+           WHEN n.natureza IN ('BAXR', 'BAXP', 'APBR') AND EXISTS (
+                  SELECT 1 FROM vencedoras w
+                   WHERE w.company = n.company AND w.omie_codigo_lancamento = n.omie_codigo_lancamento
+                     AND w.categoria_descricao = n.categoria_descricao AND w.valor = n.valor)
+             THEN 'pendente_identidade'   -- mesma baixa vista antes do identificador (provável versão)
+           WHEN n.natureza IN ('BAXR', 'BAXP', 'APBR') AND EXISTS (
+                  SELECT 1 FROM vencedoras w
+                   WHERE w.company = n.company AND w.omie_codigo_lancamento = n.omie_codigo_lancamento
+                     AND w.categoria_descricao = n.categoria_descricao)
+             THEN 'pendente_revisao'      -- só o título coincide: pode ser parcela legítima — revisar
+         END
+    FROM cc n
+   WHERE n.omie_ncodbaixa IS NULL AND n.valor > 0
 ),
 classificados AS (
   SELECT e.company, date_trunc('month', e.data_movimento)::date AS mes,
-         coalesce(e.linha_forcada, fm.fluxo_linha, 'nao_classificado') AS fluxo_linha,
+         CASE WHEN e.natureza IN ('TRAP', 'TRAR') THEN 'transferencia_interna'
+              ELSE coalesce(e.linha_forcada, fm.fluxo_linha, 'nao_classificado') END AS fluxo_linha,
          CASE WHEN e.categoria_descricao = 'CONTA_CORRENTE_REC' THEN e.valor ELSE 0 END AS entrada,
          CASE WHEN e.categoria_descricao = 'CONTA_CORRENTE_PAG' THEN e.valor ELSE 0 END AS saida
     FROM eventos e
@@ -108,7 +126,7 @@ SELECT company, mes, fluxo_linha,
          WHEN fluxo_linha LIKE 'op\_%' THEN 'operacional'
          WHEN fluxo_linha LIKE 'inv\_%' THEN 'investimento'
          WHEN fluxo_linha LIKE 'fin\_%' THEN 'financiamento'
-         ELSE fluxo_linha  -- transferencia_interna · pendente_identidade · nao_classificado
+         ELSE fluxo_linha  -- transferencia_interna · equivalente_caixa · pendente_* · nao_classificado
        END AS atividade,
        round(sum(entrada), 2) AS entradas,
        round(sum(saida), 2) AS saidas,
@@ -159,6 +177,9 @@ BEGIN
                   WHERE oid = 'public.v_fin_fluxo_caixa_realizado'::regclass
                     AND 'security_invoker=on' = ANY (coalesce(reloptions, '{}'))) THEN
     RAISE EXCEPTION 'postcondicao: v_fin_fluxo_caixa_realizado sem security_invoker=on';
+  END IF;
+  IF position('has_role' IN pg_get_viewdef('public.v_fin_fluxo_caixa_realizado'::regclass)) = 0 THEN
+    RAISE EXCEPTION 'postcondicao: v_fin_fluxo_caixa_realizado sem o predicado master (funcionario veria o DFC)';
   END IF;
   IF has_table_privilege('anon', 'public.v_fin_fluxo_caixa_realizado', 'SELECT') THEN
     RAISE EXCEPTION 'postcondicao: anon le v_fin_fluxo_caixa_realizado';
