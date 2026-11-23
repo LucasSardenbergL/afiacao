@@ -98,8 +98,9 @@ describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
   }
 
   it('bug 1: descartar o rascunho zera o envelope (pedido idêntico seguinte é NOVO)', () => {
-    expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope(chaveEnvelopeDoRascunho, ');
-    expect(pagina).toContain("envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual(chaveEnvelopeDoRascunho)) === 'confirmar'}");
+    // PR 2.2 (rodada 4): solta SÓ o envio que o diálogo mostrou (chave + id), inclusive o legado.
+    expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope(envioMostradoRef.current);');
+    expect(pagina).toContain('envioPendente={envioDoRascunho.pendente}');
   });
 
   it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
@@ -132,7 +133,9 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
 
   it('orçamento com envio de pedido pendente é barrado ANTES de gravar (sem 2ª linha da conta enviada)', () => {
     const corpo = corpoDo('submitQuote');
-    const barra = corpo.indexOf('if (checkoutEnvRef.current?.committed) {');
+    // PR 2.2 (Codex P0 #6, rodada 4): relê as chaves do cliente E o legado — não só o espelho da aba.
+    expect(corpo).toContain('const pendenteQ = armQ && alvoQ ? pendenteDoCliente(armQ, alvoQ) : null;');
+    const barra = corpo.indexOf('if (pendenteQ !== null || checkoutEnvRef.current?.committed) {');
     expect(barra).toBeGreaterThan(-1);
     expect(barra).toBeLessThan(corpo.indexOf('submitQuoteService('));
   });
@@ -141,11 +144,12 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     const corpo = corpoDo('submitOrder');
     // PR 2.2: o commit é gravado pela RESERVA (relê o armazém do par sob trava entre abas); o rascunho vem logo após.
     const commit = corpo.indexOf('checkoutEnvRef.current = reserva.envelope;\n      if (!reserva.gravou) {');
+    expect(corpo).toContain('chaveDoEnvelopeRef.current = alvo.chaves[0];');
     expect(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();')).toBeGreaterThan(commit);
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
-    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; void comTravaEntreAbas\(`checkout:\$\{chaveEnv\}`, \(\) => concluirEnvio\(arm, chaveEnv, checkoutId\)\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
-    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),');
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; chaveDoEnvelopeRef\.current = null; void comTravaEntreAbas\(nomeDaTrava\(userIdTrava\), \(\) => concluirEnvio\(arm, alvo\.chaves, checkoutId\)\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(pagina).toContain('...draftPayload, nonce: h.nonceDoRascunho(), customerChaveEnvelope: h.chaveDoRascunho() ?? draftPayload.customerChaveEnvelope,');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });
 });

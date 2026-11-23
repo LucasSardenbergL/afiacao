@@ -347,3 +347,20 @@ Fica registrado:
   - o rascunho é por usuário, então o sucesso da aba A apaga o rascunho pendente da aba B;
   - o restore decide só pelo código Oben;
   - uma cópia já concluída em outra aba ainda pode virar orçamento.
+**4ª rodada do Codex (6 P0 de borda, todos criados pela própria correção) → 4ª versão:**
+- **A pergunta fica na aba:** `outra_copia` grava `PerguntaOutraCopia` (cliente, nonce, itens) e barra
+  todo envio no mesmo contexto até o vendedor tocar "É o mesmo pedido" ou "É outro pedido" — antes, o
+  clique seguinte sem escolha caía em `new` assim que o pendente sumia. "É outro pedido" ignora SÓ o id
+  mostrado (`ignorarPendente`).
+- **As ações conferem no clique** cliente, nonce e itens (`perguntaAindaVale`); mudou → "o pedido mudou".
+- **Nonce literal preso aos itens:** `id:<id>:<assinatura>`; com outra quantidade deriva id novo, nunca
+  "já enviado" falso.
+- **Sem `moverEnvelope`:** a cópia grava na chave do cliente NO NASCIMENTO do nonce (viaja no rascunho)
+  e o envio LÊ todas as chaves do cliente (usuário local, Oben, Colacor) + o legado — mover destravava a
+  aba que ficou na chave antiga. A trava entre abas passou a ser por usuário.
+- **Legado sem migração, lido como pendente** do cliente cujo prefixo casa (usuário local OU código Oben):
+  parcial legado + carrinho editado → `conflict` (a Oben não sai de novo); o guard do orçamento relê tudo.
+- O retry do PRÓPRIO id vem antes do conflito: um legado de outro carrinho não trava o retry do parcial.
+- "Trocar e limpar" remove chave ilegível do cliente (senão ele ficaria travado para sempre).
+- **Troca aceita:** "É outro pedido" sobrescreve o pendente da mesma chave; se a outra aba tinha um
+  parcial, o retry dela cai em `outra_copia` e o vendedor decide de novo.

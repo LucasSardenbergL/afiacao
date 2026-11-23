@@ -6,17 +6,20 @@
 // carrinho (ou um refresh que perdesse o envelope) sorteavam dois ids → dois PVs. Num computador
 // compartilhado, o vendedor B herdava o envelope do vendedor A.
 //
-// O desenho (3ª versão — o Codex derrubou duas versões com "lápide" local):
+// O desenho (4ª versão — o Codex derrubou duas versões com "lápide" local e achou 6 bordas na 3ª):
 //  1. O id é DERIVADO, não sorteado: `idDoEnvio(nonce, itens)`. O `nonce` nasce com o RASCUNHO (1º item no
 //     carrinho), viaja no rascunho em disco e é o que duas abas/um refresh compartilham ao restaurar.
 //     Mesma cópia + mesmo carrinho ⇒ MESMO id ⇒ o servidor responde "já enviado" (`sales_orders.checkout_id`
 //     + conta; OS por `cCodIntOS`). Carrinho diferente ⇒ id diferente ⇒ pedido novo — nunca um pedido
 //     legítimo é engolido como "já enviado". A "lápide" é o próprio servidor.
-//  2. O envelope COMPROMETIDO (um envio saiu) fica na chave por USUÁRIO + CLIENTE e trava o carrinho: depois
-//     de um envio parcial, editar e reenviar é conflito (senão a conta já enviada sairia de novo com id novo).
-//     O envio RELÊ essa chave e grava sob trava entre abas (`reservarEnvio` em `comTravaEntreAbas`); leitura
-//     ILEGÍVEL é `indeterminado` e barra o envio — só ausência comprovada libera.
-//  3. O nonce gira no fim do ciclo (sucesso total, descarte, troca de cliente, "Novo pedido"): o próximo
+//  2. O envelope COMPROMETIDO (um envio saiu) é gravado na chave do par (usuário, cliente NO NASCIMENTO do
+//     nonce — a chave viaja no rascunho; nada é movido de chave). Para DECIDIR, o envio lê TODAS as chaves
+//     do cliente (usuário local, Oben, Colacor) e a chave legada de antes do PR 2.2 cujo prefixo casa com
+//     ele: qualquer envio pendente do cliente trava o carrinho. Leitura ILEGÍVEL é `indeterminado` e barra
+//     o envio — só ausência comprovada libera.
+//  3. Envio pendente do MESMO carrinho feito por OUTRA cópia: quem decide é o vendedor ("É o mesmo pedido"
+//     adota o nonce do pendente; "É outro pedido" segue com o id desta cópia, `ignorarPendente`).
+//  4. O nonce gira no fim do ciclo (sucesso total, descarte, troca de cliente, "Novo pedido"): o próximo
 //     pedido idêntico é NOVO.
 //
 // Migração para o servidor (Onda 3, rascunhos no servidor): o `nonce` vira o id da linha do rascunho e o
@@ -31,16 +34,24 @@ export interface ArmazemEnvelope {
 }
 
 const PREFIXO_ENVELOPE = 'unified_order_checkout_env:v2:';
-/** Nonce que carrega um checkoutId LITERAL (envelope legado assumido pelo vendedor). */
+/** Nonce que carrega um checkoutId LITERAL (envio de outra cópia sem nonce — o legado) PRESO aos itens:
+ *  `id:<checkoutId>:<assinatura dos itens>`. Com outros itens, não vale o literal (Codex P0, rodada 4). */
 const PREFIXO_NONCE_LITERAL = 'id:';
 
-/** O nonce que retoma o envio `e` nesta cópia: o dele, ou o id literal se for legado. */
-export function nonceParaAssumir(e: CheckoutEnvelope): string {
-  return e.nonce || `${PREFIXO_NONCE_LITERAL}${e.checkoutId}`;
+/** A chave fixa de antes (sem dono). Nunca migrada: lida como pendente do cliente cujo prefixo casa. */
+export const CHAVE_ENVELOPE_LEGADA = 'unified_order_checkout_env';
+
+/** Itens da impressão digital SEM o prefixo do cliente (`<cliente>#<itens>`): o prefixo muda quando o
+ *  cliente ganha usuário local, e isso não pode virar "outro carrinho" (Codex P1). */
+export function assinaturaItens(fingerprint: string): string {
+  const i = fingerprint.indexOf('#');
+  return i < 0 ? fingerprint : fingerprint.slice(i + 1);
 }
 
-/** A chave fixa de antes (sem dono). Nunca migrada: só reaproveitada no retry EXATO do mesmo carrinho. */
-export const CHAVE_ENVELOPE_LEGADA = 'unified_order_checkout_env';
+/** O nonce que retoma o envio `e` nesta cópia: o dele, ou o id literal PRESO aos itens dele (legado). */
+export function nonceParaAssumir(e: CheckoutEnvelope): string {
+  return e.nonce || `${PREFIXO_NONCE_LITERAL}${e.checkoutId}:${assinaturaItens(e.fingerprint)}`;
+}
 
 export interface IdentidadeCliente {
   local_user_id?: string | null;
@@ -48,13 +59,34 @@ export interface IdentidadeCliente {
   codigo_cliente_colacor?: number | string | null;
 }
 
+// Código Omie 0 não identifica ninguém (cliente sem cadastro naquela conta) — Codex P1.
+const idDe = (x: unknown) => (x == null || x === '' || x === 0 || x === '0' ? null : String(x));
+
 /** Chave do cliente no armazém — a identidade MAIS ESTÁVEL primeiro (usuário local, Oben, Colacor). */
 export function chaveClienteEnvelope(c: IdentidadeCliente | null | undefined): string | null {
   if (!c) return null;
-  if (c.local_user_id) return `local:${c.local_user_id}`;
-  if (c.codigo_cliente) return `oben:${c.codigo_cliente}`;
-  if (c.codigo_cliente_colacor) return `colacor:${c.codigo_cliente_colacor}`;
+  const l = idDe(c.local_user_id); if (l) return `local:${l}`;
+  const o = idDe(c.codigo_cliente); if (o) return `oben:${o}`;
+  const k = idDe(c.codigo_cliente_colacor); if (k) return `colacor:${k}`;
   return null;
+}
+
+/** TODAS as chaves-de-cliente deste cliente (cada identidade não-vazia). O envio lê todas: a chave em que
+ *  outra cópia gravou depende de quais códigos o cliente tinha quando o nonce DELA nasceu. */
+export function chavesClienteEnvelope(c: IdentidadeCliente | null | undefined): string[] {
+  if (!c) return [];
+  const r: string[] = [];
+  const l = idDe(c.local_user_id); if (l) r.push(`local:${l}`);
+  const o = idDe(c.codigo_cliente); if (o) r.push(`oben:${o}`);
+  const k = idDe(c.codigo_cliente_colacor); if (k) r.push(`colacor:${k}`);
+  return r;
+}
+
+/** Prefixos da fingerprint LEGADA (`customerKey` de antes: usuário local, senão código Oben) que este
+ *  cliente pode ter tido — os dois, porque o cliente pode ter ganhado o usuário local depois (Codex P0). */
+export function prefixosLegadoDoCliente(c: IdentidadeCliente | null | undefined): string[] {
+  if (!c) return [];
+  return [idDe(c.local_user_id), idDe(c.codigo_cliente)].filter((x): x is string => x !== null);
 }
 
 export function chaveEnvelope(userId: string, chaveCliente: string): string {
@@ -67,34 +99,34 @@ export function chaveEnvelope(userId: string, chaveCliente: string): string {
  */
 export function mesmoCliente(a: IdentidadeCliente | null | undefined, b: IdentidadeCliente | null | undefined): boolean {
   if (!a || !b) return false;
-  // Código Omie 0 não identifica ninguém (cliente sem cadastro naquela conta) — Codex P1.
-  const id = (x: unknown) => (x == null || x === '' || x === 0 || x === '0' ? null : String(x));
-  const iguais = (x: unknown, y: unknown) => id(x) !== null && id(x) === id(y);
+  const iguais = (x: unknown, y: unknown) => idDe(x) !== null && idDe(x) === idDe(y);
   return iguais(a.local_user_id, b.local_user_id) || iguais(a.codigo_cliente, b.codigo_cliente)
     || iguais(a.codigo_cliente_colacor, b.codigo_cliente_colacor);
 }
 
-/** Itens da impressão digital SEM o prefixo do cliente (`<cliente>#<itens>`): o prefixo muda quando o
- *  cliente ganha usuário local, e isso não pode virar "outro carrinho" (Codex P1). */
-export function assinaturaItens(fingerprint: string): string {
-  const i = fingerprint.indexOf('#');
-  return i < 0 ? fingerprint : fingerprint.slice(i + 1);
+async function hashUuid(texto: string): Promise<string> {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto))).slice(0, 16);
+  h[6] = (h[6] & 0x0f) | 0x80; // versão 8 (RFC 9562: formato livre)
+  h[8] = (h[8] & 0x3f) | 0x80; // variante RFC
+  const hex = Array.from(h, b => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /**
  * O `checkoutId` do envio: SHA-256 de (nonce do rascunho, itens) no formato UUID (o banco guarda `uuid`).
  * Determinístico — a mesma cópia do pedido com o mesmo carrinho dá sempre o mesmo id, em qualquer aba.
+ * Nonce LITERAL (`id:<id>:<assinatura>`): o id literal só com OS MESMOS itens; com outros, o nonce é um
+ * nonce como outro qualquer e deriva um id novo (outra quantidade = outro pedido, nunca "já enviado").
  */
 export async function idDoEnvio(nonce: string, fingerprint: string): Promise<string> {
   if (!nonce) throw new Error('idDoEnvio: nonce vazio');
-  // Cópia que ASSUMIU um envelope legado (id sorteado, sem nonce): o id é o dele, literal.
-  if (nonce.startsWith(PREFIXO_NONCE_LITERAL)) return nonce.slice(PREFIXO_NONCE_LITERAL.length);
-  const dados = new TextEncoder().encode(`checkout-v1|${nonce}|${assinaturaItens(fingerprint)}`);
-  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', dados)).slice(0, 16);
-  h[6] = (h[6] & 0x0f) | 0x80; // versão 8 (RFC 9562: formato livre)
-  h[8] = (h[8] & 0x3f) | 0x80; // variante RFC
-  const hex = Array.from(h, b => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  const itens = assinaturaItens(fingerprint);
+  if (nonce.startsWith(PREFIXO_NONCE_LITERAL)) {
+    const resto = nonce.slice(PREFIXO_NONCE_LITERAL.length);
+    const sep = resto.indexOf(':');
+    if (sep > 0 && resto.slice(sep + 1) === itens) return resto.slice(0, sep);
+  }
+  return hashUuid(`checkout-v1|${nonce}|${itens}`);
 }
 
 function valido(x: unknown): x is CheckoutEnvelope {
@@ -120,12 +152,6 @@ export function lerEnvelopeEstrito(arm: ArmazemEnvelope, chave: string): Leitura
   } catch { return { estado: 'ilegivel' }; }
 }
 
-/** Para EXIBIR (diálogo, aviso). Nunca para decidir envio — use `lerEnvelopeEstrito`. */
-export function lerEnvelope(arm: ArmazemEnvelope, chave: string): CheckoutEnvelope | null {
-  const l = lerEnvelopeEstrito(arm, chave);
-  return l.estado === 'presente' && l.envelope.committed ? l.envelope : null;
-}
-
 /** true = gravado (ou removido). false = o armazém recusou (quota/privado) — quem chama NÃO envia. */
 function gravarEnvelope(arm: ArmazemEnvelope, chave: string, e: CheckoutEnvelope | null): boolean {
   try {
@@ -141,86 +167,109 @@ export function gravarSeAindaFor(arm: ArmazemEnvelope, chave: string, idEsperado
   return gravarEnvelope(arm, chave, e);
 }
 
+/** Onde procurar envio pendente de um cliente: as chaves dele (a de gravação PRIMEIRO) + o legado. */
+export interface AlvoPendente {
+  /** Chaves completas (`chaveEnvelope`) do cliente; a 1ª é a de gravação desta cópia. */
+  chaves: string[];
+  /** `prefixosLegadoDoCliente` — o legado só conta se a fingerprint dele começar por um destes. */
+  prefixosLegado: string[];
+}
+
+export interface Pendente { chave: string; envelope: CheckoutEnvelope }
+
+export type LeituraPendentes = { estado: 'ilegivel' } | { estado: 'ok'; pendentes: Pendente[] };
+
+/** Todo envio COMPROMETIDO deste cliente, em qualquer chave dele ou no legado. Ilegível em qualquer uma →
+ *  `ilegivel` (nunca "não há pendente"). O legado ilegível também barra: não dá para saber de quem é. */
+export function lerPendentesDoCliente(arm: ArmazemEnvelope, alvo: AlvoPendente): LeituraPendentes {
+  const pendentes: Pendente[] = [];
+  for (const chave of Array.from(new Set(alvo.chaves))) {
+    const l = lerEnvelopeEstrito(arm, chave);
+    if (l.estado === 'ilegivel') return { estado: 'ilegivel' };
+    if (l.estado === 'presente' && l.envelope.committed) pendentes.push({ chave, envelope: l.envelope });
+  }
+  const leg = lerEnvelopeEstrito(arm, CHAVE_ENVELOPE_LEGADA);
+  if (leg.estado === 'ilegivel') return { estado: 'ilegivel' };
+  if (leg.estado === 'presente' && leg.envelope.committed
+    && alvo.prefixosLegado.some(px => px && leg.envelope.fingerprint.startsWith(`${px}#`))) {
+    pendentes.push({ chave: CHAVE_ENVELOPE_LEGADA, envelope: leg.envelope });
+  }
+  return { estado: 'ok', pendentes };
+}
+
+/** Para EXIBIR e para os guards (orçamento, "novo pedido", diálogo de descarte): o 1º envio pendente do
+ *  cliente, `undefined` se a leitura falhou (quem chama trata como pendente — fail-closed). */
+export function pendenteDoCliente(arm: ArmazemEnvelope, alvo: AlvoPendente): Pendente | null | undefined {
+  const l = lerPendentesDoCliente(arm, alvo);
+  return l.estado === 'ilegivel' ? undefined : (l.pendentes[0] ?? null);
+}
+
 export type ReservaEnvio =
   | { decisao: 'conflict'; envelope: CheckoutEnvelope }
   /** Envio pendente do MESMO carrinho feito por OUTRA cópia (outra aba, rascunho perdido, legado). Pode ser
    *  o mesmo pedido OU um pedido novo idêntico — a máquina não distingue, o VENDEDOR decide (Codex P0 ×2:
    *  reusar sozinho engolia o pedido novo; ignorar duplicava o mesmo). */
-  | { decisao: 'outra_copia'; envelope: CheckoutEnvelope }
+  | { decisao: 'outra_copia'; pendente: Pendente }
   | { decisao: 'indeterminado' }
   | { decisao: 'new' | 'reuse'; envelope: CheckoutEnvelope; gravou: boolean };
 
-export interface PedidoDeReserva {
-  chave: string;
+export interface PedidoDeReserva extends AlvoPendente {
   fingerprint: string;
   /** `idDoEnvio(nonce, fingerprint)` — calculado antes da trava (é assíncrono). */
   idCalculado: string;
-  /** customerKey de antes do PR 2.2 deste cliente (prefixo da fingerprint legada). */
-  prefixosLegado: string[];
+  /** checkoutId do pendente que o VENDEDOR disse ser OUTRO pedido ("É outro pedido") — só ele é ignorado. */
+  ignorarPendente?: string | null;
 }
 
 /**
- * A reserva do envio, sob `comTravaEntreAbas`: lê a chave do par (não a memória da aba), decide e grava o
- * envelope COMPROMETIDO. `criar(id)` monta o envelope novo com a metadata da ponte (e o nonce).
- *  - par ilegível → `indeterminado`
- *  - envio comprometido de OUTRO carrinho → `conflict` (a conta já enviada não sai de novo)
- *  - envio comprometido do MESMO carrinho e MESMO id (esta cópia) → `reuse` (o servidor diz "já enviado")
- *  - envio comprometido do MESMO carrinho com OUTRO id, ou legado do mesmo cliente+carrinho → `outra_copia`
+ * A reserva do envio, sob `comTravaEntreAbas`: lê as chaves do cliente (não a memória da aba), decide e
+ * grava o envelope COMPROMETIDO na chave de gravação (`chaves[0]`). `criar(id)` monta o envelope novo com a
+ * metadata da ponte (e o nonce).
+ *  - alguma chave ilegível → `indeterminado`
+ *  - envio pendente com o MESMO id (esta cópia, mesmo carrinho) → `reuse` (o servidor diz "já enviado")
+ *  - envio pendente de OUTRO carrinho → `conflict` (a conta já enviada não sai de novo)
+ *  - envio pendente do MESMO carrinho com OUTRO id (não ignorado) → `outra_copia`
  *  - senão → `new` com o id calculado.
  */
 export function reservarEnvio(arm: ArmazemEnvelope, p: PedidoDeReserva, criar: (id: string) => CheckoutEnvelope): ReservaEnvio {
-  const l = lerEnvelopeEstrito(arm, p.chave);
+  const chave = p.chaves[0];
+  if (!chave) return { decisao: 'indeterminado' };
+  const l = lerPendentesDoCliente(arm, p);
   if (l.estado === 'ilegivel') return { decisao: 'indeterminado' };
   const itens = assinaturaItens(p.fingerprint);
-  const guardado = l.estado === 'presente' && l.envelope.committed ? l.envelope : null;
-  if (guardado) {
-    if (assinaturaItens(guardado.fingerprint) !== itens) return { decisao: 'conflict', envelope: guardado };
-    if (guardado.checkoutId !== p.idCalculado) return { decisao: 'outra_copia', envelope: guardado };
-    const envelope = { ...guardado, fingerprint: p.fingerprint, committed: true };
-    return { decisao: 'reuse', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
+  // O retry do PRÓPRIO envio vem primeiro: mesmo id = o servidor deduplica, nunca é 2º PV — e um pendente
+  // de outro carrinho (o legado, outra cópia) não pode travar o retry de um parcial desta cópia.
+  const meu = l.pendentes.find(x => x.envelope.checkoutId === p.idCalculado);
+  if (meu) {
+    const envelope = { ...meu.envelope, fingerprint: p.fingerprint, committed: true };
+    return { decisao: 'reuse', envelope, gravou: gravarEnvelope(arm, chave, envelope) };
   }
-  const leg = lerEnvelopeEstrito(arm, CHAVE_ENVELOPE_LEGADA);
-  if (leg.estado === 'presente' && leg.envelope.committed && assinaturaItens(leg.envelope.fingerprint) === itens
-    && p.prefixosLegado.some(px => px && leg.envelope.fingerprint.startsWith(`${px}#`))) {
-    if (leg.envelope.checkoutId !== p.idCalculado) return { decisao: 'outra_copia', envelope: leg.envelope };
-    const envelope = { ...leg.envelope, fingerprint: p.fingerprint, committed: true };
-    return { decisao: 'reuse', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
-  }
+  const outroCarrinho = l.pendentes.find(x => assinaturaItens(x.envelope.fingerprint) !== itens);
+  if (outroCarrinho) return { decisao: 'conflict', envelope: outroCarrinho.envelope };
+  const outra = l.pendentes.find(x => x.envelope.checkoutId !== p.ignorarPendente);
+  if (outra) return { decisao: 'outra_copia', pendente: outra };
   const envelope = { ...criar(p.idCalculado), checkoutId: p.idCalculado, fingerprint: p.fingerprint, committed: true };
-  return { decisao: 'new', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
+  return { decisao: 'new', envelope, gravou: gravarEnvelope(arm, chave, envelope) };
 }
 
-/** Sucesso TOTAL: solta o envelope deste envio (e o legado, se era ele). false = não conseguiu apagar. */
-export function concluirEnvio(arm: ArmazemEnvelope, chave: string, checkoutId: string): boolean {
-  const leg = lerEnvelopeEstrito(arm, CHAVE_ENVELOPE_LEGADA);
-  if (leg.estado === 'presente' && leg.envelope.checkoutId === checkoutId) gravarEnvelope(arm, CHAVE_ENVELOPE_LEGADA, null);
-  const l = lerEnvelopeEstrito(arm, chave);
-  if (l.estado === 'ausente') return true;
-  if (l.estado === 'presente' && l.envelope.checkoutId !== checkoutId) return true; // de outra aba: fica
-  return gravarEnvelope(arm, chave, null);
+/** Sucesso TOTAL: solta o envelope deste envio em TODA chave do cliente e no legado. false = alguma remoção
+ *  falhou (o que sobra tem este id; um pedido novo idêntico tem outro → `outra_copia`, nunca calado). */
+export function concluirEnvio(arm: ArmazemEnvelope, chaves: string[], checkoutId: string): boolean {
+  let ok = true;
+  for (const chave of Array.from(new Set([...chaves, CHAVE_ENVELOPE_LEGADA]))) {
+    const l = lerEnvelopeEstrito(arm, chave);
+    if (l.estado === 'presente' && l.envelope.checkoutId === checkoutId) ok = gravarEnvelope(arm, chave, null) && ok;
+    else if (l.estado === 'ilegivel' && chave === chaves[0]) ok = false;
+  }
+  return ok;
 }
 
-/**
- * O MESMO cliente ganhou outra chave no meio do pedido: leva o envelope comprometido para a chave nova (a
- * trava do carrinho segue o cliente). Destino com OUTRO envio comprometido não é sobrescrito → false.
- */
-export function moverEnvelope(arm: ArmazemEnvelope, de: string, para: string): boolean {
-  if (de === para) return true;
-  const origem = lerEnvelopeEstrito(arm, de);
-  if (origem.estado !== 'presente') return origem.estado === 'ausente';
-  const destino = lerEnvelopeEstrito(arm, para);
-  if (destino.estado === 'ilegivel') return false;
-  if (destino.estado === 'presente' && destino.envelope.committed
-    && destino.envelope.checkoutId !== origem.envelope.checkoutId) return false;
-  return gravarEnvelope(arm, para, origem.envelope) && gravarEnvelope(arm, de, null);
-}
-
-/** Descartar o rascunho também solta o envelope legado DESTE carrinho (prefixo do cliente + itens). */
-export function descartarLegadoDoCliente(arm: ArmazemEnvelope, prefixosFp: string[], fingerprintDoRascunho: string | null): void {
-  const leg = lerEnvelopeEstrito(arm, CHAVE_ENVELOPE_LEGADA);
-  if (leg.estado !== 'presente' || !fingerprintDoRascunho) return;
-  if (assinaturaItens(leg.envelope.fingerprint) !== assinaturaItens(fingerprintDoRascunho)) return;
-  if (prefixosFp.some(p => p && leg.envelope.fingerprint.startsWith(`${p}#`))) gravarEnvelope(arm, CHAVE_ENVELOPE_LEGADA, null);
+/** "Trocar e limpar" com leitura ilegível: a chave ilegível não é de ninguém que se possa ler — o vendedor
+ *  pediu explicitamente para recomeçar, então ela sai (senão o cliente ficaria travado para sempre). */
+export function limparIlegiveis(arm: ArmazemEnvelope, alvo: AlvoPendente): void {
+  for (const chave of Array.from(new Set([...alvo.chaves, CHAVE_ENVELOPE_LEGADA]))) {
+    if (lerEnvelopeEstrito(arm, chave).estado === 'ilegivel') gravarEnvelope(arm, chave, null);
+  }
 }
 
 interface TravasWeb {
@@ -243,6 +292,11 @@ export async function comTravaEntreAbas<T>(
   return travas.request(nome, { mode: 'exclusive' }, fn);
 }
 
+/** Uma trava por USUÁRIO (não por chave de cliente): as chaves de um mesmo cliente podem ser várias. */
+export function nomeDaTrava(userId: string): string {
+  return `checkout:${userId}`;
+}
+
 /** O que a OUTRA aba fez com o envelope deste par, visto por um evento `storage`. */
 export type MudancaOutraAba = 'enviou' | 'liberou' | null;
 
@@ -252,4 +306,30 @@ export function classificarMudancaOutraAba(novoValor: string | null, meuCheckout
   try { e = JSON.parse(novoValor); } catch { return null; }
   if (!valido(e)) return null;
   return e.committed ? 'enviou' : null;
+}
+
+/**
+ * A pergunta "é o mesmo pedido?" fica PENDENTE NA ABA até o vendedor responder (Codex P0, rodada 4: sem
+ * isso, o clique seguinte sem escolha caía em `new` assim que o pendente sumisse). Vale enquanto o
+ * contexto em que foi feita (cliente, nonce desta cópia, itens) for o mesmo; mudou → a pergunta caducou.
+ */
+export interface PerguntaOutraCopia {
+  pendente: Pendente;
+  cliente: IdentidadeCliente | null;
+  nonce: string;
+  assinatura: string;
+}
+
+export function perguntaAindaVale(
+  q: PerguntaOutraCopia | null,
+  agora: { cliente: IdentidadeCliente | null; nonce: string | null; fingerprint: string },
+): boolean {
+  return !!q && !!agora.nonce && q.nonce === agora.nonce
+    && mesmoCliente(q.cliente, agora.cliente) && q.assinatura === assinaturaItens(agora.fingerprint);
+}
+
+/** O cliente-da-chave (`oben:123`) de uma chave completa deste usuário; o legado → null. */
+export function chaveClienteDaChave(chave: string, userId: string): string | null {
+  const px = `${PREFIXO_ENVELOPE}${userId}:`;
+  return chave.startsWith(px) ? chave.slice(px.length) : null;
 }
