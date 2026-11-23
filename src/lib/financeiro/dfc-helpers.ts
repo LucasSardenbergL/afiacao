@@ -52,7 +52,8 @@ export const ROTULO_LINHA: Record<string, string> = {
 const ORDEM_LINHA = Object.keys(ROTULO_LINHA);
 
 export type LinhaDFC = { linha: string; rotulo: string; porMes: Record<string, number>; total: number };
-export type BlocoDFC = { atividade: Atividade; rotulo: string; linhas: LinhaDFC[]; porMes: Record<string, number>; total: number };
+/** `total` null = nenhuma observação na janela (R$ 0 seria afirmar movimento conferido — Codex). */
+export type BlocoDFC = { atividade: Atividade; rotulo: string; linhas: LinhaDFC[]; porMes: Record<string, number>; total: number | null };
 export type ForaDasAtividades = { porMes: Record<string, number>; total: number; entradas: number; saidas: number; lancamentos: number };
 export type ItemFora = ForaDasAtividades & { linha: string; rotulo: string; explicacao: string };
 
@@ -70,7 +71,9 @@ export type DFC = {
   meses: string[];
   blocos: BlocoDFC[];
   /** Σ das três atividades por mês — a variação de caixa explicada pelo demonstrativo. */
-  variacao: { porMes: Record<string, number>; total: number };
+  variacao: { porMes: Record<string, number>; total: number | null };
+  /** false = a view não devolveu NENHUMA linha na janela (empresa sem espelho, ou leitura sem permissão). */
+  temDados: boolean;
   /** Na ordem de FORA_DAS_ATIVIDADES; só os que tiveram movimento na janela. */
   fora: ItemFora[];
 };
@@ -125,7 +128,7 @@ export function montarDFC(rows: LinhaViewDFC[], meses: string[]): DFC {
       .map(({ atividade: _a, ...l }) => l);
     const porMes: Record<string, number> = {};
     for (const l of linhas) for (const [m, v] of Object.entries(l.porMes)) porMes[m] = arred((porMes[m] ?? 0) + v);
-    return { atividade, rotulo: ROTULO_ATIVIDADE[atividade], linhas, porMes, total: arred(soma(porMes)) };
+    return { atividade, rotulo: ROTULO_ATIVIDADE[atividade], linhas, porMes, total: linhas.length > 0 ? arred(soma(porMes)) : null };
   });
 
   const variacaoPorMes: Record<string, number> = {};
@@ -134,7 +137,8 @@ export function montarDFC(rows: LinhaViewDFC[], meses: string[]): DFC {
   return {
     meses,
     blocos,
-    variacao: { porMes: variacaoPorMes, total: arred(soma(variacaoPorMes)) },
+    variacao: { porMes: variacaoPorMes, total: Object.keys(variacaoPorMes).length > 0 ? arred(soma(variacaoPorMes)) : null },
+    temDados: rows.some((r) => dentro.has(r.mes)),
     fora: FORA_DAS_ATIVIDADES.filter((f) => fora.has(f.linha)).map((f) => ({ ...f, ...fora.get(f.linha)! })),
   };
 }

@@ -38,12 +38,16 @@ export function normalizarLinhaDFC(r: Record<string, unknown>): LinhaViewDFC {
   };
 }
 
-export function useFinanceiroDFC(companies: string[], meses: string[]) {
+/**
+ * `versaoDados` (do useFinanceiro) entra na chave: muda a cada sync/recálculo, então o DFC é relido junto
+ * com o resto da aba (sem isso ficava o demonstrativo anterior — Codex). `habilitado` = só master (exibido).
+ */
+export function useFinanceiroDFC(companies: string[], meses: string[], versaoDados: number, habilitado: boolean) {
   const de = meses[0];
   const ate = meses[meses.length - 1];
   return useQuery({
-    queryKey: ['financeiro', 'dfc', [...companies].sort().join(','), de, ate],
-    enabled: companies.length > 0 && meses.length > 0,
+    queryKey: ['financeiro', 'dfc', [...companies].sort().join(','), de, ate, versaoDados],
+    enabled: habilitado && companies.length > 0 && meses.length > 0,
     queryFn: async (): Promise<DFC> => {
       const linhas = await fetchAllPages(
         (i, f) =>

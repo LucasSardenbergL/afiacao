@@ -27,3 +27,6 @@ Não existia classificação operacional/investimento/financiamento em lugar nen
 - Reconciliação saldo inicial + variação = saldo final: o Omie guarda só o saldo atual; snapshots de tesouraria só desde 2026-05. A tela diz "sem base".
 - colacor_sc 1.04.04 "Empréstimos/Financiamentos" (R$ 383k histórico) = captação até o founder confirmar se é mútuo do grupo.
 - Projeção (A1/`fin-cashflow-engine`) ainda rotula por código cru — usar este mapa é a próxima onda.
+- **Baixa cancelada persiste no espelho** (caso `12097272930`, `encargos-recebidos-por-titulo.md`): a view a conta como caixa; se a baixa for refeita com outro ID, entram as duas. Conciliar baixas com o líquido vigente do título (Codex adversarial, P1 — defeito do espelho, anterior a esta entrega).
+- **Ingestão pode colapsar duas baixas iguais** do mesmo título/conta/dia: a chave do upsert em `omie-financeiro` (~l.1328) omite `nCodBaixa` (Codex, P1 — writer, anterior a esta entrega).
+- A prova da DRE (`db/test-fin-dre-nao-resultado.sh`) também fixa `initdb --locale=C`: a rodada "pt_BR" dela não provou collation pt_BR (aqui o locale do cluster virou parâmetro + assert `Z0`).

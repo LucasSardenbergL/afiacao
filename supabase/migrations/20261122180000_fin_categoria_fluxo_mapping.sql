@@ -51,6 +51,9 @@ CREATE POLICY fin_cat_fluxo_service_all ON public.fin_categoria_fluxo_mapping
 REVOKE ALL ON public.fin_categoria_fluxo_mapping FROM anon;
 -- explícito (não depender do default privilege do projeto): quem guarda é o RLS acima. A view é
 -- security_invoker, então o authenticated PRECISA ler esta tabela para o join funcionar.
+-- REVOKE antes: o ACL padrão do projeto concede ALL (inclui TRUNCATE, que a RLS NÃO protege) e o GRANT
+-- é aditivo (Codex adversarial).
+REVOKE ALL ON public.fin_categoria_fluxo_mapping FROM authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.fin_categoria_fluxo_mapping TO authenticated;
 
 -- ============================================================
@@ -149,6 +152,9 @@ BEGIN
   IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'fin_categoria_fluxo_mapping'
         AND policyname IN ('fin_cat_fluxo_master_all', 'fin_cat_fluxo_service_all')) <> 2 THEN
     RAISE EXCEPTION 'postcondicao: policies do fluxo ausentes';
+  END IF;
+  IF has_table_privilege('authenticated', 'public.fin_categoria_fluxo_mapping', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'postcondicao: authenticated pode TRUNCATE no mapa de fluxo (RLS nao protege)';
   END IF;
   IF has_table_privilege('anon', 'public.fin_categoria_fluxo_mapping', 'SELECT') THEN
     RAISE EXCEPTION 'postcondicao: anon le fin_categoria_fluxo_mapping';

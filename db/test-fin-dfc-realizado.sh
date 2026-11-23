@@ -17,7 +17,10 @@ export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
-"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
+# locale do CLUSTER parametrizável: `initdb --locale=C` prevaleceria sobre LC_ALL e a 2ª rodada não
+# provaria pt_BR (Codex). O assert Z0 confere o lc_collate efetivo.
+PG_LOCALE="${PG_LOCALE:-C}"
+"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$PG_LOCALE" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
@@ -38,7 +41,11 @@ MAPA="$REPO_ROOT/db/2026-11-22-fin-fluxo-mapa-proprio.sql"
 FIX="$REPO_ROOT/db/fixtures/fin-dre-mapa-proprio-prod-20261122.sql"
 TMPD="$(dirname "$DATA")"
 for f in "$MIG" "$MAPA" "$FIX"; do [ -f "$f" ] || { echo "FALTA $f"; exit 2; }; done
-echo "═══ setup pronto (PG17 :$PORT) ═══"
+echo "═══ setup pronto (PG17 :$PORT, locale $PG_LOCALE) ═══"
+
+eq "Z0 lc_collate do cluster é o pedido" "$(Pq -c "SELECT datcollate FROM pg_database WHERE datname = current_database();")" "$PG_LOCALE"
+# Simula o ACL padrão do projeto (ALL para authenticated em tabela nova) — a migration tem de REVOGAR o TRUNCATE.
+P -q -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authenticated;"
 
 # ZONA 1 — pré-requisitos como em PROD: user_roles/app_role, fin_categorias (fixture lida da prod),
 # fin_movimentacoes com RLS (staff lê; aqui: só master, para provar o invoker).
@@ -117,6 +124,7 @@ sab_mig "view-sem-invoker" "s/WITH (security_invoker = on) AS/AS/"
 sab_mig "sem-rls" "s/^ALTER TABLE public.fin_categoria_fluxo_mapping ENABLE ROW LEVEL SECURITY;/SELECT 1;/"
 sab_mig "aceita-default" "s/CHECK (company = ANY (ARRAY\['oben', 'colacor', 'colacor_sc'\]))/CHECK (true)/"
 sab_mig "view-sem-predicado-master" "s/     AND public.has_role(auth.uid(), 'master'::public.app_role)/     AND true/"
+sab_mig "truncate-herdado" "s/^REVOKE ALL ON public.fin_categoria_fluxo_mapping FROM authenticated;/SELECT 1;/"
 sab_mig "anon-le-view" "s/^REVOKE ALL ON public.v_fin_fluxo_caixa_realizado FROM anon;/GRANT SELECT ON public.v_fin_fluxo_caixa_realizado TO anon;/"
 
 P -q -f "$MIG" && ok "M0 migration real aplicou (controle verde, mesma invocação)"
@@ -158,6 +166,8 @@ eq "V7 juros pagos em financiamento" "$(LINHA fin_juros)" "fin_juros=0.00/40.00"
 eq "V8 parcela de empréstimo e aporte" "$(LINHA fin_amortizacao) $(LINHA fin_aporte)" "fin_amortizacao=0.00/300.00 fin_aporte=70.00/0.00"
 eq "V9 atividade derivada do prefixo" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT string_agg(DISTINCT fluxo_linha||':'||atividade, ' ' ORDER BY fluxo_linha||':'||atividade) FROM v_fin_fluxo_caixa_realizado WHERE fluxo_linha IN ('fin_juros','op_fornecedores','transferencia_interna');" | tail -1)" "fin_juros:financiamento op_fornecedores:operacional transferencia_interna:transferencia_interna"
 eq "V10 ótica do título, valor 0 e versões velhas fora (total de lançamentos)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(lancamentos) FROM v_fin_fluxo_caixa_realizado;" | tail -1)" "16"
+eq "V12b líquido = entradas − saídas na própria view (linha mista)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT liquido FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND mes='2026-09-01' AND fluxo_linha='transferencia_interna';" | tail -1)" "-7.00"
+eq "V12c líquido de saída pura" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT liquido FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND mes='2026-09-01' AND fluxo_linha='fin_juros';" | tail -1)" "-40.00"
 eq "V13 baixa corrigida para 0 não ressuscita a versão de 80" "$(LINHA op_despesas)" "op_despesas=0.00/100.00"
 eq "V14 só o título coincide (valor diferente) ⇒ pendente_revisao" "$(LINHA pendente_revisao)" "pendente_revisao=60.00/0.00"
 eq "V15 IRPJ em linha própria" "$(LINHA op_impostos_lucro)" "op_impostos_lucro=0.00/9.00"
@@ -183,6 +193,18 @@ eq "V12 recebimento de clientes em todos os meses: a versão velha não aparece 
 sab_view "sem-dedupe" "s/  SELECT \* FROM cc WHERE cc.omie_ncodbaixa IS NOT NULL AND cc.rn = 1/  SELECT * FROM cc WHERE cc.omie_ncodbaixa IS NOT NULL/" TOTAL "100.00"
 sab_view "sem-pendente" "s/             THEN 'pendente_identidade'/             THEN NULL/" op_recebimento_clientes "op_recebimento_clientes=100.00/0.00"
 sab_view "transferencia-pela-categoria" "s/  SELECT e.company, date_trunc('month', e.data_movimento)::date AS mes,/&/; s/         CASE WHEN e.natureza IN ('TRAP', 'TRAR') THEN 'transferencia_interna'/         CASE WHEN false THEN 'transferencia_interna'/" transferencia_interna "transferencia_interna=30.00/37.00"
+LIQ() { P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT liquido FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND mes='2026-09-01' AND fluxo_linha='fin_juros';" | tail -1; }
+sab_view_liq() {
+  local f="$TMPD/sab-view.sql" got
+  sed "s/       round(sum(entrada) - sum(saida), 2) AS liquido,/       0::numeric AS liquido,/" "$MIG" > "$f"
+  if cmp -s "$f" "$MIG"; then bad "F-view-liquido-zerado: sed não aplicou"; return; fi
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;"
+  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-view-liquido-zerado: cópia não aplicou"; P -q -f "$MIG" >/dev/null; return; fi
+  got="$(LIQ)"
+  if [ "$got" != "-40.00" ]; then ok "F-view-liquido-zerado: sabotagem muda o líquido ($got)"; else bad "F-view-liquido-zerado: SEM dente"; fi
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$MIG" >/dev/null
+}
+sab_view_liq
 sab_view "dedupe-mantem-velha" "s/ORDER BY m.updated_at DESC, m.created_at DESC, m.id DESC/ORDER BY m.updated_at ASC, m.created_at ASC, m.id ASC/" op_recebimento_clientes "op_recebimento_clientes=100.00/0.00"
 eq "F-view-controle: view restaurada volta ao verde" "$(LINHA op_recebimento_clientes)" "op_recebimento_clientes=100.00/0.00"
 

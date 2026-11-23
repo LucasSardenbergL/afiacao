@@ -9,6 +9,7 @@ import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
 import { useFinanceiroDFC } from '@/hooks/useFinanceiroDFC';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { mesesFechados } from '@/lib/financeiro/dfc-helpers';
 import { ALL_COMPANIES, type CompanySelection } from '@/contexts/CompanyContext';
 import { cn } from '@/lib/utils';
@@ -17,8 +18,8 @@ const MES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set'
 const rotuloMes = (m: string) => `${MES_ABREV[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
 const hojeSp = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
-function Valor({ v, forte = false }: { v: number | undefined; forte?: boolean }) {
-  if (v === undefined) return <span className="text-muted-foreground">—</span>;
+function Valor({ v, forte = false }: { v: number | undefined | null; forte?: boolean }) {
+  if (v === undefined || v === null) return <span className="text-muted-foreground">—</span>;
   return (
     <span className={cn('tabular-nums', v < 0 && 'text-status-error', forte && 'font-semibold')}>
       {fmtCompact(v)}
@@ -26,10 +27,13 @@ function Valor({ v, forte = false }: { v: number | undefined; forte?: boolean })
   );
 }
 
-export function DFCRealizado({ view }: { view: CompanySelection }) {
+export function DFCRealizado({ view, versaoDados }: { view: CompanySelection; versaoDados: number }) {
+  // Master-only (a view também filtra). Lente "Ver como": leitura segue a persona exibida.
+  const { displayIsMaster } = useDisplayAccess();
   const companies = useMemo(() => (view === 'all' ? [...ALL_COMPANIES] : [view]), [view]);
   const meses = useMemo(() => mesesFechados(hojeSp(), 12), []);
-  const { data, isLoading, error } = useFinanceiroDFC(companies, meses);
+  const { data, isLoading, error } = useFinanceiroDFC(companies, meses, versaoDados, displayIsMaster);
+  if (!displayIsMaster) return null;
 
   return (
     <Card>
@@ -47,7 +51,10 @@ export function DFCRealizado({ view }: { view: CompanySelection }) {
             DFC indisponível — a leitura falhou: {error instanceof Error ? error.message : String(error)}
           </p>
         )}
-        {data && (
+        {data && !data.temDados && (
+          <p className="text-sm text-muted-foreground">Sem movimento de caixa no espelho do Omie nos 12 meses fechados — não é saldo zero conferido.</p>
+        )}
+        {data && data.temDados && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -92,8 +99,10 @@ export function DFCRealizado({ view }: { view: CompanySelection }) {
             </table>
             <p className="mt-3 text-xs text-muted-foreground">
               Política IFRS 18: juros e parcelas de empréstimo pagos em financiamento; juros e rendimentos recebidos em
-              investimento; parcelamento de tributo em operacional. Sem base para reconciliar saldo inicial + variação = saldo
-              final no histórico (o Omie guarda só o saldo atual das contas).
+              categoria própria vão para investimento (encargos embutidos na baixa do cliente ficam no recebimento
+              operacional); parcelamento de tributo em operacional. Baixa cancelada no Omie pode persistir no espelho.
+              Sem base para reconciliar saldo inicial + variação = saldo final no histórico (o Omie guarda só o saldo
+              atual das contas).
             </p>
           </div>
         )}
@@ -106,7 +115,7 @@ function BlocoLinhas({ titulo, meses, porMes, total, linhas }: {
   titulo: string;
   meses: string[];
   porMes: Record<string, number>;
-  total: number;
+  total: number | null;
   linhas: Array<{ chave: string; rotulo: string; porMes: Record<string, number>; total: number; nota?: string }>;
 }) {
   return (

@@ -252,7 +252,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
           <FluxoCaixaTab data={fluxoCaixa} loading={loading || syncing} saldoCC={activeResumo?.saldo_total_cc}
             indisponivel={errosCarga.fluxoCaixa ?? null} titulosIndisponiveis={activeResumo?.titulos_motivo ?? null} />
           {/* DFC realizado por atividade (método direto, mapa próprio de fluxo) — lê a view master-only. */}
-          <DFCRealizado view={view} />
+          <DFCRealizado view={view} versaoDados={versaoDados} />
         </TabsContent>
 
         {/* ═══════════ TAB: DRE ═══════════ */}

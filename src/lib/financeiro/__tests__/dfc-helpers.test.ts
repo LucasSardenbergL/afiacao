@@ -57,7 +57,18 @@ describe('montarDFC', () => {
   it('fora desconhecido (atividade fora das três) cai em nao_classificado, nunca some', () => {
     const x = montarDFC([L('2026-09-01', 'balde_novo', 'balde_novo', 0, 3), L('2026-09-01', 'equivalente_caixa', 'equivalente_caixa', 25, 0), L('2026-09-01', 'pendente_revisao', 'pendente_revisao', 60, 0)], MESES);
     expect(x.fora.map((f) => `${f.linha}=${f.total}`)).toEqual(['equivalente_caixa=25', 'pendente_revisao=60', 'nao_classificado=-3']);
-    expect(x.variacao.total).toBe(0);
+    // só movimento fora das atividades: a variação das atividades não foi observada (null), não é 0
+    expect(x.variacao.total).toBeNull();
+    expect(x.temDados).toBe(true);
+  });
+
+  it('sem NENHUMA observação: totais null e temDados=false — nunca R$ 0 fabricado (Codex)', () => {
+    const x = montarDFC([], MESES);
+    expect(x.temDados).toBe(false);
+    expect(x.variacao.total).toBeNull();
+    expect(x.blocos.map((b) => b.total)).toEqual([null, null, null]);
+    expect(d.temDados).toBe(true);
+    expect(d.blocos.find((b) => b.atividade === 'investimento')!.total).toBe(-100);
   });
 
   it('consolidado de empresas é soma de exibição (mesma linha de CNPJs diferentes)', () => {
