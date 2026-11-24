@@ -307,3 +307,20 @@ passava (0,02 em 3x) → recusa `centavos < n` (o Omie exige nValor > 0); meio c
 na entrada; `nPercentual` (33,33/33,33/33,34) divergia do valor rateado → `parcelasComValor` deriva o
 percentual do valor, saldo na última fecha 100,00. Falsificado uma camada por vez, controle verde na
 mesma invocação.
+
+**PR 2.3 — o que vai ao Omie** (edges `omie-vendas-sync` v1.47 e `omie-sync` v1.17, front 1 campo).
+(a) Tinta COM ordem de compra saía SEM a cor no item: `if (ordemCompra) … else if (cor)` — a NF e a
+observação do item (a que a produção lê para tingir) perdiam a cor. `infoAdicionalItem`
+(`omie-vendas-sync/o-que-vai-ao-omie.ts`) junta as duas: OC inteira em `numero_pedido_compra`,
+`"Cor: … | OC: …"` na NF, cor na observação; criação e alteração usam a MESMA regra (a cópia da
+alteração esquecia a embalagem em ML). (b) Data prometida: `cabecalho.data_previsao` é, na doc do
+Omie, previsão de FATURAMENTO (≥ hoje) e o app a usa como dia do envio (fallback do `order_date_kpi`
+e carimbo do sensor `vendas_empurradas_sem_gemeo`) — por isso NÃO mudou. A data prometida
+(`sales_orders.ready_by_date`, lida do pedido local) vai em `frete.previsao_entrega` (criação e
+alteração) e no `dDtPrevisao` da OP; ausente/ilegível/vencida NÃO vira previsão (ausente ≠ hoje).
+Medido: data prometida em 0 de 1.439 pedidos dos últimos 90 dias. (c) A OS gravava
+`orders.delivery_option = 'retirada'` fixo, e o roteirizador só lê coleta/entrega — nenhuma OS do
+app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; front antigo segue
+'retirada'). `orders` está vazia em prod. Falsificação 16/16 vermelha (8 sabotagens × `C` e
+`pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
+Deno (a edge inteira não é importável no teste).
