@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { computeAlertaCredito, paresDoCliente, paresDasContas, ALERTA_CREDITO } from '../useAlertaCreditoCliente';
+import {
+  computeAlertaCredito, classificarFrescor, paresDoCliente, paresDasContas, ALERTA_CREDITO,
+} from '../useAlertaCreditoCliente';
 
 const AGORA = new Date('2026-07-02T12:00:00Z');
+/** Frescor da Oben com o último sync concluído em `syncAt` (null = nunca sincronizou). */
+const f = (syncAt: string | null) =>
+  [classificarFrescor('oben', syncAt ? { started_at: syncAt, completed_at: syncAt } : null, null, AGORA)];
 
 describe('paresDoCliente', () => {
   it('monta o par de cada conta que o cliente tem (oben/colacor/colacor_sc)', () => {
@@ -33,7 +38,7 @@ describe('paresDoCliente', () => {
 
 describe('computeAlertaCredito', () => {
   it('sem títulos → null (silêncio, não "cliente OK")', () => {
-    expect(computeAlertaCredito([], '2026-07-02T10:00:00Z', AGORA)).toBeNull();
+    expect(computeAlertaCredito([], f('2026-07-02T10:00:00Z'))).toBeNull();
   });
 
   it('soma saldos, conta títulos e acha o vencimento mais antigo', () => {
@@ -42,10 +47,7 @@ describe('computeAlertaCredito', () => {
         { saldo: 100, data_vencimento: '2026-04-10' },
         { saldo: 250.5, data_vencimento: '2026-03-01' },
         { saldo: 50, data_vencimento: null },
-      ],
-      '2026-07-02T10:00:00Z',
-      AGORA,
-    );
+      ], f('2026-07-02T10:00:00Z'));
     expect(alerta).not.toBeNull();
     expect(alerta!.vencido).toBeCloseTo(400.5);
     expect(alerta!.titulos).toBe(3);
@@ -55,27 +57,24 @@ describe('computeAlertaCredito', () => {
 
   it('saldo null não fabrica número (ausente ≠ zero: soma ignora, não inventa)', () => {
     // Só títulos com saldo null/0 → total 0 → null (sem evidência positiva, sem alerta)
-    expect(computeAlertaCredito([{ saldo: null, data_vencimento: '2026-01-01' }], null, AGORA)).toBeNull();
+    expect(computeAlertaCredito([{ saldo: null, data_vencimento: '2026-01-01' }], f(null))).toBeNull();
   });
 
   it('sync a mais de 24h marca dadoDefasado', () => {
     const alerta = computeAlertaCredito(
-      [{ saldo: 100, data_vencimento: '2026-01-01' }],
-      '2026-06-30T10:00:00Z',
-      AGORA,
-    );
+      [{ saldo: 100, data_vencimento: '2026-01-01' }], f('2026-06-30T10:00:00Z'));
     expect(alerta!.dadoDefasado).toBe(true);
   });
 
   it('sem registro de sync marca dadoDefasado (não assume frescor)', () => {
-    const alerta = computeAlertaCredito([{ saldo: 100, data_vencimento: '2026-01-01' }], null, AGORA);
+    const alerta = computeAlertaCredito([{ saldo: 100, data_vencimento: '2026-01-01' }], f(null));
     expect(alerta!.dadoDefasado).toBe(true);
     expect(alerta!.syncAt).toBeNull();
   });
 
   it('sync dentro da janela de 24h não marca defasagem', () => {
     const dentroDaJanela = new Date(AGORA.getTime() - (ALERTA_CREDITO.defasagemMaxHoras - 1) * 3_600_000).toISOString();
-    const alerta = computeAlertaCredito([{ saldo: 100, data_vencimento: '2026-01-01' }], dentroDaJanela, AGORA);
+    const alerta = computeAlertaCredito([{ saldo: 100, data_vencimento: '2026-01-01' }], f(dentroDaJanela));
     expect(alerta!.dadoDefasado).toBe(false);
   });
 });
@@ -101,5 +100,35 @@ describe('paresDasContas — ficha 360 (cliente + aliases do grupo)', () => {
       { user_id: 'x', account: 'oben', omie_codigo_cliente: 0 },
       { user_id: 'x', account: 'colacor', omie_codigo_cliente: null },
     ])).toEqual([]);
+  });
+});
+
+describe('classificarFrescor — por empresa (onda B)', () => {
+  const ha = (h: number) => new Date(AGORA.getTime() - h * 3_600_000).toISOString();
+  const log = (iso: string) => ({ started_at: iso, completed_at: iso });
+
+  it('concluído há ≤ 24h e sem falha depois → ok', () => {
+    expect(classificarFrescor('oben', log(ha(2)), log(ha(30)), AGORA).estado).toBe('ok');
+  });
+  it('concluído há mais de 24h → defasado (com a data)', () => {
+    expect(classificarFrescor('colacor', log(ha(25)), null, AGORA)).toEqual({ company: 'colacor', syncAt: ha(25), estado: 'defasado' });
+  });
+  it('falha DEPOIS do último concluído → erro (mesmo com concluído recente)', () => {
+    expect(classificarFrescor('oben', log(ha(3)), log(ha(1)), AGORA).estado).toBe('erro');
+  });
+  it('só falhas, nenhum concluído → erro, syncAt null', () => {
+    expect(classificarFrescor('colacor_sc', null, log(ha(1)), AGORA)).toEqual({ company: 'colacor_sc', syncAt: null, estado: 'erro' });
+  });
+  it('nenhum registro → nunca', () => {
+    expect(classificarFrescor('oben', null, null, AGORA).estado).toBe('nunca');
+  });
+  it('alerta resume pelo PIOR: uma empresa defasada marca dadoDefasado e syncAt = a mais antiga', () => {
+    const frescor = [
+      classificarFrescor('oben', log(ha(1)), null, AGORA),
+      classificarFrescor('colacor', log(ha(40)), null, AGORA),
+    ];
+    const a = computeAlertaCredito([{ saldo: 10, data_vencimento: '2026-01-01' }], frescor)!;
+    expect(a.dadoDefasado).toBe(true);
+    expect(a.syncAt).toBe(ha(40));
   });
 });

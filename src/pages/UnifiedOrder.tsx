@@ -4,6 +4,8 @@ import { CheckCircle, Building2, Scissors, Wifi, Palette } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
+import { registrarSucessoNoDestino } from '@/lib/nav/sensor-clientes';
+import { estadoDaNavegacaoAtual } from '@/lib/nav/origem-atual';
 import { caminhoInternoSeguro } from '@/lib/destino-pos-login';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
@@ -370,6 +372,8 @@ const UnifiedOrder = () => {
   // Telemetria: pedido enviado com sucesso (dispara uma vez ao abrir o success dialog)
   useEffect(() => {
     if (h.orderSuccessOpen && h.lastOrderData) {
+      // Sensor de Clientes (onda C): o "Novo pedido" da lista/360/cadastro só é sucesso no pedido ENVIADO.
+      registrarSucessoNoDestino(estadoDaNavegacaoAtual(), 'novo_pedido');
       track('pedido.criado', {
         modo: isCustomerMode ? 'customer' : 'staff',
         num_itens: h.lastOrderData.items?.length ?? 0,

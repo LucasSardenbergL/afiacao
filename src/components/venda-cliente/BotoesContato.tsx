@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, CalendarClock, XCircle, PhoneMissed, MoreHorizontal } from 'lucide-react';
+import { CheckCircle2, CalendarClock, XCircle, PhoneMissed, MoreHorizontal, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -15,7 +15,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { MOTIVOS_RECUSA } from '@/hooks/useFarmerDesfecho';
-import { useRegistrarContato, rotuloResultado, type ResultadoContato } from '@/hooks/useRegistrarContato';
+import { travarContato, useGravandoContato, useRegistrarContato, rotuloResultado, type ResultadoContato } from '@/hooks/useRegistrarContato';
+import type { FichaClientes } from '@/lib/nav/sensor-clientes';
 import { useContatosDoDia } from '@/hooks/useContatosDoDia';
 
 const ICONE: Record<ResultadoContato, typeof CheckCircle2> = {
@@ -39,6 +40,8 @@ interface Props {
   compradorId: string;
   /** `grade` = ficha (4 botões de toque); `menu` = linha da fila (compacto). */
   variante?: 'grade' | 'menu';
+  /** Superfície de Clientes onde mora (sensor): o desfecho conta só na gravação CONFIRMADA. */
+  superficie?: FichaClientes;
 }
 
 /**
@@ -46,18 +49,23 @@ interface Props {
  * Escritor único `venda_registrar_contato` (auth.uid() fixo); bloqueado na lente "Ver como".
  * Último toque do dia vence — o botão já registrado fica marcado.
  */
-export function BotoesContato({ compradorId, variante = 'grade' }: Props) {
+export function BotoesContato({ compradorId, variante = 'grade', superficie }: Props) {
   const { isImpersonating } = useImpersonation();
   const registrar = useRegistrarContato();
   const contatos = useContatosDoDia();
   const atual = contatos.data?.get(compradorId) ?? null;
   const [pedindoMotivo, setPedindoMotivo] = useState(false);
-  const bloqueado = isImpersonating || registrar.isPending;
+  // Onda C: serializado POR CLIENTE, em qualquer instância, com trava síncrona (registro em módulo).
+  const gravandoNoCliente = useGravandoContato(compradorId);
+  const salvando = gravandoNoCliente || registrar.isPending;
+  const bloqueado = isImpersonating || salvando;
 
   const enviar = (resultado: ResultadoContato, motivo?: string | null) => {
-    if (isImpersonating) return;
+    if (isImpersonating || salvando) return;
+    if (!travarContato(compradorId)) return;
     setPedindoMotivo(false);
-    registrar.mutate({ compradorId, resultado, motivo });
+    // A trava é liberada e o sensor conta no próprio hook (onSettled/onSuccess), que roda mesmo desmontado.
+    registrar.mutate({ compradorId, resultado, motivo, ...(superficie ? { superficie } : {}) });
   };
 
   if (variante === 'menu') {
@@ -68,11 +76,14 @@ export function BotoesContato({ compradorId, variante = 'grade' }: Props) {
             variant="ghost"
             size="icon"
             className="h-8 w-8"
-            disabled={isImpersonating}
-            title={isImpersonating ? TITULO_LENTE : 'Registrar desfecho'}
-            aria-label="Registrar desfecho da ligação"
+            disabled={bloqueado}
+            aria-busy={salvando}
+            title={isImpersonating ? TITULO_LENTE : salvando ? 'Salvando o desfecho…' : 'Registrar desfecho'}
+            aria-label={salvando ? 'Salvando o desfecho da ligação' : 'Registrar desfecho da ligação'}
           >
-            <MoreHorizontal className="w-4 h-4" />
+            {salvando
+              ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+              : <MoreHorizontal className="w-4 h-4" aria-hidden />}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -107,7 +118,11 @@ export function BotoesContato({ compradorId, variante = 'grade' }: Props) {
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
         <p className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">Como foi a ligação?</p>
-        {atual && (
+        {salvando ? (
+          <p className="text-2xs text-muted-foreground inline-flex items-center gap-1" role="status">
+            <Loader2 className="w-3 h-3 animate-spin" aria-hidden /> Salvando…
+          </p>
+        ) : atual && (
           <p className="text-2xs text-muted-foreground">
             Registrado hoje: <span className={cn('font-medium', TOM[atual as ResultadoContato])}>{rotuloResultado(atual)}</span>
           </p>

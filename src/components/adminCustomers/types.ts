@@ -32,7 +32,8 @@ export interface UserTool {
 
 export interface ClientScore {
   customer_user_id: string;
-  health_score: number;
+  /** `null` = não avaliado — nunca 0 fabricado (onda B). */
+  health_score: number | null;
   /** `null` = cliente nunca classificado — jamais defaultar para 'critico' (veredito fabricado). */
   health_class: string | null;
   churn_risk: number | null;

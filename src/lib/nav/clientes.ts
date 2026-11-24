@@ -92,6 +92,90 @@ export function lerOrigemLista(state: unknown): OrigemLista | null {
   return { query: queryDaFila(query), rolagem: rolagemValida(rolagem) };
 }
 
+// ─── Origem fora da lista (onda C, item 4) ──────────────────────────────────────────────────────
+// A 360 também abre de Meu dia, agenda, telefonia, carteira e positivação. Antes o "voltar" só conhecia
+// a lista e jogava essas vendedoras em /admin/customers. Agora a tela que abre a 360 deixa no
+// `location.state` o rótulo e a URL dela, e o voltar volta para lá.
+
+/** Tela de origem da 360 que não é a lista: rótulo do botão voltar + URL interna da tela. */
+export interface OrigemTela {
+  rotulo: string;
+  url: string;
+}
+
+const ROTULO_MAX = 40;
+
+/** URL interna segura: começa com UMA barra (nunca `//host`, nunca esquema) e cabe num tamanho sensato. */
+function urlInternaValida(v: unknown): v is string {
+  return typeof v === 'string' && v.length <= 500 && v.startsWith('/') && !v.startsWith('//') && !v.includes('\\');
+}
+
+/** `location.state` que leva a tela de origem (pathname + search de quem abriu a 360). */
+export function estadoComOrigemTela(
+  rotulo: string,
+  local: { pathname: string; search?: string },
+): { origemTela: OrigemTela } {
+  return { origemTela: { rotulo: rotulo.slice(0, ROTULO_MAX), url: `${local.pathname}${local.search ?? ''}` } };
+}
+
+/**
+ * Rótulo do voltar a partir da rota de quem abriu a 360 (a TELA, não o registro). Rota desconhecida →
+ * 'Voltar' (genérico, mas volta para o lugar certo — a URL vai junto).
+ */
+const ROTULOS_DE_TELA: Record<string, string> = {
+  '/': 'Início',
+  '/meu-dia': 'Meu dia',
+  '/farmer': 'Painel',
+  '/farmer/calls': 'Ligações',
+  '/farmer/carteira': 'Carteira',
+  '/telefonia': 'Telefonia',
+  '/radar': 'Radar',
+};
+export function rotuloDaTela(pathname: string): string {
+  const limpo = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  return ROTULOS_DE_TELA[limpo] ?? 'Voltar';
+}
+
+/** Lê a tela de origem do `location.state` (`unknown`); formato inesperado ou URL externa → `null`. */
+export function lerOrigemTela(state: unknown): OrigemTela | null {
+  if (state == null || typeof state !== 'object') return null;
+  const origem = (state as { origemTela?: unknown }).origemTela;
+  if (origem == null || typeof origem !== 'object') return null;
+  const { rotulo, url } = origem as { rotulo?: unknown; url?: unknown };
+  if (typeof rotulo !== 'string' || rotulo.trim() === '' || !urlInternaValida(url)) return null;
+  return { rotulo: rotulo.slice(0, ROTULO_MAX), url };
+}
+
+/**
+ * Repassa a origem (fila da lista e/ou tela) adiante — da 360 para o Cadastro e de volta —, para o
+ * voltar final não esquecer de onde a vendedora veio. Sem origem conhecida → `undefined`.
+ */
+export function repassarOrigem(state: unknown): { origemLista?: OrigemLista; origemTela?: OrigemTela } | undefined {
+  const origemLista = lerOrigemLista(state);
+  const origemTela = lerOrigemTela(state);
+  if (!origemLista && !origemTela) return undefined;
+  return { ...(origemLista ? { origemLista } : {}), ...(origemTela ? { origemTela } : {}) };
+}
+
+/** Para onde vai o "voltar" da 360: a fila da lista, a tela de origem, ou a lista crua. */
+export interface DestinoVoltar {
+  rotulo: string;
+  url: string;
+  state: { rolagem: number | null } | undefined;
+}
+
+/**
+ * A fila da lista vence (é a origem mais precisa: busca + filtro + rolagem); depois a tela de origem;
+ * sem nada (link direto, F5 numa aba nova) cai na lista sem filtro, como antes.
+ */
+export function destinoDoVoltar(state: unknown): DestinoVoltar {
+  const lista = lerOrigemLista(state);
+  if (lista) return { rotulo: 'Clientes', url: urlListaClientes(lista.query), state: { rolagem: lista.rolagem } };
+  const tela = lerOrigemTela(state);
+  if (tela) return { rotulo: tela.rotulo, url: tela.url, state: undefined };
+  return { rotulo: 'Clientes', url: urlListaClientes(''), state: { rolagem: null } };
+}
+
 /** Rolagem a restaurar ao voltar para a lista (`location.state.rolagem`), ou `null`. */
 export function lerRolagemARestaurar(state: unknown): number | null {
   if (state == null || typeof state !== 'object') return null;

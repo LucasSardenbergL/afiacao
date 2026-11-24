@@ -66,6 +66,14 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
     motivo: 'sensor de gêmeos push/pull (20261001011500): o EXISTS busca o gêmeo IMPORTADO por (conta, omie_pedido_id) — identidade, não venda; a leitura principal (alias a) segue julgada e é canônica',
   },
   // ── escritor ────────────────────────────────────────────────────────────────────────────────
+  // Reconciliação de PV excluído no Omie (20261124120000): a pergunta é "este PID ainda existe no Omie?", e TODO
+  // status entra de propósito — faturado/cancelado é justamente a contradição a detectar; a baixa é ESCRITA.
+  'private.omie_pv_banco_na_janela': { tipo: 'proposito', motivo: 'PV excluído no Omie: PIDs vivos do banco numa janela de inclusão, todo status (faturado/cancelado viram contradição)' },
+  'public.omie_pv_triagem_registrar': { tipo: 'proposito', motivo: 'PV excluído no Omie: compara o conjunto do Omie com o do banco e marca contradição em linha terminal (todo status)' },
+  'public.omie_pv_presenca_registrar': { tipo: 'lookup', motivo: 'PV excluído no Omie: confere se algum PID listado é conhecido da conta (identidade da credencial)' },
+  'public.omie_pv_proxima_consulta': { tipo: 'lookup', motivo: 'PV excluído no Omie: claim de envio das linhas do PID candidato (por conta, PID)' },
+  'public.omie_pv_consulta_registrar': { tipo: 'lookup', motivo: 'PV excluído no Omie: releitura do sync (omie_reconciliado_em) das linhas do PID consultado' },
+  'private.omie_pv_aplicar_baixa': { tipo: 'escritor', motivo: 'PV excluído no Omie: a BAIXA — trava e oculta (deleted_at) TODAS as linhas do PID, inclusive terminal para recusar' },
   'public.aplicar_edicao_pedido_omie': { tipo: 'escritor', motivo: 'edição de UM pedido (lê e regrava por id)' },
   'public.criar_pedidos_com_itens': { tipo: 'escritor', motivo: 'importador Omie: insere/deduplica por hash' },
   'public.sales_orders_registrar_vendedor_omie': { tipo: 'escritor', motivo: 'atribuição: grava o codVend em TODO importado da conta, cancelado inclusive (quem vendeu não depende do status)' },

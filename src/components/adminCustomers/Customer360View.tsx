@@ -37,9 +37,10 @@ import { RequiresPoToggle } from './RequiresPoToggle';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { EmptyState } from '@/components/EmptyState';
 import {
-  urlCliente360, urlNovoPedido, urlPedidosDoCliente, type OrigemLista,
+  repassarOrigem, urlCliente360, urlNovoPedido, urlPedidosDoCliente, type OrigemLista,
 } from '@/lib/nav/clientes';
-import { registrarUsoClientes, type AcaoFicha } from '@/lib/nav/sensor-clientes';
+import { estadoDaNavegacaoAtual } from '@/lib/nav/origem-atual';
+import { estadoSensorDestino, registrarFimDaLigacao, registrarUsoClientes, type AcaoFicha } from '@/lib/nav/sensor-clientes';
 import type { Customer, ClientScore, ToolCategory, UserTool, SalesOrder } from './types';
 
 export function Customer360View({
@@ -80,7 +81,7 @@ export function Customer360View({
   const medir = (tipo: AcaoFicha) => registrarUsoClientes({ acao: 'ficha_acao', ficha: 'cadastro', tipo });
   const verPedidos = () => {
     medir('ver_pedidos');
-    navigate(urlPedidosDoCliente(customer.user_id));
+    navigate(urlPedidosDoCliente(customer.user_id), { state: estadoSensorDestino('cadastro', 'ver_pedidos') });
   };
 
   return (
@@ -117,7 +118,8 @@ export function Customer360View({
           <Button size="sm" variant="default" className="gap-1.5 h-8"
             onClick={() => {
               medir('abrir_360');
-              navigate(urlCliente360(customer.user_id), { state: origemLista ? { origemLista } : undefined });
+              // Leva adiante a origem que a 360 trouxe (fila da lista e/ou tela) — o voltar final não a esquece.
+              navigate(urlCliente360(customer.user_id), { state: repassarOrigem(estadoDaNavegacaoAtual()) ?? (origemLista ? { origemLista } : undefined) });
             }}
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -126,7 +128,7 @@ export function Customer360View({
           <Button size="sm" variant="outline" className="gap-1.5 h-8"
             onClick={() => {
               medir('novo_pedido');
-              navigate(urlNovoPedido(customer.user_id));
+              navigate(urlNovoPedido(customer.user_id), { state: estadoSensorDestino('cadastro', 'novo_pedido') });
             }}
           >
             <ShoppingCart className="w-3.5 h-3.5" />
@@ -157,7 +159,7 @@ export function Customer360View({
       {score && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <MetricCard icon={DollarSign} label="Média mensal (180d)" value={fmtGasto(metricasExibiveis(score).gasto)} />
-          <MetricCard icon={Activity} label="Score saúde" value={score.health_score.toFixed(0)} />
+          <MetricCard icon={Activity} label="Score saúde" value={score.health_score != null ? score.health_score.toFixed(0) : NAO_APURADO} />
           {/* churn_risk é PERCENTUAL 0–100, não fração: prod (2026-07-21) tem 6.632/6.632 linhas
               acima de 1 (mín. 33, máx. 100, média 96). O `* 100` que estava aqui exibia "9600%",
               e o limiar `> 0.5` deixava o realce de perigo permanentemente ligado.
@@ -195,7 +197,10 @@ export function Customer360View({
                 <span className="flex-1">{formatBrPhone(customer.phone)}</span>
                 {/* Captura: mede a intenção de ligar sem mexer no discador. */}
                 <span className="inline-flex" onClickCapture={() => medir('ligar')}>
-                  <CallButton phone={customer.phone} customerName={customer.name} customerId={customer.user_id} variant="icon" />
+                  <CallButton
+                    phone={customer.phone} customerName={customer.name} customerId={customer.user_id} variant="icon"
+                    onCallEnd={(fim) => registrarFimDaLigacao('cadastro', fim)}
+                  />
                 </span>
                 {waHref && (
                   <a

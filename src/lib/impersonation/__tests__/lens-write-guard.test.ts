@@ -134,6 +134,17 @@ describe('lens-write-guard', () => {
     expect(c.calls).toEqual(['rpc']);
   });
 
+  it('na lente: listar_clientes_base (leitura da base de Clientes) passa; o desfecho do contato segue bloqueado', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await c.rpc('listar_clientes_base', { p_busca: null });
+    expect(c.calls).toEqual(['rpc']);
+    await expect(c.rpc('venda_registrar_contato')).rejects.toBeInstanceOf(LensReadOnlyError);
+    // Liberar uma RPC por NOME exato não libera o prefixo: uma irmã fictícia de escrita segue barrada.
+    await expect(c.rpc('listar_clientes_base_recalcular')).rejects.toBeInstanceOf(LensReadOnlyError);
+    expect(c.calls).toEqual(['rpc']);
+  });
+
   it('na lente: rpc de ESCRITA com nome ambíguo FORA da allowlist (ciclo_/sugerir_) é bloqueada', async () => {
     // Guarda contra allowlistar às cegas: ciclo_oportunidade_do_dia e
     // sugerir_negociacao_paralela_hoje GERAM pedidos/sugestões (escrita).

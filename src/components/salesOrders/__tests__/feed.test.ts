@@ -122,8 +122,11 @@ describe('valor do recorte — params, resposta e texto (ausente ≠ zero)', () 
     expect(corteDoPeriodo('tudo', agora)).toBeNull();
   });
 
-  it('"Todos" vai como null (= ANY(\'{}\') não acharia nada); chips viram a lista do filtro', () => {
-    expect(paramsTotalDoRecorte(recorte()).p_status).toBeNull();
+  it('"Todos" vai OMITIDO (DEFAULT NULL; = ANY(\'{}\') não acharia nada); chips viram a lista do filtro', () => {
+    expect(paramsTotalDoRecorte(recorte()).p_status).toBeUndefined();
+    // Ausente some do JSON do PostgREST → o DEFAULT NULL da RPC vale; nenhum filtro vai como null.
+    const vazio = JSON.parse(JSON.stringify(paramsTotalDoRecorte(recorte({ empresa: 'all', cliente: null, busca: null, vendedor: null }))));
+    expect(vazio).toEqual({});
     expect(paramsTotalDoRecorte(recorte({ status: 'rascunhos' })).p_status).toEqual(['rascunho']);
     expect(paramsTotalDoRecorte(recorte({ status: 'faturados' })).p_status).toEqual(['faturado', 'entregue']);
     expect(paramsTotalDoRecorte(recorte({ empresa: 'oben', vendedor: 'u9', busca: '%x%' })))

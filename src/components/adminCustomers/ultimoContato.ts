@@ -54,17 +54,36 @@ function diasDeCalendario(em: string, hoje: Date): number {
 
 export type EstadoUltimoContato = 'carregando' | 'falha' | 'ok';
 
+/** Contexto da LEITURA inteira (não da linha) que muda o que a ausência significa. */
+export interface ContextoUltimoContato {
+  /** A leitura respondeu com ZERO registros para todos os clientes do escopo. */
+  escopoSemRegistro?: boolean;
+  /** A RLS de `venda_contato` só mostra os registros do PRÓPRIO usuário (não-master). */
+  soOsProprios?: boolean;
+}
+
 /**
  * O que a linha da lista pode afirmar. `carregando` → nada (null) — não pisca "sem contato".
+ *
+ * Onda B: com o escopo INTEIRO sem registro (as duas fontes estão vazias em prod, 2026-11-24), "sem
+ * contato em 180d" em toda linha é ruído, não informação → null. E para quem não é master a RLS de
+ * `venda_contato` esconde o contato feito por OUTRA pessoa: a ausência é "não visível para você", não
+ * "não houve".
  */
 export function rotuloUltimoContato(
   registro: RegistroContato | null | undefined,
   estado: EstadoUltimoContato,
   hoje: Date,
+  ctx: ContextoUltimoContato = {},
 ): string | null {
   if (estado === 'carregando') return null;
   if (estado === 'falha') return 'último contato indisponível';
-  if (!registro) return `sem contato registrado em ${JANELA_ULTIMO_CONTATO_DIAS}d`;
+  if (!registro) {
+    if (ctx.escopoSemRegistro) return null;
+    return ctx.soOsProprios
+      ? `sem contato visível para você em ${JANELA_ULTIMO_CONTATO_DIAS}d`
+      : `sem contato registrado em ${JANELA_ULTIMO_CONTATO_DIAS}d`;
+  }
   const dias = diasDeCalendario(registro.em, hoje);
   const quando = dias === 0 ? 'contato hoje' : dias === 1 ? 'contato ontem' : `contato há ${dias}d`;
   const desfecho = registro.desfecho ? ROTULO_DESFECHO[registro.desfecho] ?? null : null;

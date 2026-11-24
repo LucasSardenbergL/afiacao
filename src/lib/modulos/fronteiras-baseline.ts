@@ -9,6 +9,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/components/adminCustomers/Customer360View.tsx", para: "src/components/call/CallButton.tsx", deModulo: "admin-crm", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/adminCustomers/Customer360View.tsx", para: "src/components/RecommendationsPanel.tsx", deModulo: "admin-crm", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/adminCustomers/Customer360View.tsx", para: "src/components/visitas/AgendarVisitaDialog.tsx", deModulo: "admin-crm", paraModulo: "farmer-inteligencia", kind: "runtime" },
+  { de: "src/components/adminCustomers/CustomerListView.tsx", para: "src/components/call/CallButton.tsx", deModulo: "admin-crm", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/adminCustomers/CustomerListView.tsx", para: "src/hooks/useCustomerSegments.ts", deModulo: "admin-crm", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/adminCustomers/CustomerListView.tsx", para: "src/lib/scoring/prioridadeValor.ts", deModulo: "admin-crm", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/adminCustomers/useClientesScope.ts", para: "src/lib/carteira/escopo-clientes.ts", deModulo: "admin-crm", paraModulo: "farmer-inteligencia", kind: "runtime" },

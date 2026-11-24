@@ -1,7 +1,7 @@
 // Lista de clientes (segmentos, busca, filtros, tabela densa, scroll infinito).
 // Extraído verbatim de src/pages/AdminCustomers.tsx (god-component split).
-import { useState, useMemo, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useState, useMemo, useEffect, useRef, type MouseEvent as EventoMouse } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { Button } from '@/components/ui/button';
@@ -10,8 +10,11 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Loader2, Search, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
-  AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ, Info,
+  AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ, Info, MessageSquare,
 } from 'lucide-react';
+import { CallButton } from '@/components/call/CallButton';
+import { useLenteAtiva } from '@/lib/impersonation/useLenteAtiva';
+import { whatsappLink } from '@/lib/phone';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -22,13 +25,14 @@ import { cn } from '@/lib/utils';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
-import { lerRolagemARestaurar } from '@/lib/nav/clientes';
+import { lerRolagemARestaurar, urlCliente360 } from '@/lib/nav/clientes';
 import {
   HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, estadoFiltroSaude, fmtContagem, fmtGasto, fmtPrioridade, formatDocument,
   metricasExibiveis, motivoContato, normalizarOrdem, prioridadeDisponivel, rotuloContagem, TAMANHO_PAGINA_CLIENTES,
   type EstadoScores, type OrdemClientes,
 } from './config';
-import { modoClientes, registrarUsoClientes, type ModoClientes } from '@/lib/nav/sensor-clientes';
+import { modoClientes, registrarFimDaLigacao, registrarUsoClientes, type ModoClientes } from '@/lib/nav/sensor-clientes';
+import { useTecladoClientes } from './useTecladoClientes';
 import type { Customer, ClientScore } from './types';
 import { rotuloUltimoContato } from './ultimoContato';
 import { useUltimoContato } from './useUltimoContato';
@@ -61,6 +65,18 @@ function NotaPrioridade({ valor, fatores }: { valor: number; fatores: string[] |
       </Tooltip>
     </TooltipProvider>
   );
+}
+
+/** Clique com modificador/botão do meio: deixa o navegador abrir o link (nova aba), sem SPA. */
+function cliqueDoNavegador(e: EventoMouse): boolean {
+  return e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+}
+
+/** O clique na linha veio de um controle dela (link, botão, menu, área de ações)? Então é dele, não da linha. */
+function cliqueEmControle(e: EventoMouse<HTMLElement>): boolean {
+  const alvo = e.target as HTMLElement | null;
+  const controle = alvo?.closest('a, button, input, [role="menuitem"], [data-acoes-linha]');
+  return !!controle && e.currentTarget.contains(controle);
 }
 
 export function CustomerListView({
@@ -140,6 +156,11 @@ export function CustomerListView({
     onLoadMore();
   };
   const sentinelRef = useInfiniteScroll(carregarMais, hasNextPage && !isFetchingNextPage);
+  // Onda C: J/K entre os nomes (links reais); Enter é o do link.
+  const corpoRef = useRef<HTMLTableSectionElement>(null);
+  useTecladoClientes(corpoRef);
+  // Ligar já se bloqueia na lente (CallDialerView); o WhatsApp sai do app — também fica desligado nela.
+  const isImpersonating = useLenteAtiva();
   // Ordenável nos dois modos (antes só na base completa: a vendedora só tinha o A–Z).
   const ordenavel = true;
   const filtrando = !!searchQuery || filterHealth !== 'all';
@@ -494,7 +515,7 @@ export function CustomerListView({
                 <th className="w-10 px-2"></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody ref={corpoRef}>
               {filtered.map((customer, indice) => {
                 const score = scores.get(customer.user_id);
                 const healthInfo = score ? classeSaudeExibida(score.health_class) : undefined;
@@ -502,24 +523,41 @@ export function CustomerListView({
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
                 const motivo = motivoContato(score);
-                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estadoDe(customer.user_id), hoje);
+                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estadoDe(customer.user_id), hoje, ultimoContato.contexto);
+                const nome = decodeHtmlEntities(customer.name);
+                const waHref = whatsappLink(customer.phone);
+                const abrir = () => {
+                  registrarUsoClientes({
+                    acao: 'cliente_aberto', modo, posicao: indice + 1, filtroSaude: filterHealth, comBusca: !!searchQuery,
+                  });
+                  onSelect(customer);
+                };
 
                 return (
                   <tr
                     key={customer.user_id}
-                    className="border-b last:border-b-0 hover:bg-muted/30 cursor-pointer transition-colors"
-                    onClick={() => {
-                      registrarUsoClientes({
-                        acao: 'cliente_aberto', modo, posicao: indice + 1, filtroSaude: filterHealth, comBusca: !!searchQuery,
-                      });
-                      onSelect(customer);
-                    }}
+                    className="border-b last:border-b-0 hover:bg-muted/30 cursor-pointer transition-colors focus-within:bg-muted/30"
+                    // Conveniência do mouse: a linha inteira abre. O caminho acessível é o link do nome.
+                    onClick={(e) => { if (!cliqueEmControle(e)) abrir(); }}
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
                         <div className="min-w-0">
                           <p className="font-medium truncate text-foreground flex items-center gap-1.5">
-                            <span className="truncate">{decodeHtmlEntities(customer.name)}</span>
+                            {/* Link real (onda C): foco, Enter, abrir em nova aba. O clique simples segue pelo
+                                `onSelect`, que guarda a fila e a rolagem como origem do voltar. */}
+                            <Link
+                              to={urlCliente360(customer.user_id)}
+                              data-link-cliente=""
+                              className="truncate rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={(e) => {
+                                if (cliqueDoNavegador(e)) return;
+                                e.preventDefault();
+                                abrir();
+                              }}
+                            >
+                              {nome}
+                            </Link>
                             {customer.coberto_de && (
                               <Badge variant="outline" className="text-[10px] shrink-0 text-status-info border-status-info/40">
                                 cobertura
@@ -532,8 +570,49 @@ export function CustomerListView({
                           {contato && (
                             <p className="text-xs text-muted-foreground truncate" data-testid="ultimo-contato">{contato}</p>
                           )}
+                          {/* Celular: a coluna Prioridade some (md:table-cell) — a nota vem aqui, compacta. */}
+                          {metricas?.prioridade != null && (
+                            <p className="text-xs text-muted-foreground md:hidden" data-testid="prioridade-compacta">
+                              Prioridade <span className="font-semibold tabular-nums text-foreground">{fmtPrioridade(metricas.prioridade)}</span>
+                            </p>
+                          )}
                           {customer.phone && (
-                            <p className="text-xs text-muted-foreground">{customer.phone}</p>
+                            <div className="mt-0.5 flex items-center gap-1" data-acoes-linha="">
+                              <span className="text-xs text-muted-foreground">{customer.phone}</span>
+                              {/* Agir pela lista (onda C): ligar e WhatsApp sem abrir a ficha. */}
+                              <span
+                                className="inline-flex"
+                                data-testid="ligar-na-linha"
+                                onClickCapture={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: 'lista', tipo: 'ligar', fase: 'tentativa' })}
+                              >
+                                <CallButton
+                                  phone={customer.phone}
+                                  customerName={nome}
+                                  customerId={customer.user_id}
+                                  variant="icon"
+                                  onCallEnd={(fim) => registrarFimDaLigacao('lista', fim)}
+                                />
+                              </span>
+                              {waHref && (
+                                isImpersonating ? (
+                                  <Button
+                                    variant="ghost" size="icon" className="h-8 w-8" disabled
+                                    title="WhatsApp indisponível em modo Ver como" aria-label={`WhatsApp de ${nome} (indisponível na lente)`}
+                                  >
+                                    <MessageSquare className="w-4 h-4" aria-hidden />
+                                  </Button>
+                                ) : (
+                                  <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+                                    <a
+                                      href={waHref} target="_blank" rel="noopener noreferrer" aria-label={`WhatsApp de ${nome}`}
+                                      onClick={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: 'lista', tipo: 'whatsapp', fase: 'tentativa' })}
+                                    >
+                                      <MessageSquare className="w-4 h-4" aria-hidden />
+                                    </a>
+                                  </Button>
+                                )
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -575,7 +654,7 @@ export function CustomerListView({
                       ) : <span className="text-xs text-muted-foreground">{NAO_APURADO}</span>}
                     </td>
                     <td className="px-2 py-2.5">
-                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" aria-hidden />
                     </td>
                   </tr>
                 );

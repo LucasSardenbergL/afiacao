@@ -17,25 +17,20 @@ const estadoDe = (q: { data: unknown; isError: boolean }) =>
   q.data !== undefined ? 'ok' as const : q.isError ? 'falha' as const : 'carregando' as const;
 
 /**
- * O cliente está na carteira ELEGÍVEL de quem está logado (o usuário REAL — escrita é sempre do
- * `useAuth`)? `venda_registrar_contato` só grava nesse caso (senão 42501), então os botões só aparecem aí.
+ * Quem está logado (o usuário REAL — escrita é sempre do `useAuth`) pode AGIR neste cliente?
+ * `pode_agir_no_cliente` é o MESMO predicado que `venda_registrar_contato` aplica (atribuição elegível
+ * na raiz fiscal, alias resolvido; cobertura lê mas não age) — front e escritor não divergem mais.
  */
 function useNaMinhaCarteira(customerId: string) {
   const { user } = useAuth();
   return useQuery({
-    queryKey: ['c360-na-minha-carteira', customerId, user?.id],
+    queryKey: ['c360-pode-agir', customerId, user?.id],
     enabled: !!user?.id,
     staleTime: 60_000,
     queryFn: async (): Promise<boolean> => {
-      const { data, error } = await supabase
-        .from('carteira_assignments')
-        .select('customer_user_id')
-        .eq('customer_user_id', customerId)
-        .eq('owner_user_id', user!.id)
-        .eq('eligible', true)
-        .limit(1);
+      const { data, error } = await supabase.rpc('pode_agir_no_cliente', { p_customer_user_id: customerId });
       if (error) throw error;
-      return (data ?? []).length > 0;
+      return data === true;
     },
   });
 }
@@ -68,9 +63,9 @@ export function AcoesDaFicha({ customerId, tarefas, credito, onCriarTarefa }: {
         </CardHeader>
         <CardContent className="text-sm">
           {naCarteira.data === true ? (
-            <span onClickCapture={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'registrar_desfecho' })}>
-              <BotoesContato compradorId={customerId} variante="grade" />
-            </span>
+            // O sensor conta o desfecho na gravação CONFIRMADA (onda C), não no toque — o toque que falha
+            // (42501, rede) inflava a adoção.
+            <BotoesContato compradorId={customerId} variante="grade" superficie="360" />
           ) : naCarteira.data === false ? (
             <p className="text-xs text-muted-foreground">
               O desfecho é registrado por quem tem este cliente na carteira.

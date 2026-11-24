@@ -7,14 +7,17 @@ import { ilikeContainsPattern, ilikeOr, isSearchablePostgrestTerm } from '@/lib/
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
- *  - Clientes (profiles): nome, document, email
+ *  - Clientes (RPC `buscar_clientes_global`): nome/razão social de qualquer cliente; documento e e-mail
+ *    só casam — e só voltam — onde o contato é visível (carteira/cobertura/gestão). Staff nunca aparece.
  *  - Fórmulas tintométricas (tint_formulas): cor_id, nome_cor
  *  - Pedidos de venda (sales_orders): omie_numero_pedido
  *
  * Debounce 200ms pra evitar flood. Limite 5 por categoria pra UI manter snapshot.
  * Resultados servem pra renderizar grupos no CommandPalette.
  *
- * Recentes: top 10 últimos cliques (path navegado), persistido em localStorage.
+ * Recentes: top 10 últimos cliques, POR USUÁRIO, só `kind`/`id`/`title`/`path` (nada de documento
+ * ou e-mail em localStorage). A chave antiga global (`global_search_recents_v1`, que guardava o
+ * subtitle com CPF/CNPJ) é apagada na primeira leitura.
  */
 
 export interface SearchResult {
@@ -45,23 +48,78 @@ export const KIND_NA_SERIE = {
   'sales-order': 'sales_order',
 } as const satisfies Record<SearchResult['kind'], string>;
 
-const RECENTS_KEY = 'global_search_recents_v1';
+/** Chave antiga (global, com subtitle = documento/e-mail). Só existe para ser APAGADA. */
+export const CHAVE_RECENTES_LEGADA = 'global_search_recents_v1';
+const PREFIXO_RECENTES = 'global_search_recents_v2:';
 const MAX_RECENTS = 10;
 
-function readRecents(): SearchResult[] {
-  if (typeof localStorage === 'undefined') return [];
+export const chaveRecentes = (userId: string) => `${PREFIXO_RECENTES}${userId}`;
+
+/** O que pode ir para o localStorage: identidade + destino. Nunca subtitle (documento/e-mail/valor). */
+export function paraRecente(r: SearchResult): SearchResult {
+  return { kind: r.kind, id: r.id, title: r.title, path: r.path };
+}
+
+function storage(): Storage | null {
   try {
-    const raw = localStorage.getItem(RECENTS_KEY);
-    return raw ? (JSON.parse(raw) as SearchResult[]) : [];
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function limparRecentesLegados(): void {
+  try { storage()?.removeItem(CHAVE_RECENTES_LEGADA); } catch { /* storage bloqueado: nada a limpar */ }
+}
+
+export function lerRecentes(userId: string | null | undefined): SearchResult[] {
+  limparRecentesLegados();
+  const st = storage();
+  if (!st || !userId) return [];
+  try {
+    const raw = st.getItem(chaveRecentes(userId));
+    const lidos = raw ? (JSON.parse(raw) as unknown) : [];
+    if (!Array.isArray(lidos)) return [];
+    // re-sanitiza o que estiver gravado (versão anterior deste formato ou edição manual)
+    return lidos
+      .filter((r): r is SearchResult => !!r && typeof r === 'object' && typeof (r as SearchResult).id === 'string'
+        && typeof (r as SearchResult).path === 'string' && typeof (r as SearchResult).title === 'string')
+      .map(paraRecente)
+      .slice(0, MAX_RECENTS);
   } catch {
     return [];
   }
 }
 
-function writeRecents(items: SearchResult[]): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(RECENTS_KEY, JSON.stringify(items.slice(0, MAX_RECENTS)));
-  window.dispatchEvent(new StorageEvent('storage', { key: RECENTS_KEY }));
+export function gravarRecentes(userId: string | null | undefined, items: SearchResult[]): void {
+  const st = storage();
+  if (!st || !userId) return;
+  const chave = chaveRecentes(userId);
+  try {
+    st.setItem(chave, JSON.stringify(items.map(paraRecente).slice(0, MAX_RECENTS)));
+  } catch { /* cota/privado: recentes são conveniência, não estado */ }
+  window.dispatchEvent(new StorageEvent('storage', { key: chave }));
+}
+
+export interface ClienteBuscaRow {
+  user_id: string;
+  name: string | null;
+  razao_social: string | null;
+  contato_visivel: boolean;
+  documento: string | null;
+  email: string | null;
+}
+
+/** Linha da RPC → resultado do Cmd-K. Subtitle só com o que o SERVIDOR liberou. */
+export function mapearClientesBusca(rows: ClienteBuscaRow[]): SearchResult[] {
+  return rows.map((p) => ({
+    kind: 'customer',
+    id: p.user_id,
+    title: p.name ?? p.razao_social ?? 'Sem nome',
+    subtitle: p.contato_visivel ? (p.documento ?? p.email ?? undefined) : undefined,
+    // Vai direto pro 360° (dashboard rico), não pra lista com modal genérico
+    path: `/admin/customers/${p.user_id}/360`,
+  }));
 }
 
 export function useGlobalSearch(query: string, enabled = true) {
@@ -78,23 +136,13 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 30_000,
     queryFn: async () => {
-      // Termo só-wildcard (`**`, passa o length>=2) sanitiza pra vazio → `.or()` viraria match-all
-      // dos profiles (PII) (#1062). Busca pura: não-pesquisável = sem resultados.
+      // Termo só-wildcard (`**`, passa o length>=2) → busca vazia (#1062); o servidor também neutraliza.
       if (!isSearchablePostgrestTerm(trimmed)) return [];
-      // Busca por nome OU document OU email — ilikeOr sanitiza (anti-injeção)
-      const { data } = await supabase
-        .from('profiles')
-        .select('user_id, name, document, email')
-        .or(ilikeOr(['name', 'document', 'email'], trimmed))
-        .limit(5);
-      return (data ?? []).map((p): SearchResult => ({
-        kind: 'customer',
-        id: p.user_id,
-        title: p.name ?? 'Sem nome',
-        subtitle: p.document ?? p.email ?? undefined,
-        // Vai direto pro 360° (dashboard rico), não pra lista com modal genérico
-        path: `/admin/customers/${p.user_id}/360`,
-      }));
+      // Escopo, exclusão de staff e máscara de documento/e-mail são do SERVIDOR (onda D): ler
+      // `profiles` direto aqui buscava CPF/e-mail de qualquer um e listava funcionário como cliente.
+      const { data, error } = await supabase.rpc('buscar_clientes_global', { p_termo: trimmed, p_limite: 5 });
+      if (error) throw error; // supabase-js não lança: sem isto a falha virava "Nada encontrado"
+      return mapearClientesBusca((data ?? []) as ClienteBuscaRow[]);
     },
   });
 
@@ -105,12 +153,13 @@ export function useGlobalSearch(query: string, enabled = true) {
     staleTime: 60_000,
     queryFn: async () => {
       if (!isSearchablePostgrestTerm(trimmed)) return []; // só-wildcard → match-all (#1062); busca vazia
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')
         .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], trimmed))
         .limit(5);
+      if (error) throw error;
       return (data ?? []).map((f): SearchResult => ({
         kind: 'formula',
         id: f.id,
@@ -133,11 +182,12 @@ export function useGlobalSearch(query: string, enabled = true) {
       // não chega aqui, porque a query só roda com termo só-dígitos; se chegasse, busca vazia.
       const pat = ilikeContainsPattern(trimmed);
       if (!pat) return [];
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sales_orders')
         .select('id, omie_numero_pedido, total, customer_user_id')
         .ilike('omie_numero_pedido', pat)
         .limit(5);
+      if (error) throw error;
       return (data ?? []).map((o: { id: string; omie_numero_pedido: string | null; total: number | null }): SearchResult => ({
         kind: 'sales-order',
         id: o.id,
@@ -160,37 +210,50 @@ export function useGlobalSearch(query: string, enabled = true) {
     return out;
   }, [customersQuery.data, formulasQuery.data, ordersQuery.data]);
 
+  // Falha de uma categoria FALA (não vira "Nada encontrado"); as outras seguem.
+  const erros = useMemo(() => {
+    const out: string[] = [];
+    if (customersQuery.isError) out.push('clientes');
+    if (formulasQuery.isError) out.push('fórmulas');
+    if (ordersQuery.isError) out.push('pedidos');
+    return out;
+  }, [customersQuery.isError, formulasQuery.isError, ordersQuery.isError]);
+
   return {
     isActive,
     isLoading,
     groups,
+    erros,
     hasResults: groups.length > 0,
   };
 }
 
-/** Hook standalone pra ler/atualizar recentes (consumido pela palette). */
+/** Hook standalone pra ler/atualizar recentes (consumido pela palette). Recentes são POR USUÁRIO. */
 export function useSearchRecents() {
-  const [recents, setRecents] = useState<SearchResult[]>(() => readRecents());
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const [recents, setRecents] = useState<SearchResult[]>(() => lerRecentes(userId));
 
   useEffect(() => {
+    setRecents(lerRecentes(userId));
     const onStorage = (e: StorageEvent) => {
-      if (e.key === RECENTS_KEY || e.key === null) setRecents(readRecents());
+      if (e.key === null || (userId && e.key === chaveRecentes(userId))) setRecents(lerRecentes(userId));
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  }, [userId]);
 
   const push = (result: SearchResult) => {
     setRecents((prev) => {
       // Move to top, dedupe por path
-      const next = [result, ...prev.filter((r) => r.path !== result.path)].slice(0, MAX_RECENTS);
-      writeRecents(next);
+      const next = [paraRecente(result), ...prev.filter((r) => r.path !== result.path)].slice(0, MAX_RECENTS);
+      gravarRecentes(userId, next);
       return next;
     });
   };
 
   const clear = () => {
-    writeRecents([]);
+    gravarRecentes(userId, []);
     setRecents([]);
   };
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatarFracaoPct, churnTone, formatContagemComTeto } from '../format';
+import { formatarFracaoPct, churnTone, formatContagemComTeto, healthTone, formatCalculadoEm } from '../format';
 
 describe('formatContagemComTeto — lista com teto não se apresenta como total', () => {
   it('no teto, "N+" (a lista foi cortada); abaixo dele, o número', () => {
@@ -72,5 +72,27 @@ describe('churnTone — entrada é PERCENTUAL 0–100', () => {
   it('devolve travessão para ausente', () => {
     expect(churnTone(null).label).toBe('—');
     expect(churnTone(NaN).label).toBe('—');
+  });
+});
+
+describe('healthTone — 360 usa o mesmo dicionário da lista (onda B)', () => {
+  it.each([
+    ['saudavel', 'Saudável'], ['estavel', 'Estável'], ['atencao', 'Atenção'], ['critico', 'Crítico'],
+  ])('%s → %s (nunca "Sem score")', (classe, label) => {
+    expect(healthTone(classe, 'ativo').label).toBe(label);
+  });
+  it('sem linha de score → Sem score', () => {
+    expect(healthTone(null, null).label).toBe('Sem score');
+  });
+});
+
+describe('formatCalculadoEm — data do cálculo do score (onda B)', () => {
+  it('ISO → "calculado em DD/MM"', () => {
+    expect(formatCalculadoEm('2026-11-24T12:25:11.275+00:00')).toBe('calculado em 24/11');
+  });
+  it('ausente ou ilegível → null (nada inventado)', () => {
+    expect(formatCalculadoEm(null)).toBeNull();
+    expect(formatCalculadoEm(undefined)).toBeNull();
+    expect(formatCalculadoEm('xpto')).toBeNull();
   });
 });
