@@ -11,7 +11,7 @@ export type RegimeTributario = 'simples' | 'presumido';
 // Presumido em jan/2023 (founder em 2026-11-24; nos dados: DAS 2.06.99 até 2022-12, PIS 2.06.03
 // desde 2023-01, IRPJ/CSLL desde 2023-04 — 1º trimestre do presumido).
 // Empresa desconhecida → 'presumido' (default histórico do motor).
-export const REGIMES_POR_EMPRESA: Record<string, ReadonlyArray<{ desde: number | null; regime: RegimeTributario }>> = {
+const REGIMES_POR_EMPRESA: Record<string, ReadonlyArray<{ desde: number | null; regime: RegimeTributario }>> = {
   colacor: [{ desde: null, regime: 'simples' }, { desde: 202301, regime: 'presumido' }],
   oben: [{ desde: null, regime: 'presumido' }],
   colacor_sc: [{ desde: null, regime: 'simples' }],
