@@ -249,9 +249,10 @@ export default function Customer360() {
           open={abrirVozTarefa}
           onOpenChange={setAbrirVozTarefa}
           vendedoras={salespeople.map((s) => ({ user_id: s.user_id, nome: s.name }))}
-          // Voz: com empresa comprovada única, ela; senão o default "oben" de antes (o diálogo de voz
-          // não tem seletor de empresa — follow-up anotado no PR da onda B).
-          empresa="oben"
+          // §#9 acima: empresa comprovada, ou o diálogo de voz pergunta (igual ao de tarefa).
+          empresa={empresaProvada}
+          empresaOpcoes={opcoesEmpresa}
+          empresaMotivo={motivoEmpresa}
           clienteFixo={{
             customer_user_id: customerId,
             nome: customer.name ?? 'Cliente',
