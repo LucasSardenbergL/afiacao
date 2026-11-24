@@ -174,3 +174,49 @@ describe('nota ausente ≠ zero (onda A)', () => {
     expect(semNota.priority_score).toBeNull();
   });
 });
+
+describe('buildAgendaItems — reserva de reativação', () => {
+  const ativos = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      mkRow({ customer_user_id: `ativo-${i}`, priority_score: 90 - i, days_since_last_purchase: 40 }),
+    );
+  const stale = (id: string, dias: number | null, nota: number) =>
+    mkRow({ customer_user_id: id, sales_history_status: 'stale', priority_score: nota, days_since_last_purchase: dias });
+
+  it('com fila cheia de ativos, 2 das 10 vagas vão para os inativos recentes, mais recente primeiro', () => {
+    const rows = [...ativos(20), stale('s-200', 200, 25), stale('s-300', 300, 15), stale('s-190', 190, 28)];
+    const items = buildAgendaItems(rows, 10);
+    expect(items.map((i) => i.customer_user_id)).toEqual([
+      ...Array.from({ length: 8 }, (_, i) => `ativo-${i}`),
+      's-190',
+      's-200',
+    ]);
+    expect(items.filter((i) => i.reserva_reativacao).map((i) => i.customer_user_id)).toEqual(['s-190', 's-200']);
+  });
+
+  it('inativo além da janela ou sem dias medidos não ocupa vaga reservada', () => {
+    const rows = [...ativos(20), stale('s-400', 400, 20), stale('s-null', null, 29)];
+    const items = buildAgendaItems(rows, 10);
+    expect(items.some((i) => i.reserva_reativacao)).toBe(false);
+    expect(items.map((i) => i.customer_user_id)).toEqual(Array.from({ length: 10 }, (_, i) => `ativo-${i}`));
+  });
+
+  it('vaga sem candidato volta para a fila principal', () => {
+    const items = buildAgendaItems([...ativos(20), stale('s-200', 200, 25)], 10);
+    expect(items.map((i) => i.customer_user_id)).toEqual([
+      ...Array.from({ length: 9 }, (_, i) => `ativo-${i}`),
+      's-200',
+    ]);
+  });
+
+  it('fila curta: ninguém duplica e ativação só completa o fim', () => {
+    const rows = [...ativos(3), stale('s-200', 200, 25), mkRow({ customer_user_id: 'novo', sales_history_status: 'sem_historico', priority_score: null })];
+    const ids = buildAgendaItems(rows, 10).map((i) => i.customer_user_id);
+    expect(ids).toEqual(['ativo-0', 'ativo-1', 'ativo-2', 's-200', 'novo']);
+  });
+
+  it('limite abaixo de 5 não reserva', () => {
+    const items = buildAgendaItems([...ativos(10), stale('s-200', 200, 25)], 4);
+    expect(items.map((i) => i.customer_user_id)).toEqual(['ativo-0', 'ativo-1', 'ativo-2', 'ativo-3']);
+  });
+});
