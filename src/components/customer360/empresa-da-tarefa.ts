@@ -15,10 +15,10 @@ export type EmpresaDaTarefa =
   | { tipo: 'sem_dado'; opcoes: EmpresaKey[] };
 
 /** Pura: contas mapeadas do cliente → o que a tela pode afirmar sobre a empresa da tarefa. */
-export function empresaDaTarefa(contas: Array<{ account: string }> | null | undefined): EmpresaDaTarefa {
+export function empresaDaTarefa(contas: Array<{ account: string | null }> | null | undefined): EmpresaDaTarefa {
   const vistas = new Set<EmpresaKey>();
   for (const c of contas ?? []) {
-    if ((EMPRESAS_TAREFA as readonly string[]).includes(c.account)) vistas.add(c.account as EmpresaKey);
+    if (c.account && (EMPRESAS_TAREFA as readonly string[]).includes(c.account)) vistas.add(c.account as EmpresaKey);
   }
   const opcoes = EMPRESAS_TAREFA.filter((e) => vistas.has(e));
   if (opcoes.length === 1) return { tipo: 'unica', empresa: opcoes[0] };
