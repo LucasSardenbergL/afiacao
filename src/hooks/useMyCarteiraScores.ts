@@ -5,11 +5,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
 import {
-  coletarEmLotesConcorrente,
   fetchAssignmentsElegiveis,
   LOTE_IN,
   ownersDoAlvoNaLente,
 } from '@/lib/carteira/escopo-clientes';
+import { coletarEmLotesConcorrente } from '@/lib/lotes';
 import type { ScoreAdjustment } from '@/lib/scoring/types';
 
 export interface CarteiraScoreRow {

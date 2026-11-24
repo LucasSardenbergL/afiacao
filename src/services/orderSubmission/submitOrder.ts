@@ -562,6 +562,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                       quantidade: c.quantity,
                       unidade: c.product.unidade,
                       assigned_to: defaultProductionAssigneeId,
+                      // Data prometida → previsão da OP no Omie e prazo da OP local (antes ia hoje / nulo).
+                      ready_by_date: meta.readyByDate || null,
                     })),
                   },
                 });
@@ -678,6 +680,10 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         total: subtotals.service + DELIVERY_FEES[delivery.option],
         notes: observacaoOsAfiacao,
         payment_method: payment.afiacaoMethod,
+        // A modalidade escolhida vai à OS (orders.delivery_option): a edge gravava 'retirada' fixo.
+        // Com ela a OS entra no roteirizador, que precisa do turno (o endereço já vai em addressData).
+        delivery_option: delivery.option,
+        time_slot: delivery.option !== 'balcao' ? delivery.timeSlot || null : null,
       };
       const profileData = {
         name: nomeClienteExibicao(customer),

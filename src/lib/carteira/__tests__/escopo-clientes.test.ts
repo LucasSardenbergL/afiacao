@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveModoEscopo, chunk, marcarCobertura, ordenarPorNome, chaveOrdenacaoNome, coletarEmLotes,
-  hashIds, ownersAtivosDoAlvo,
+  resolveModoEscopo, marcarCobertura, ordenarPorNome, chaveOrdenacaoNome, ownersAtivosDoAlvo,
 } from '@/lib/carteira/escopo-clientes';
+import { chunk, coletarEmLotesConcorrente, hashIds } from '@/lib/lotes';
 
 describe('resolveModoEscopo', () => {
   it.each([
@@ -88,26 +88,43 @@ describe('chaveOrdenacaoNome — gêmea de private.nome_ordenacao (mesmos casos 
   });
 });
 
-describe('coletarEmLotes', () => {
-  it('divide em lotes e concatena na ordem', async () => {
+describe('coletarEmLotesConcorrente', () => {
+  const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  it('divide em lotes e concatena na ORDEM dos lotes, mesmo resolvendo fora de ordem', async () => {
     const lotesVistos: number[][] = [];
-    const out = await coletarEmLotes([1, 2, 3, 4, 5], 2, async (lote) => {
+    // O 1º lote é o mais lento: se a remontagem seguisse a ordem de chegada, viria por último.
+    const out = await coletarEmLotesConcorrente([1, 2, 3, 4, 5], 2, 4, async (lote) => {
       lotesVistos.push(lote);
+      await dormir(lote[0] === 1 ? 30 : 1);
       return lote.map((x) => x * 10);
     });
     expect(lotesVistos).toEqual([[1, 2], [3, 4], [5]]);
     expect(out).toEqual([10, 20, 30, 40, 50]);
   });
-  it('propaga erro de um lote', async () => {
+  it('nunca passa do teto de lotes em voo (e usa o teto quando há lotes de sobra)', async () => {
+    let emVoo = 0;
+    let pico = 0;
+    await coletarEmLotesConcorrente(Array.from({ length: 20 }, (_, i) => i), 2, 4, async (lote) => {
+      emVoo++; pico = Math.max(pico, emVoo);
+      await dormir(5);
+      emVoo--;
+      return lote;
+    });
+    expect(pico).toBe(4);
+  });
+  it('propaga erro de um lote (nunca devolve conjunto parcial)', async () => {
     await expect(
-      coletarEmLotes([1, 2, 3], 2, async (lote) => {
-        if (lote.includes(3)) throw new Error('boom');
+      coletarEmLotesConcorrente([1, 2, 3], 2, 4, async (lote) => {
+        if (lote.includes(3)) throw new Error('lote-3-falhou');
         return lote;
       }),
-    ).rejects.toThrow('boom');
+    ).rejects.toThrow('lote-3-falhou');
   });
-  it('lista vazia → []', async () => {
-    expect(await coletarEmLotes([], 2, async () => [99])).toEqual([]);
+  it('lista vazia → [] sem chamar o fetch; concorrência ≤ 0 lança', async () => {
+    let chamadas = 0;
+    expect(await coletarEmLotesConcorrente([], 2, 4, async () => { chamadas++; return [99]; })).toEqual([]);
+    expect(chamadas).toBe(0);
+    await expect(coletarEmLotesConcorrente([1], 2, 0, async (l) => l)).rejects.toThrow('concorrencia deve ser > 0');
   });
 });
 
