@@ -104,3 +104,19 @@ Deno.test("uma falha já tira o success (antes era true incondicional)", () => {
     { status: "ja_existia", omie_ordem_id: 2, omie_ordem_numero: null },
   ]), { success: true, falhas: 0 }, "sem falha");
 });
+
+// ── fiação no index.ts (a action não é executável fora do runtime da edge) ─────────────────────
+
+Deno.test("fiação: criar_ordem_producao usa o plano, a leitura da resposta e o resumo — sem success fixo", async () => {
+  const fonte = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const ini = fonte.indexOf('case "criar_ordem_producao"');
+  const fim = fonte.indexOf('case "finalizar_ordem_producao"');
+  if (ini < 0 || fim < ini) throw new Error("bloco criar_ordem_producao não encontrado");
+  const bloco = fonte.slice(ini, fim);
+  for (const s of ["agruparItensOp(", "planoDoItem(", "lerRespostaOp(", "motivoParaNaoChamar(", "resumoOps(", "desfecho: desfechosOp"]) {
+    if (!bloco.includes(s)) throw new Error(`fiação perdida: ${s}`);
+  }
+  if (/result\s*=\s*\{\s*success:\s*true/.test(bloco)) throw new Error("success:true incondicional voltou");
+  if (bloco.includes("String(omieOrdemId)")) throw new Error("número \"null\" fabricado voltou");
+  if (!/if \(opLinhasErr\) throw/.test(bloco)) throw new Error("leitura das OPs existentes que falha não pode virar 'nenhuma'");
+});
