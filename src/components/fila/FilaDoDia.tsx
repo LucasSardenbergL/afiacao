@@ -19,6 +19,7 @@ import { LinkTelefone } from '@/components/venda-cliente/LinkTelefone';
 import { FichaLigacao } from '@/components/venda-cliente/FichaLigacao';
 import { lerFichaDaUrl } from '@/lib/venda-cliente/resumo-link';
 import { AcaoOutcomeMenu } from './AcaoOutcomeMenu';
+import { urlNovoPedido } from '@/lib/nav/clientes';
 
 const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   prazo: { label: 'Prazo', cls: 'text-status-warning' },
@@ -57,7 +58,10 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
     );
   }
   if (a.cta === 'pedido') {
-    return <Button asChild size="sm" variant="outline"><Link to="/sales/new" onClick={onClick}>Montar pedido</Link></Button>;
+    // O pedido abre JÁ com o cliente da ação (mix gap): antes ia para /sales/new cru e a vendedora tinha
+    // de procurar de novo o cliente que a fila acabou de mostrar. Sem cliente na ação, a tela crua.
+    const destino = a.clienteUserId ? urlNovoPedido(a.clienteUserId) : '/sales/new';
+    return <Button asChild size="sm" variant="outline"><Link to={destino} onClick={onClick}>Montar pedido</Link></Button>;
   }
   return null;
 }

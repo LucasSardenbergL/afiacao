@@ -28,6 +28,8 @@ import {
   type FiltroStatusFeed, type OrdemFeed, type PeriodoFeed, type RecorteFeed, type ValorRecorte,
 } from './feed';
 import { track } from '@/lib/analytics';
+import { registrarSucessoNoDestino } from '@/lib/nav/sensor-clientes';
+import { estadoDaNavegacaoAtual } from '@/lib/nav/origem-atual';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { descontosItensQueryKey } from './useDescontosItensPedido';
 import { softDeleteOrder } from './soft-delete';
@@ -200,6 +202,16 @@ export function useSalesOrders() {
   // Filtro/aba nova a caminho com as linhas da anterior na tela (keepPreviousData): elas NÃO são do
   // filtro atual, então seleção e ações ficam suspensas até a resposta chegar (Codex, 2ª rodada).
   const emTransicao = feedQuery.isPlaceholderData;
+
+  // Sensor de Clientes (onda C): "Ver pedidos" de uma ficha só é SUCESSO quando o feed DESTE cliente foi
+  // lido (não no clique). 1x por montagem; o state some num F5, e aí não há de onde ter vindo.
+  const verPedidosMedido = useRef(false);
+  const feedDoClienteLido = !!clienteFiltro && feedQuery.isSuccess && !emTransicao;
+  useEffect(() => {
+    if (!feedDoClienteLido || verPedidosMedido.current) return;
+    verPedidosMedido.current = true;
+    registrarSucessoNoDestino(estadoDaNavegacaoAtual(), 'ver_pedidos');
+  }, [feedDoClienteLido]);
 
   // Medição da busca: só se ela achou algo — o TERMO nunca sai daqui. 1 evento por termo assentado.
   const buscaMedida = useRef<string | null>(null);

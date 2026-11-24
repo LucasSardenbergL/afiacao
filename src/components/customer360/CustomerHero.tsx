@@ -1,5 +1,6 @@
 // Cabeçalho (breadcrumb + hero com avatar, badges, status chips e ações) do Customer 360.
 // Extraído de src/pages/Customer360.tsx (god-component split).
+import { useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft, Building2, Calendar, MessageSquare, ShoppingBag, AlertCircle, Activity,
@@ -13,6 +14,11 @@ import { cn } from '@/lib/utils';
 import { DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens, legendaMargemSemCompraNaJanela } from '@/lib/format';
 import { coberturaCustoCliente } from '@/lib/scoring/margin';
 import { whatsappLink } from '@/lib/phone';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { useLenteAtiva } from '@/lib/impersonation/useLenteAtiva';
+import { useRegisterShortcuts, type Shortcut } from '@/components/shell/ShortcutsRegistry';
+import { urlNovoPedido } from '@/lib/nav/clientes';
+import { estadoSensorDestino, registrarFimDaLigacao, registrarUsoClientes } from '@/lib/nav/sensor-clientes';
 import {
   formatDateOrDash, formatCalculadoEm, initials, healthTone, churnTone, formatDocument, margemTone,
 } from './format';
@@ -20,12 +26,14 @@ import type { Customer, CustomerScore } from './viewTypes';
 import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 export function CustomerHero({
-  customer, score: s, isPj, onBack, scoreSemLeitura = null,
+  customer, score: s, isPj, onBack, rotuloVoltar = 'Clientes', scoreSemLeitura = null,
 }: {
   customer: Customer;
   score: CustomerScore;
   isPj: boolean;
   onBack: () => void;
+  /** Rótulo do voltar: a tela de onde a 360 foi aberta (Clientes, Meu dia, Telefonia…). */
+  rotuloVoltar?: string;
   /** Leitura do score que NÃO aconteceu (sem score em mãos): o chip não pode dizer "Sem score". */
   scoreSemLeitura?: EstadoSemLeitura | null;
 }) {
@@ -46,6 +54,22 @@ export function CustomerHero({
     ? legendaMargemSemCompraNaJanela(s?.days_since_last_purchase)
     : null;
   const waHref = whatsappLink(customer.phone);
+  // Onda C: no celular as ações são alvos de toque (44px); no desktop, compactas.
+  const tamanhoAcao = useIsMobile() ? 'touch' : 'sm';
+  const isImpersonating = useLenteAtiva();
+  // L liga (atalho da 360): aciona o botão Ligar de verdade — mesma trava de lente/telefone inválido.
+  const ligarRef = useRef<HTMLSpanElement>(null);
+  const atalhos = useMemo<Shortcut[]>(() => (customer.phone ? [{
+    keys: 'l',
+    label: 'Ligar para o cliente',
+    group: 'Cliente 360',
+    enabled: () => {
+      const botao = ligarRef.current?.querySelector('button');
+      return !!botao && !botao.disabled;
+    },
+    handler: () => ligarRef.current?.querySelector('button')?.click(),
+  }] : []), [customer.phone]);
+  useRegisterShortcuts(atalhos);
 
   return (
     <>
@@ -57,8 +81,8 @@ export function CustomerHero({
           className="h-7 px-2"
           onClick={onBack}
         >
-          <ArrowLeft className="w-3.5 h-3.5 mr-1" />
-          Clientes
+          <ArrowLeft className="w-3.5 h-3.5 mr-1" aria-hidden />
+          {rotuloVoltar}
         </Button>
         <span>/</span>
         <span className="text-foreground">360°</span>
@@ -191,22 +215,50 @@ export function CustomerHero({
               )}
             </div>
           </div>
-          {/* Ações rápidas */}
+          {/* Ações rápidas — sensor com tentativa (o toque) e sucesso (atendida / pedido enviado) separados */}
           <div className="flex flex-wrap gap-2">
             {customer.phone && (
-              <CallButton phone={customer.phone} customerName={customer.name} customerId={customer.user_id} />
+              <span
+                ref={ligarRef}
+                className="inline-flex"
+                aria-keyshortcuts="l"
+                onClickCapture={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'ligar', fase: 'tentativa' })}
+              >
+                <CallButton
+                  phone={customer.phone}
+                  customerName={customer.name}
+                  customerId={customer.user_id}
+                  onCallEnd={(fim) => registrarFimDaLigacao('360', fim)}
+                />
+              </span>
             )}
             {waHref && (
-              <Button asChild variant="outline" size="sm">
-                <a href={waHref} target="_blank" rel="noopener noreferrer">
-                  <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
+              isImpersonating ? (
+                <Button variant="outline" size={tamanhoAcao} disabled title="WhatsApp indisponível em modo Ver como">
+                  <MessageSquare className="w-3.5 h-3.5 mr-1.5" aria-hidden />
                   WhatsApp
-                </a>
-              </Button>
+                </Button>
+              ) : (
+                <Button asChild variant="outline" size={tamanhoAcao}>
+                  <a
+                    href={waHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'whatsapp', fase: 'tentativa' })}
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 mr-1.5" aria-hidden />
+                    WhatsApp
+                  </a>
+                </Button>
+              )
             )}
-            <Button asChild size="sm">
-              <Link to={`/sales/new?customer=${customer.user_id}`}>
-                <ShoppingBag className="w-3.5 h-3.5 mr-1.5" />
+            <Button asChild size={tamanhoAcao}>
+              <Link
+                to={urlNovoPedido(customer.user_id)}
+                state={estadoSensorDestino('360', 'novo_pedido')}
+                onClick={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'novo_pedido', fase: 'tentativa' })}
+              >
+                <ShoppingBag className="w-3.5 h-3.5 mr-1.5" aria-hidden />
                 Novo pedido
               </Link>
             </Button>
@@ -214,8 +266,8 @@ export function CustomerHero({
               customerUserId={customer.user_id}
               customerName={customer.name}
               trigger={
-                <Button variant="outline" size="sm">
-                  <Calendar className="w-3.5 h-3.5 mr-1.5" />
+                <Button variant="outline" size={tamanhoAcao}>
+                  <Calendar className="w-3.5 h-3.5 mr-1.5" aria-hidden />
                   Agendar visita
                 </Button>
               }

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Mic } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -35,29 +36,31 @@ import { useCreditoDoCliente } from '@/hooks/useAlertaCreditoCliente';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
-import { lerOrigemLista, urlListaClientes } from '@/lib/nav/clientes';
+import { destinoDoVoltar } from '@/lib/nav/clientes';
 
 export default function Customer360() {
   const { customerId } = useParams<{ customerId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  // Voltar devolve a FILA de origem (busca/saúde/ordem + rolagem), quando a 360 foi aberta da lista.
-  const voltarParaLista = () => {
-    const origem = lerOrigemLista(location.state);
-    navigate(urlListaClientes(origem?.query ?? ''), { state: { rolagem: origem?.rolagem ?? null } });
-  };
-  const { user, isMaster, isGestorComercial, isStaff } = useAuth();
+  // Voltar devolve a ORIGEM: a fila da lista (busca/saúde/ordem + rolagem) ou a tela que abriu a 360
+  // (Meu dia, agenda, telefonia, carteira, positivação — onda C). Sem origem, a lista crua.
+  const volta = destinoDoVoltar(location.state);
+  const voltarParaLista = () => navigate(volta.url, { state: volta.state });
+  // Escrita/identidade: `useAuth()` REAL. Leitura e o que se MOSTRA: a persona da lente (onda C, item 5).
+  const { user, isMaster, isGestorComercial } = useAuth();
+  const { displayIsStaff, displayIsMaster, displayIsGestorComercial } = useDisplayAccess();
   const [abrirVozTarefa, setAbrirVozTarefa] = useState(false);
   const [abrirCriarTarefa, setAbrirCriarTarefa] = useState(false);
   // Onda 3: próxima ação (tarefas abertas visíveis) e crédito (vencido 60+ nas 3 empresas + aliases).
   // A RLS dos aliases só abre para gestor/master — os demais leem sem eles e a ficha avisa.
   const tarefasAbertas = useTarefasAbertasDoCliente(customerId);
-  const credito = useCreditoDoCliente(customerId, { lerAliases: isMaster || isGestorComercial });
+  const credito = useCreditoDoCliente(customerId, { lerAliases: displayIsMaster || displayIsGestorComercial });
 
   const { data: customer, status: statusCore, fetchStatus: fetchCore, refetch: refetchCore } =
     useCustomerCore(customerId);
   const address = useCustomerAddress(customerId);
   const metrics = useCustomerMetrics(customerId);
+  // O score é do CLIENTE (UNIQUE customer_user_id, onda B): o mesmo na lente e fora dela.
   const score = useCustomerScore(customerId);
   const preferred = useCustomerPreferredItems(customerId);
   const orders = useCustomerOrders(customerId);
@@ -70,7 +73,7 @@ export default function Customer360() {
     () => (preferred.data ?? []).filter((it) => it.account === 'oben').map((it) => it.omie_codigo_produto),
     [preferred.data],
   );
-  const { reguaByOmie } = useReguaPreco360(customerId, omieCodigosRegua, regua360Flag && isStaff);
+  const { reguaByOmie } = useReguaPreco360(customerId, omieCodigosRegua, regua360Flag && displayIsStaff);
 
   // Contatos extras (PR-CONTACTS): múltiplos contatos por cliente (dono, gerente,
   // comprador, etc). Edição completa fica em /admin/customers detail tab — aqui
@@ -132,7 +135,7 @@ export default function Customer360() {
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={voltarParaLista}>
-            Voltar para Clientes
+            Voltar para {volta.rotulo}
           </Button>
         </div>
       </div>
@@ -147,7 +150,7 @@ export default function Customer360() {
         title="Cliente não encontrado"
         description="Pode ter sido removido ou o link está errado. Volte pra lista e tente de novo."
         tone="operational"
-        actionLabel="Voltar para Clientes"
+        actionLabel={`Voltar para ${volta.rotulo}`}
         onAction={voltarParaLista}
       />
     );
@@ -159,7 +162,8 @@ export default function Customer360() {
   const scoreSemLeitura = !s && naoConsegui(estadoScore) ? estadoScore : null;
   // PJ/PF é identidade: o servidor devolve `ehPj` mesmo com o documento mascarado fora da carteira.
   const isPj = customer.ehPj ?? ehCnpjDocumento(customer.document);
-  const podeCriarTarefaPorVoz = isMaster || isGestorComercial;
+  // Criar tarefa é ESCRITA: decide o usuário real. A lente mostra o botão só se a persona também o veria.
+  const podeCriarTarefaPorVoz = (isMaster || isGestorComercial) && (displayIsMaster || displayIsGestorComercial);
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -171,6 +175,7 @@ export default function Customer360() {
             scoreSemLeitura={scoreSemLeitura}
             isPj={isPj}
             onBack={voltarParaLista}
+            rotuloVoltar={volta.rotulo}
           />
           {podeCriarTarefaPorVoz && (
             <div className="absolute top-3 right-3">
@@ -181,7 +186,8 @@ export default function Customer360() {
                 disabled={salespeople.length === 0}
                 className="gap-1.5"
               >
-                🎙️ Criar tarefa por voz
+                <Mic className="w-3.5 h-3.5" aria-hidden />
+                Criar tarefa por voz
               </Button>
             </div>
           )}
@@ -193,7 +199,7 @@ export default function Customer360() {
         <CustomerKpiStrip faturamento12m={leitura12m} metricas={leituraMetricas} score={s} />
 
         {/* Onda 3: desfecho do contato, próxima ação e crédito — o que a vendedora faz a partir daqui */}
-        {customerId && isStaff && (
+        {customerId && displayIsStaff && (
           <AcoesDaFicha
             customerId={customerId}
             tarefas={tarefasAbertas}

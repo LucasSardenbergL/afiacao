@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
+import { urlPedidosDoCliente } from '@/lib/nav/clientes';
+import { estadoSensorDestino, registrarUsoClientes } from '@/lib/nav/sensor-clientes';
 import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { Regua360Entry } from '@/hooks/useReguaPreco360';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
@@ -265,7 +267,11 @@ export function ActivityColumn({
                     size="sm"
                     className="text-xs h-7"
                   >
-                    <Link to={`/sales?customer=${customer.user_id}`}>
+                    <Link
+                      to={urlPedidosDoCliente(customer.user_id)}
+                      state={estadoSensorDestino('360', 'ver_pedidos')}
+                      onClick={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'ver_pedidos', fase: 'tentativa' })}
+                    >
                       Ver todos ({contagemPedidos})
                     </Link>
                   </Button>

@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { formatBrPhone, normalizeBrPhone } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import type { CallLogRow } from '@/types/call-log';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 const STATUS_LABEL: Record<string, string> = {
   ringing: 'tocando', answered: 'atendida', missed: 'perdida', rejected: 'rejeitada',
@@ -13,6 +15,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function CallHistoryRow({ row, onCallBack }: { row: CallLogRow; onCallBack: (phone: string, name?: string) => void }) {
   const navigate = useNavigate();
+  const origemTela = estadoOrigemTelaAtual();
   const missed = row.direction === 'inbound' && row.status === 'missed';
   const Icon = missed ? PhoneMissed : row.direction === 'inbound' ? PhoneIncoming : PhoneOutgoing;
   const phone = row.phone_raw ?? row.phone_normalized ?? '';
@@ -41,9 +44,9 @@ export function CallHistoryRow({ row, onCallBack }: { row: CallLogRow; onCallBac
         <p className="text-muted-foreground">{new Date(row.started_at).toLocaleString('pt-BR')}</p>
       </div>
       <div className="flex gap-1">
-        {known && (
+        {known && row.customer_user_id && (
           <Button size="sm" variant="ghost" className="h-7 text-xs"
-            onClick={() => navigate(`/admin/customers/${row.customer_user_id}/360`)}>ver cliente</Button>
+            onClick={() => navigate(urlCliente360(row.customer_user_id!), { state: origemTela })}>ver cliente</Button>
         )}
         <Button size="sm" variant="outline" className="h-7 text-xs"
           disabled={!canCall}

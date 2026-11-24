@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
  * Guard da classe "erro colapsado em vazio" na porta do Customer 360 — a forma que MENTE com
@@ -55,36 +55,47 @@ function consulta(tabela: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: (t: string) => consulta(t), rpc: (fn: string) => consulta(`rpc:${fn}`) },
 }));
-vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'staff-1' }, isMaster: false, isGestorComercial: false, isStaff: true }),
-}));
+// Papel REAL (escrita) e o EXIBIDO (lente) mudam por teste — onda C, item 5.
+let authAtual = { user: { id: 'staff-1' }, isMaster: false, isGestorComercial: false, isStaff: true };
+let displayAtual = { displayIsStaff: true, displayIsMaster: false, displayIsGestorComercial: false };
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => authAtual }));
+vi.mock('@/hooks/useDisplayAccess', () => ({ useDisplayAccess: () => displayAtual }));
 // O esqueleto não tem âncora própria — o stub dá uma, sem casar classe de estilo.
 vi.mock('@/components/ui/page-skeleton', () => ({ PageSkeleton: () => <div data-testid="page-skeleton" /> }));
 // Os filhos são do MESMO módulo e têm testes próprios; aqui interessa QUAL ramo a página escolhe.
 // O herói stubado mostra o nome — é a prova positiva de que a página abriu com o cliente.
 vi.mock('@/components/customer360/CustomerHero', () => ({
-  CustomerHero: ({ customer, isPj, scoreSemLeitura }: {
+  CustomerHero: ({ customer, isPj, scoreSemLeitura, onBack, rotuloVoltar }: {
     customer: { name: string | null }; isPj: boolean; scoreSemLeitura?: string | null;
+    onBack: () => void; rotuloVoltar?: string;
   }) => (
-    <h1 data-pj={String(isPj)} data-score-sem-leitura={scoreSemLeitura ?? 'nenhum'}>{customer.name}</h1>
+    <>
+      <h1 data-pj={String(isPj)} data-score-sem-leitura={scoreSemLeitura ?? 'nenhum'}>{customer.name}</h1>
+      <button type="button" onClick={onBack}>voltar: {rotuloVoltar}</button>
+    </>
   ),
 }));
 vi.mock('@/components/customer360/CustomerKpiStrip', () => ({ CustomerKpiStrip: () => null }));
 vi.mock('@/components/customer360/IdentityColumn', () => ({ IdentityColumn: () => null }));
 vi.mock('@/components/customer360/ActivityColumn', () => ({ ActivityColumn: () => null }));
-vi.mock('@/components/customer360/AcoesDaFicha', () => ({ AcoesDaFicha: () => null }));
+vi.mock('@/components/customer360/AcoesDaFicha', () => ({ AcoesDaFicha: () => <div data-testid="acoes-da-ficha" /> }));
 
 import Customer360 from '../Customer360';
 
 let qc: QueryClient;
-function renderPagina(caminho = `/admin/customers/${ID}/360`) {
+function Onde() {
+  const l = useLocation();
+  return <p data-testid="onde">{l.pathname}{l.search}</p>;
+}
+function renderPagina(caminho = `/admin/customers/${ID}/360`, state?: unknown) {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[caminho]}>
+      <MemoryRouter initialEntries={[{ pathname: caminho, state }]}>
         <Routes>
           <Route path="/admin/customers/:customerId/360" element={<Customer360 />} />
           <Route path="/sem-id/360" element={<Customer360 />} />
+          <Route path="*" element={<Onde />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -95,6 +106,8 @@ function renderPagina(caminho = `/admin/customers/${ID}/360`) {
 const assentou = () => waitFor(() => expect(screen.queryByTestId(ESQUELETO)).toBeNull());
 
 beforeEach(() => {
+  authAtual = { user: { id: 'staff-1' }, isMaster: false, isGestorComercial: false, isStaff: true };
+  displayAtual = { displayIsStaff: true, displayIsMaster: false, displayIsGestorComercial: false };
   respostaCore = () => ok(cliente);
   respostaScore = () => ok(null);
   onlineManager.setOnline(true);
@@ -221,5 +234,33 @@ describe('Customer360 — isPj com CNPJ alfanumérico', () => {
   it('CPF: PF', async () => {
     respostaCore = () => ok({ ...cliente, document: '123.456.789-09' });
     expect(await abrir()).toBe('false');
+  });
+});
+
+describe('Customer360 — lente e origem (onda C)', () => {
+  it('na lente, o que a página MOSTRA segue a persona: sem staff exibido, sem as ações da ficha', async () => {
+    displayAtual = { displayIsStaff: false, displayIsMaster: false, displayIsGestorComercial: false };
+    renderPagina();
+    expect(await screen.findByRole('heading', { name: NOME })).toBeTruthy();
+    expect(screen.queryByTestId('acoes-da-ficha')).toBeNull();
+  });
+
+  it('tarefa por voz (escrita) exige o papel REAL e o da persona: master vendo uma vendedora não a vê', async () => {
+    authAtual = { user: { id: 'master-1' }, isMaster: true, isGestorComercial: false, isStaff: true };
+    renderPagina();
+    expect(await screen.findByRole('heading', { name: NOME })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Criar tarefa por voz/ })).toBeNull();
+  });
+
+  it('aberta de Telefonia, o voltar se chama Telefonia e volta para lá', async () => {
+    renderPagina(`/admin/customers/${ID}/360`, { origemTela: { rotulo: 'Telefonia', url: '/telefonia?aba=historico' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'voltar: Telefonia' }));
+    expect(screen.getByTestId('onde').textContent).toBe('/telefonia?aba=historico');
+  });
+
+  it('sem origem, volta para a lista crua de Clientes', async () => {
+    renderPagina();
+    fireEvent.click(await screen.findByRole('button', { name: 'voltar: Clientes' }));
+    expect(screen.getByTestId('onde').textContent).toBe('/admin/customers');
   });
 });

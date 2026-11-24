@@ -60,6 +60,7 @@ vi.mock('@/hooks/useContatosDoDia', () => ({ useContatosDoDia: () => ({ data: ne
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FichaLigacao } from '../FichaLigacao';
+import { liberarContato } from '@/hooks/useRegistrarContato';
 
 function renderFicha(compradorId: string | null = 'c1') {
   return render(
@@ -70,6 +71,8 @@ function renderFicha(compradorId: string | null = 'c1') {
 }
 
 beforeEach(() => {
+  // O `mutate` mockado nunca termina: a trava por cliente (real) não se solta sozinha entre os testes.
+  liberarContato('c1');
   vi.clearAllMocks();
   impMock.mockReturnValue({ isImpersonating: false });
   rpcMock.mockResolvedValue({ data: 2, error: null });
