@@ -155,7 +155,70 @@ export function ownersAtivosDoAlvo(
   return [alvoId, ...cobertos];
 }
 
-const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+export const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+
+/**
+ * Como `coletarEmLotes`, mas com até `concorrencia` lotes em voo. Preserva a ORDEM dos lotes no
+ * resultado e propaga o erro de qualquer lote (nunca devolve conjunto parcial). O "Meu dia" do gestor
+ * lê ~13k clientes por id (85 lotes): sequencial seria um lote por vez.
+ */
+export async function coletarEmLotesConcorrente<I, O>(
+  ids: I[],
+  size: number,
+  concorrencia: number,
+  fetchLote: (lote: I[]) => Promise<O[]>,
+): Promise<O[]> {
+  if (concorrencia <= 0) throw new Error('coletarEmLotesConcorrente: concorrencia deve ser > 0');
+  const lotes = chunk(ids, size);
+  const resultados: O[][] = new Array(lotes.length);
+  let proximo = 0;
+  const trabalhador = async () => {
+    while (proximo < lotes.length) {
+      const i = proximo++;
+      resultados[i] = await fetchLote(lotes[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concorrencia, lotes.length) }, trabalhador));
+  return resultados.flat();
+}
+
+/** Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
+ *  posse direta + carteiras que o alvo cobre (ativas e dentro da validade). */
+export async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
+  const { data: cov, error: covErr } = await supabase
+    .from('carteira_coverage')
+    .select('covered_user_id, valid_until')
+    .eq('covering_user_id', alvoId)
+    .eq('active', true);
+  if (covErr) throw covErr;
+  return ownersAtivosDoAlvo(cov ?? [], alvoId, new Date().toISOString());
+}
+
+/**
+ * Fonte ÚNICA do escopo de carteira (lista de clientes E "Meu dia"): `carteira_assignments` com
+ * `eligible = true`, paginado com `.range()` + ordem TOTAL (`customer_user_id` é UNIQUE) — o select
+ * puro capa em 1000. `ownerFilter` null = confia na RLS (`carteira_visivel_para`: carteira própria +
+ * cobertura); com lista, recorta pelos donos. Página com erro LANÇA (carteira parcial trocaria o escopo).
+ */
+export async function fetchAssignmentsElegiveis(
+  ownerFilter: string[] | null,
+  rotulo: string,
+): Promise<{ customer_user_id: string; owner_user_id: string }[]> {
+  return fetchAllPagesComMensagem<{ customer_user_id: string; owner_user_id: string }>(
+    (de, ate) => {
+      let q = supabase
+        .from('carteira_assignments')
+        .select('customer_user_id, owner_user_id')
+        .eq('eligible', true);
+      if (ownerFilter) {
+        q = q.in('owner_user_id', ownerFilter);
+      }
+      return q.order('customer_user_id').range(de, ate);
+    },
+    rotulo,
+    'carteira_assignments',
+  );
+}
 
 /**
  * Clientes da carteira. Fonte = carteira_assignments (eligible=true), paginado
@@ -167,36 +230,14 @@ export async function fetchCarteiraClientes(opts: {
   effectiveUserId: string | null;
   baseId: string | null;
 }): Promise<{ customers: Customer[]; ids: string[] }> {
-  // Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
-  // posse direta + carteiras que o alvo cobre. Fora da lente, a RLS carteira_visivel_para
-  // já entrega carteira própria + cobertura — sem filtro de owner aqui.
-  let ownerFilter: string[] | null = null;
-  if (opts.isImpersonating && opts.effectiveUserId) {
-    const { data: cov, error: covErr } = await supabase
-      .from('carteira_coverage')
-      .select('covered_user_id, valid_until')
-      .eq('covering_user_id', opts.effectiveUserId)
-      .eq('active', true);
-    if (covErr) throw covErr;
-    ownerFilter = ownersAtivosDoAlvo(cov ?? [], opts.effectiveUserId, new Date().toISOString());
-  }
+  // Fora da lente, a RLS carteira_visivel_para já entrega carteira própria + cobertura — sem filtro.
+  const ownerFilter = opts.isImpersonating && opts.effectiveUserId
+    ? await ownersDoAlvoNaLente(opts.effectiveUserId)
+    : null;
 
   // Pelo canônico: página com error ou `data: null` sem error LANÇA (a carteira PARCIAL trocaria o
   // escopo do cálculo) e a página perdida é medida pela fonte. `customer_user_id` é a chave.
-  const assignments = await fetchAllPagesComMensagem<{ customer_user_id: string; owner_user_id: string }>(
-    (de, ate) => {
-      let q = supabase
-        .from('carteira_assignments')
-        .select('customer_user_id, owner_user_id')
-        .eq('eligible', true);
-      if (ownerFilter) {
-        q = q.in('owner_user_id', ownerFilter);
-      }
-      return q.order('customer_user_id').range(de, ate);
-    },
-    'carteira_assignments/escopo-clientes',
-    'carteira_assignments',
-  );
+  const assignments = await fetchAssignmentsElegiveis(ownerFilter, 'carteira_assignments/escopo-clientes');
 
   const ownerById = new Map(
     assignments.map((a) => [a.customer_user_id, a.owner_user_id] as [string, string]),
