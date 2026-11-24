@@ -22,9 +22,13 @@ vem depois, porque mexe nos mesmos arquivos. Cada item foi conferido na `origin/
    - Sem títulos, o frescor **sobrevive**. O "verde" (Nenhum título vencido) só aparece com todas as
      empresas `ok`. Com `erro` ou `nunca`, a ficha diz "Crédito não confirmado" e nomeia a empresa.
      Com `defasado`, diz "no último sync".
-   - O gate da Fase 2 (`venda_gate_credito_grupo`) **continua > 60 d**. No 60º dia, o alerta aparece e
-     o pedido não é bloqueado. A divergência fica registrada aqui; alinhar o gate é migration
-     money-path com Codex, fora desta onda.
+   - O gate da Fase 2 (`venda_gate_credito_grupo`) continuou > 60 d no #4149. Por um tempo, no 60º
+     dia o alerta aparecia e o pedido não era bloqueado. **Alinhado no follow-up** (decisão do Lucas,
+     "Banco bloqueia ≥60"): a migration `20261124170000_credito_gate_fronteira_60_inclusiva` troca só
+     o operador (`<` → `<=`) nas 3 funções que leem o corte — `venda_gate_credito_grupo` (5),
+     `private.credito_avaliar_reservar` (3) e a v1 `venda_gate_credito` (1, sem chamador). Os corpos
+     são o `pg_get_functiondef` de prod, com guarda por md5 e pós-condição (0 estritas, 9 inclusivas,
+     ACL igual). Prova: `db/test-credito-gate-fronteira-60.sh`, 31 asserts, com sabotagens.
 3. **Empresa da tarefa.** O `empresa="oben"` fixo saiu do `CriarTarefaDialog` na 360. A empresa vem
    de `omie_customer_account_map_fresco`. Com uma conta, usa essa. Com várias, nenhuma ou leitura que
    falhou, o diálogo pergunta, mostra o motivo e trava o salvar até alguém escolher. O diálogo **por
