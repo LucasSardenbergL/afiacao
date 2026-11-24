@@ -1003,6 +1003,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/linha-view.ts",
       "src/lib/json-forma.ts",
       "src/lib/logger.ts",
+      "src/lib/lotes.ts",
       "src/lib/logger-migration.md",
       "src/lib/offline-cliente-do-dono.ts",
       "src/lib/offline-handlers.ts",

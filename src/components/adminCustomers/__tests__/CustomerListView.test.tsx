@@ -6,7 +6,10 @@ import type { Customer, ClientScore } from "../types";
 // Último contato (onda 3) tem teste próprio; aqui a lista só precisa de uma leitura vazia e lida.
 const ultimo = vi.hoisted(() => ({ estado: 'ok' as 'ok' | 'falha' | 'carregando', porCliente: new Map<string, unknown>(), ids: [] as string[][] }));
 vi.mock('../useUltimoContato', () => ({
-  useUltimoContato: (ids: string[]) => { ultimo.ids.push(ids); return { porCliente: ultimo.porCliente, estado: ultimo.estado }; },
+  useUltimoContato: (lotes: string[][]) => {
+    ultimo.ids.push(lotes.flat());
+    return { porCliente: ultimo.porCliente, estado: ultimo.estado, estadoDe: () => ultimo.estado };
+  },
 }));
 
 
@@ -190,6 +193,24 @@ describe("CustomerListView — último contato (onda 3)", () => {
     setup();
     expect(ultimo.ids.at(-1)).toEqual(["c1"]);
     expect(screen.getByTestId("ultimo-contato").textContent).toBe("contato hoje · vai pedir");
+  });
+
+  it("onda E: a busca local NÃO troca os lotes lidos (antes, cada termo relia ~15 lotes × 2 tabelas)", () => {
+    ultimo.estado = 'ok';
+    ultimo.porCliente = new Map();
+    ultimo.ids.length = 0;
+    const beta: Customer = { ...customer, user_id: "c2", name: "Serraria Beta", email: "beta@y.com", phone: "21888", document: "99887766000155" };
+    const lotes = [["c1", "c2"]];
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?search=Alfa"]}>
+        <CustomerListView customers={[customer, beta]} scores={new Map()} loading={false} isError={false} onRetry={vi.fn()}
+          total={2} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} lotesIds={lotes} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Marcenaria Alfa")).toBeTruthy();
+    // A tela filtrou (só Alfa aparece), mas o último contato segue pelos lotes ESTÁVEIS do escopo.
+    expect(screen.queryByText("Serraria Beta")).toBeNull();
+    expect(ultimo.ids.every((ids) => ids.join() === "c1,c2")).toBe(true);
   });
 
   it("leitura com falha: 'indisponível', nunca 'sem contato'", () => {
