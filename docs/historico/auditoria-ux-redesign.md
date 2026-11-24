@@ -324,3 +324,17 @@ app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; fr
 'retirada'). `orders` está vazia em prod. Falsificação 16/16 vermelha (8 sabotagens × `C` e
 `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
 Deno (a edge inteira não é importável no teste).
+
+**PR 8.4 — ordem de produção honesta** (edge `omie-vendas-sync` v1.48 + front). O `catch` do
+`IncluirOrdemProducao` só logava, a OP local nascia com número `"null"` (`String(null)`), a resposta era
+`success: true` incondicional e o front nem lia o retorno do invoke. Agora cada produto volta com desfecho
+(`criada` · `falhou` + motivo + chave `cCodIntOP`), `success` só sem falha, e o envio mostra a falha por
+produto mandando PROCURAR pela chave antes de criar à mão (falha pode ser timeout depois de o Omie gravar).
+O mesmo produto em duas linhas vira uma OP com a soma (o `cCodIntOP` é por produto e a 2ª era recusada);
+linha com quantidade inválida derruba o produto inteiro. O front lê também a resposta da v1.47.
+Lição: a 1ª rodada do Codex achou 6 P0, 3 deles na "idempotência local" (reaproveitar linha) que este PR
+tinha criado sem que nenhum caminho do app chamasse a OP duas vezes — cortada, como o 2.2. Fora do PR:
+reenvio da OP pela tela (a falha não segura o pedido, e mudar isso mexe no envelope do 2.2);
+`production_orders` tem 0 linhas em prod, então não há uso para medir. Falsificação 28/28 vermelha
+(14 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação; a ligação no `index.ts` tem
+teste Deno de fiação.
