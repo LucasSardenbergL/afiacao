@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
-import { chaveClienteEnvelope } from '@/services/orderSubmission/envelope-armazenado';
+import { decidirDescarteRascunho } from '@/services/orderSubmission/checkout-envelope';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
@@ -317,12 +317,8 @@ const UnifiedOrder = () => {
     () => ({
       cart: h.cart,
       customerCodigoCliente: h.selectedCustomer?.codigo_cliente ?? null,
-      // PR 2.2 (rodada 3): a chave do envelope deste cliente — para achar o envio pendente do rascunho
-      // ANTES de o cliente ser re-selecionado (o diálogo de restaurar abre com o carrinho vazio).
-      // (a do NASCIMENTO do nonce — onde esta cópia grava, mesmo que o cliente ganhe outro código depois).
-      customerChaveEnvelope: h.chaveClienteDoNonce ?? chaveClienteEnvelope(h.selectedCustomer),
-      // O nonce desta cópia do pedido: restaurar o rascunho (refresh, outra aba) volta com ELE, e o mesmo
-      // carrinho deriva o MESMO checkoutId — o servidor responde "já enviado" em vez de criar 2º PV.
+      // PR 2.2 (rodada 3): o nonce desta cópia do pedido — restaurar o rascunho (refresh, outra aba) volta
+      // com ELE, e o mesmo carrinho deriva o MESMO checkoutId: o servidor responde "já enviado".
       nonce: h.nonceRascunho,
       customerName: h.selectedCustomer?.razao_social ?? null,
       notes: h.notes,
@@ -330,7 +326,7 @@ const UnifiedOrder = () => {
       // B7 (rodada 2): só o prazo escolhido À MÃO nesta seleção — o do histórico é reaplicado sozinho.
       parcelasManuais: parcelasManuaisDaSelecao(),
     }),
-    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao, h.nonceRascunho, h.chaveClienteDoNonce],
+    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao, h.nonceRascunho],
   );
   const { draft, clear: clearDraft, dismiss: dismissDraft, gravarAgora: gravarRascunhoAgora } = useOrderDraft({
     scopeKey: draftScope,
@@ -347,12 +343,10 @@ const UnifiedOrder = () => {
   useEffect(() => {
     h.cicloRascunhoRef.current = {
       // O nonce pode ter nascido no próprio clique (antes do re-render): lê o atual, não o do memo.
-      aoComprometer: () => gravarRascunhoAgora({
-        ...draftPayload, nonce: h.nonceDoRascunho(), customerChaveEnvelope: h.chaveDoRascunho() ?? draftPayload.customerChaveEnvelope,
-      }),
+      aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),
       aoConfirmarTudo: clearDraft,
     };
-  }, [h.cicloRascunhoRef, h.nonceDoRascunho, h.chaveDoRascunho, gravarRascunhoAgora, draftPayload, clearDraft]);
+  }, [h.cicloRascunhoRef, h.nonceDoRascunho, gravarRascunhoAgora, draftPayload, clearDraft]);
 
   // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
   // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
@@ -385,12 +379,12 @@ const UnifiedOrder = () => {
   // Restore PENDENTE (follow-up Codex P1 do #4068): rascunho de A restaurado sem cliente na tela
   // punha o carrinho de A na tela e, se a vendedora selecionasse B, os itens (com preço negociado
   // para A) iam no pedido de B. Agora o restore inteiro espera o cliente DO rascunho.
-  type DadosDoRascunho = { cart: unknown; notes: unknown; ordemCompra: unknown; parcelas: ParcelasDoRascunho | null; nonce?: unknown; chaveEnvelope?: unknown };
+  type DadosDoRascunho = { cart: unknown; notes: unknown; ordemCompra: unknown; parcelas: ParcelasDoRascunho | null; nonce?: unknown };
   const restorePendenteRef = useRef<{ codigoCliente: number; nome: string | null; dados: DadosDoRascunho } | null>(null);
   // Aplica com os setters do render CORRENTE (os que marcam o prazo como "manual" na seleção nova).
   const aplicarDadosDoRascunho = (d: DadosDoRascunho, prazoVolta: boolean) => {
     // PR 2.2: o nonce da cópia ANTES do carrinho — senão o 1º item sortearia um nonce novo (= id novo).
-    h.adotarNonceDoRascunho(d.nonce, d.chaveEnvelope);
+    h.adotarNonceDoRascunho(d.nonce);
     if (Array.isArray(d.cart)) h.setCart(d.cart);
     if (typeof d.notes === 'string') h.setNotes(d.notes);
     if (typeof d.ordemCompra === 'string') h.setOrdemCompra(d.ordemCompra);
@@ -468,7 +462,7 @@ const UnifiedOrder = () => {
       return;
     }
     const dados: DadosDoRascunho = {
-      nonce: state.nonce ?? null, chaveEnvelope: state.customerChaveEnvelope ?? null,
+      nonce: state.nonce ?? null,
       cart: state.cart, notes: state.notes, ordemCompra: state.ordemCompra,
       parcelas: lerParcelasDoRascunho(state.parcelasManuais),
     };
@@ -489,22 +483,10 @@ const UnifiedOrder = () => {
   // Ciclo ÚNICO envelope × rascunho (follow-up Codex do #4042). O diálogo já pediu confirmação
   // quando havia envio pendente; descartar zera os DOIS — senão o próximo pedido idêntico sai
   // como "já enviado" e não é criado.
-  // Rascunho de antes do PR 2.2 não tem a chave: cai no código Oben, que era a identidade de então.
-  const chaveEnvelopeDoRascunho: string | undefined = draft
-    ? (draft.state.customerChaveEnvelope
-      ?? (draft.state.customerCodigoCliente ? `oben:${draft.state.customerCodigoCliente}` : undefined))
-    : undefined;
-  // O envio pendente que o diálogo de restaurar MOSTROU (chave + id): o descarte só solta esse.
-  // PR 2.2 (Codex P0, rodada 4): o legado de antes do PR conta como pendente do cliente do rascunho.
-  const envioDoRascunho = draft
-    ? h.envioPendenteDoRascunho(chaveEnvelopeDoRascunho, [draft.state.customerCodigoCliente].filter(Boolean).map(String))
-    : { pendente: false, chave: null, checkoutId: null };
-  const envioMostradoRef = useRef(envioDoRascunho);
-  envioMostradoRef.current = envioDoRascunho;
   const handleDiscardDraft = () => {
     restorePendenteRef.current = null;
     clearDraft();
-    h.descartarEnvelope(envioMostradoRef.current);
+    h.descartarEnvelope();
     dismissDraft();
     setRestoreOpen(false);
   };
@@ -881,7 +863,7 @@ const UnifiedOrder = () => {
           itemCount={Array.isArray(draft.state.cart) ? draft.state.cart.length : 0}
           onRestore={handleRestore}
           onDiscard={handleDiscardDraft}
-          envioPendente={envioDoRascunho.pendente}
+          envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}
         />
       )}
 

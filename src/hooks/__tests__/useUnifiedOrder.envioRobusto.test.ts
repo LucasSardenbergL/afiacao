@@ -98,9 +98,8 @@ describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
   }
 
   it('bug 1: descartar o rascunho zera o envelope (pedido idêntico seguinte é NOVO)', () => {
-    // PR 2.2 (rodada 4): solta SÓ o envio que o diálogo mostrou (chave + id), inclusive o legado.
-    expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope(envioMostradoRef.current);');
-    expect(pagina).toContain('envioPendente={envioDoRascunho.pendente}');
+    expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope();');
+    expect(pagina).toContain("envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}");
   });
 
   it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
@@ -133,41 +132,26 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
 
   it('orçamento com envio de pedido pendente é barrado ANTES de gravar (sem 2ª linha da conta enviada)', () => {
     const corpo = corpoDo('submitQuote');
-    // PR 2.2 (Codex P0 #6, rodada 4): relê as chaves do cliente E o legado — não só o espelho da aba.
-    expect(corpo).toContain('const pendenteQ = armQ && alvoQ ? pendenteDoCliente(armQ, alvoQ) : null;');
-    const barra = corpo.indexOf('if (pendenteQ !== null || checkoutEnvRef.current?.committed) {');
+    // PR 2.2: relê o armazém do usuário (o espelho da aba pode estar velho); ilegível = pendente.
+    expect(corpo).toContain("const leituraQ = armQ ? lerPendente(armQ, chaveEnvelope(user.id), prefixoClienteRef.current) : null;");
+    const barra = corpo.indexOf("if (checkoutEnvRef.current || leituraQ?.estado === 'ilegivel' || (leituraQ?.estado === 'ok' && leituraQ.pendente)) {");
     expect(barra).toBeGreaterThan(-1);
     expect(barra).toBeLessThan(corpo.indexOf('submitQuoteService('));
   });
 
   it('envio: rascunho gravado no commit do envelope e apagado no sucesso TOTAL dentro do hook', () => {
     const corpo = corpoDo('submitOrder');
-    // PR 2.2: o commit é gravado pela RESERVA (relê o armazém do par sob trava entre abas); o rascunho vem logo após.
+    // PR 2.2: o commit é gravado pela RESERVA (lê o armazém sob trava entre abas); o rascunho vem logo após.
     const commit = corpo.indexOf('checkoutEnvRef.current = reserva.envelope;\n      if (!reserva.gravou) {');
-    expect(corpo).toContain('chaveDoEnvelopeRef.current = alvo.chaves[0];');
+    expect(corpo).toContain('chaveDoEnvelopeRef.current = chaveDoUsuario;');
     expect(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();')).toBeGreaterThan(commit);
+    expect(corpo.indexOf("if (reserva.decisao === 'indeterminado') {")).toBeLessThan(commit);
+    expect(corpo.indexOf("if (reserva.decisao === 'conflict') {")).toBeLessThan(commit);
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
-    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; chaveDoEnvelopeRef\.current = null; void comTravaEntreAbas\(nomeDaTrava\(userIdTrava\), \(\) => concluirEnvio\(arm, alvo\.chaves, checkoutId\)\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
-    expect(pagina).toContain('...draftPayload, nonce: h.nonceDoRascunho(), customerChaveEnvelope: h.chaveDoRascunho() ?? draftPayload.customerChaveEnvelope,');
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n[^\n]*\n\s*checkoutEnvRef\.current = null; chaveDoEnvelopeRef\.current = null; definirNonce\(null\);\n\s*void comTravaEntreAbas\(nomeDaTrava\(userIdTrava\), \(\) => concluirEnvio\(arm, chaveDoUsuario, checkoutId\)\);\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),');
+    expect(pagina).toContain('h.adotarNonceDoRascunho(d.nonce);');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
-  });
-});
-
-// ── PR 2.2, 4ª rodada do Codex: a pergunta "é o mesmo pedido?" fica pendente NA ABA ──
-describe('useUnifiedOrder — pergunta de outra cópia barra o envio até a escolha', () => {
-  it('no mesmo contexto, o envio mostra a pergunta e PARA antes da reserva', () => {
-    const corpo = corpoDo('submitOrder');
-    const barra = corpo.indexOf('if (perguntaAindaVale(perguntaOutraCopiaRef.current, contextoAgora)) {\n          mostrarPerguntaOutraCopia(perguntaOutraCopiaRef.current);\n          return;\n        }');
-    expect(barra).toBeGreaterThan(-1);
-    expect(barra).toBeLessThan(corpo.indexOf('reservarEnvio(arm, {'));
-    expect(corpo).toContain('perguntaOutraCopiaRef.current = pergunta;\n        mostrarPerguntaOutraCopia(pergunta);\n        return;');
-  });
-  it('as duas ações conferem o contexto NO CLIQUE antes de agir', () => {
-    const ini = hook.indexOf('const mostrarPerguntaOutraCopia = useCallback(');
-    const corpo = hook.slice(ini, hook.indexOf('\n  }, [definirNonce]);', ini));
-    expect(corpo.match(/if \(!aindaVale\(\)\) return;/g)?.length).toBe(2);
-    expect(corpo).toContain("label: 'É o mesmo pedido'");
-    expect(corpo).toContain("label: 'É outro pedido'");
   });
 });

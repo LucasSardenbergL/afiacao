@@ -313,54 +313,41 @@ mesma invocação.
 era SORTEADO no clique a partir da memória da aba: duas abas com o mesmo carrinho, ou um refresh que
 perdesse o envelope, geravam dois PVs; num PC compartilhado o vendedor B herdava o envelope do A.
 
-Desenho final (`envelope-armazenado.ts`, 3ª versão):
-- **O id é DERIVADO, não sorteado:** `idDoEnvio(nonce, itens)` = SHA-256 em formato UUID. O `nonce` nasce
-  com o rascunho, viaja nele e gira no fim do ciclo (sucesso total, descarte, troca de cliente, novo pedido).
-  Mesma cópia + mesmo carrinho ⇒ mesmo id em qualquer aba ⇒ o servidor responde "já enviado"
-  (`sales_orders.checkout_id` + conta; OS por `cCodIntOS`). Carrinho diferente ⇒ id diferente ⇒ pedido novo.
-  **A lápide é o servidor.**
-- **Outra cópia, mesmo carrinho, quem decide é o vendedor:** com envio pendente do mesmo carrinho feito por
-  OUTRA cópia (outro id: outra aba, rascunho perdido, legado), a reserva devolve `outra_copia` e o envio é
-  barrado com a ação "É o mesmo pedido", que adota o nonce daquele envio (o legado entra como `id:<checkoutId>`).
-  Codex, rodada 3: reusar sozinho engolia um pedido novo idêntico, e ignorar duplicava o mesmo pedido.
-- O envelope COMPROMETIDO fica na chave por usuário + cliente e trava o carrinho depois de um envio parcial.
-  O envio relê essa chave sob Web Locks. Leitura ilegível vira `indeterminado` e barra o envio.
-- O legado só é reaproveitado no retry com os mesmos itens e o mesmo cliente.
-- Quando o mesmo cliente ganha outra chave, o envelope é movido. Cliente trocado gira o nonce.
-- O evento `storage` avisa "pedido aberto em outra aba".
+Desenho entregue (`envelope-armazenado.ts`, o NÚCLEO — 5ª versão):
+- **Uma chave por USUÁRIO** (`unified_order_checkout_env:v2:<userId>`) com a MESMA regra da main: carrinho
+  igual a um envio pendente → reusa o id dele; carrinho diferente → `conflict`. A diferença é que a decisão
+  LÊ O ARMAZÉM sob Web Locks (`comTravaEntreAbas`), não a memória da aba: a 2ª aba vê o commit da 1ª e
+  reusa o id, em vez de sortear outro. O vendedor B nunca herda o envelope do A.
+- **Envelope novo: id DERIVADO, não sorteado** — `idDoEnvio(nonce, itens)` = SHA-256 em formato UUID. O
+  `nonce` nasce com o rascunho, viaja nele e gira no fim do ciclo (sucesso total, descarte, troca de
+  cliente, novo pedido). Envelope perdido + mesmo rascunho + mesmo carrinho ⇒ mesmo id ⇒ o servidor
+  responde "já enviado" (`sales_orders.checkout_id` + conta; OS por `cCodIntOS`).
+- **Chave do usuário ilegível = `indeterminado`** (barra o envio; o "Trocar e limpar" e o descarte
+  confirmado a apagam). Armazém que recusa gravar → não chama a edge.
+- **Legado (chave fixa) sem migração:** lido como pendente SÓ do cliente cujo prefixo da impressão digital
+  casa (o parcial em voo no deploy reusa o id legado; carrinho editado → `conflict`); ilegível = ausente,
+  como a main lia. Sai quando o envio dele conclui ou no "Trocar e limpar".
+- Marcas da OS, limpeza e conclusão gravam só se o guardado ainda for o envelope desta aba (`gravarSeAindaFor`).
 
 Desenho para a Onda 3: `nonce` = id da linha do rascunho no servidor, envelope comprometido = "enviado".
 
-Codex em quatro rodadas: as duas primeiras versões, com "lápide" local de ids concluídos, caíram com 4 P0 cada.
-Restaurar uma cópia concluída trocava o id; um pedido com outra quantidade virava "já enviado"; o retry do
-legado era ignorado; destino ocupado trocava o id. O id derivado fecha a classe: o único jeito de nascer id
-novo é mudar o carrinho ou girar o nonce, e nenhum dos dois engole um pedido legítimo.
+**Por que o núcleo (decisão do founder, após 5 rodadas do Codex):** as versões 1–4 tentaram, além disso,
+distinguir "mesmo pedido em outra cópia" de "pedido novo idêntico" (pergunta "É o mesmo pedido?/É outro
+pedido", chaves por cliente lidas em todas as identidades, adoção do id legado por nonce literal). Os P0
+não convergiram (4 → 4 → 6 → 8), todos criados pela própria maquinaria: sobrescrever o parcial de outra
+aba, pergunta perdida no refresh, rascunho de A gravando na chave de B (código Oben 0), "Trocar" de B
+apagando o legado de A. Com o rascunho no servidor (Onda 3) essa distinção vira estado da linha e sai de
+graça; até lá vale a regra da main, agora sem corrida entre abas.
 
 Fica registrado:
-- **Troca aceita:** o vendedor responde "é o mesmo pedido?" no caso ambíguo (um toque a mais, só com pendente).
-- Código Omie `0` não identifica cliente (`mesmoCliente`).
-- O descarte só solta o envelope que o diálogo mostrou.
-- A conclusão roda sob a mesma trava da reserva.
-- **Risco residual:** sem Web Locks, resta a janela da trava de edição pós-parcial. O PV duplicado do mesmo
-  carrinho segue impedido pelo id derivado.
+- **Troca aceita (igual à main):** um pedido novo IDÊNTICO a um envio ainda pendente (parcial/não
+  confirmado) do mesmo usuário reusa o id pendente — "já enviado" em vez de 2º PV.
+- **Troca aceita (igual à main):** um envio pendente de um cliente trava o envio de OUTRO carrinho do mesmo
+  usuário até concluir ou "Trocar e limpar" (a chave é por usuário, como era por navegador).
+- **Risco residual:** sem Web Locks (navegador antigo), resta a janela getItem→setItem; o PV duplicado do
+  mesmo rascunho segue impedido pelo id derivado.
+- **Para o PR 2.5:** a cor do tintométrico não entra na impressão digital (preexistente, Codex rodada 5).
 - **Preexistentes, para a Onda 3 (rascunho no servidor):**
   - o rascunho é por usuário, então o sucesso da aba A apaga o rascunho pendente da aba B;
   - o restore decide só pelo código Oben;
   - uma cópia já concluída em outra aba ainda pode virar orçamento.
-**4ª rodada do Codex (6 P0 de borda, todos criados pela própria correção) → 4ª versão:**
-- **A pergunta fica na aba:** `outra_copia` grava `PerguntaOutraCopia` (cliente, nonce, itens) e barra
-  todo envio no mesmo contexto até o vendedor tocar "É o mesmo pedido" ou "É outro pedido" — antes, o
-  clique seguinte sem escolha caía em `new` assim que o pendente sumia. "É outro pedido" ignora SÓ o id
-  mostrado (`ignorarPendente`).
-- **As ações conferem no clique** cliente, nonce e itens (`perguntaAindaVale`); mudou → "o pedido mudou".
-- **Nonce literal preso aos itens:** `id:<id>:<assinatura>`; com outra quantidade deriva id novo, nunca
-  "já enviado" falso.
-- **Sem `moverEnvelope`:** a cópia grava na chave do cliente NO NASCIMENTO do nonce (viaja no rascunho)
-  e o envio LÊ todas as chaves do cliente (usuário local, Oben, Colacor) + o legado — mover destravava a
-  aba que ficou na chave antiga. A trava entre abas passou a ser por usuário.
-- **Legado sem migração, lido como pendente** do cliente cujo prefixo casa (usuário local OU código Oben):
-  parcial legado + carrinho editado → `conflict` (a Oben não sai de novo); o guard do orçamento relê tudo.
-- O retry do PRÓPRIO id vem antes do conflito: um legado de outro carrinho não trava o retry do parcial.
-- "Trocar e limpar" remove chave ilegível do cliente (senão ele ficaria travado para sempre).
-- **Troca aceita:** "É outro pedido" sobrescreve o pendente da mesma chave; se a outra aba tinha um
-  parcial, o retry dela cai em `outra_copia` e o vendedor decide de novo.
