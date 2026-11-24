@@ -11,7 +11,7 @@ vi.mock('@/lib/nav/sensor-clientes', async (original) => ({
 
 import { CustomerListView } from '../CustomerListView';
 // Último contato (onda 3) tem teste próprio; aqui a lista só precisa de uma leitura vazia e lida.
-vi.mock('../useUltimoContato', () => ({ useUltimoContato: () => ({ porCliente: new Map(), estado: 'ok' }) }));
+vi.mock('../useUltimoContato', () => ({ useUltimoContato: () => ({ porCliente: new Map(), estado: 'ok', estadoDe: () => 'ok' }) }));
 
 
 beforeAll(() => {

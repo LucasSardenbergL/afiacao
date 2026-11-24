@@ -30,7 +30,7 @@ export function useAdminCustomers() {
   const {
     customers, scores, total, contagemPendente, isCarteira, loading, isError, refetch,
     hasNextPage, isFetchingNextPage, fetchNextPage, effectiveUserId,
-    buscaNoServidor, buscando, clienteAlvo, filtroNoServidor, totalRecorte, scoresEstado, refetchScores,
+    buscaNoServidor, buscando, clienteAlvo, filtroNoServidor, totalRecorte, scoresEstado, refetchScores, lotesIds,
   } = useClientesScope({ busca, saude, ordem, customerIdAlvo: customerId ?? null });
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -58,9 +58,15 @@ export function useAdminCustomers() {
     detalheCarregadoDe.current = null;
   }, [effectiveUserId]);
 
+  // Onda E: `tool_categories` só serve ao AddToolDialog, que abre da ficha 360 — a LISTA não consome.
+  // Antes era lida a cada abertura da lista; agora só quando uma ficha abre (uma vez por montagem).
+  const temFicha = !!selectedCustomer;
+  const categoriasLidas = useRef(false);
   useEffect(() => {
-    if (user && isStaff) loadCategories();
-  }, [user, isStaff]);
+    if (!user || !isStaff || !temFicha || categoriasLidas.current) return;
+    categoriasLidas.current = true;
+    loadCategories();
+  }, [user, isStaff, temFicha]);
 
   // Deep link: o scope resolve o cliente por id mesmo fora das páginas carregadas. Só carrega
   // ferramentas/pedidos quando o cliente MUDA — antes isto re-disparava a cada página da lista.
@@ -85,6 +91,7 @@ export function useAdminCustomers() {
   const loadCategories = async () => {
     const { data } = await supabase.from('tool_categories').select('*').order('name');
     if (data) setCategories(data);
+    else categoriasLidas.current = false; // falhou: a próxima ficha aberta tenta de novo
   };
 
   const loadCustomerTools = async (userId: string) => {
@@ -181,6 +188,7 @@ export function useAdminCustomers() {
     totalRecorte,
     scoresEstado,
     refetchScores,
+    lotesIds,
     /** Origem da ficha (fila da lista) — repassada ao abrir a 360 a partir dela. */
     origemLista: lerOrigemLista(location.state),
     /** Estado do deep link — a página mostra "não encontrado" em vez de cair na lista. */

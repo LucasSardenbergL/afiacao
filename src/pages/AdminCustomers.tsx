@@ -24,6 +24,7 @@ const AdminCustomers = () => {
     totalRecorte,
     scoresEstado,
     refetchScores,
+    lotesIds,
     origemLista,
     estadoDeepLink,
     retryDeepLink,
@@ -138,6 +139,7 @@ const AdminCustomers = () => {
           totalRecorte={totalRecorte}
           scoresEstado={scoresEstado}
           onRetryScores={refetchScores}
+          lotesIds={lotesIds}
         />
       )}
     </>

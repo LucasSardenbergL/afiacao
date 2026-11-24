@@ -16,7 +16,7 @@ vi.mock('@/lib/impersonation/useLenteAtiva', () => ({ useLenteAtiva: () => lente
 vi.mock('@/components/call/CallButton', () => ({
   CallButton: ({ customerName }: { customerName: string }) => <button type="button">Ligar para {customerName}</button>,
 }));
-vi.mock('../useUltimoContato', () => ({ useUltimoContato: () => ({ porCliente: new Map(), estado: 'ok' }) }));
+vi.mock('../useUltimoContato', () => ({ useUltimoContato: () => ({ porCliente: new Map(), estado: 'ok', estadoDe: () => 'ok' }) }));
 
 import { CustomerListView } from '../CustomerListView';
 

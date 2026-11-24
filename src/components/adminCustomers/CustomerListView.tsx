@@ -98,6 +98,7 @@ export function CustomerListView({
   totalRecorte = null,
   scoresEstado = 'ok',
   onRetryScores,
+  lotesIds: lotesIdsProp,
 }: {
   customers: Customer[];
   scores: Map<string, ClientScore>;
@@ -126,6 +127,8 @@ export function CustomerListView({
   scoresEstado?: EstadoScores;
   /** Retry só dos scores. */
   onRetryScores?: () => void;
+  /** Lotes estáveis do escopo (`useClientesScope.lotesIds`) p/ o último contato. Ausente = a lista inteira, um lote. */
+  lotesIds?: string[][];
 }) {
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
   const [urlState, setUrlState] = useUrlState({ search: '', health: 'all', ordem: 'prioridade' });
@@ -227,8 +230,9 @@ export function CustomerListView({
   }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor, estadoSaude]);
 
   // Último contato (onda 3): UMA leitura em lote dos clientes desta tela — nunca uma por linha.
-  const idsVisiveis = useMemo(() => filtered.map((c) => c.user_id), [filtered]);
-  const ultimoContato = useUltimoContato(idsVisiveis);
+  // Onda E: pelos lotes ESTÁVEIS do escopo, não pela lista filtrada — busca e filtro não releem nada.
+  const lotesFallback = useMemo(() => (customers.length ? [customers.map((c) => c.user_id)] : []), [customers]);
+  const ultimoContato = useUltimoContato(lotesIdsProp ?? lotesFallback);
   const hoje = useMemo(() => new Date(), []);
 
   // Voltar da ficha: a lista volta na mesma posição (a rolagem viaja no `location.state`).
@@ -519,7 +523,7 @@ export function CustomerListView({
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
                 const motivo = motivoContato(score);
-                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estado, hoje);
+                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estadoDe(customer.user_id), hoje);
                 const nome = decodeHtmlEntities(customer.name);
                 const waHref = whatsappLink(customer.phone);
                 const abrir = () => {
