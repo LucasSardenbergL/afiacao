@@ -28152,13 +28152,13 @@ export type Database = {
       }
       order_feed_total: {
         Args: {
-          p_account?: string
-          p_busca?: string
-          p_customer?: string
-          p_desde?: string
-          p_puros?: string[]
-          p_status?: string[]
-          p_vendedor?: string
+          p_account?: string | null
+          p_busca?: string | null
+          p_customer?: string | null
+          p_desde?: string | null
+          p_puros?: string[] | null
+          p_status?: string[] | null
+          p_vendedor?: string | null
         }
         Returns: {
           pedidos: number
