@@ -1,8 +1,8 @@
 # Clientes — onda E: desempenho e escala (2026-11-24)
 
 Tela `/admin/customers`. A carteira da vendedora tem ~2.832 clientes, a do master sob a lente ~12.701,
-e a base ~16k. Programa de ondas A–E; esta é a camada de DADOS (fatia 1). A virtualização da lista é a
-fatia 2: espera o link da linha da onda C chegar na main.
+e a base ~16k. Programa de ondas A–E. Fatia 1 (#4153) = camada de DADOS. Fatia 2 = virtualização da
+lista, feita depois que o link da linha da onda C (#4154) chegou na main.
 
 ## Como foi medido
 
@@ -49,6 +49,40 @@ Bundle: `vite build` + fecho do grafo de imports estáticos de cada rota, descon
 4. `useUltimoContato(lotesIds)`: uma query por lote, key = `hashIds` do lote, e `estadoDe(id)` por linha (a página que carrega não apaga as lidas).
 
 Falsificação (controle verde na mesma invocação, uma camada por vez): margem relançando, remontagem por ordem de chegada, key de todas as páginas, último contato pela lista filtrada. Todas ficaram vermelhas.
+
+## Depois — fatia 2 (lista virtualizada)
+
+Mesmo harness, agora com layout simulado (linha de 76 px, viewport de 768 px). Sem isso o jsdom mede
+tudo como 0 e o virtualizer montaria a lista inteira.
+
+| cenário | 1ª linha | assentado | requests | pico em voo | `<tr>` | nós DOM |
+|---|---|---|---|---|---|---|
+| carteira 2.832 — abrir | **1,32 s** (−46% sobre a fatia 1; −69% sobre o antes) | **1,97 s** (−47%; −76%) | 75 | 14 | **19** (antes 2.832) | **472** (antes 59.524) |
+| base completa — abrir | 0,18 s | 0,20 s | 7 | 5 | 19 | 474 |
+
+- O ganho de tempo agora é de RENDER: montar e reconciliar 2.832 linhas era a maior parte do "assentado".
+- Digitar os 5 termos: 0 releituras (as 5 requests são do sensor `analytics_ledger_registrar`).
+- Base completa, 3 × carregar mais: 300 ids de score, nenhum relido (igual à fatia 1).
+- Bundle (main 71d726256 + fatia 2): boot 986 KB (gzip 293). `/admin/customers` = chunk 83 KB (gzip 24) + 264 KB além do boot (gzip 85); 360 = chunk 42 KB (gzip 12) + 318 KB além do boot (gzip 107). A virtualização custa o chunk compartilhado do `@tanstack/react-virtual`, **24 KB (gzip 7,4 KB)**, que o financeiro já usava. O resto da diferença sobre o "antes" (chunk 75→83 KB, rota 229→264 KB) veio das ondas B, C e D, que entraram na main no meio (ações na linha, contato mascarado).
+
+### O que mudou (código)
+
+- `CorpoClientes` (em `CustomerListView.tsx`): `useWindowVirtualizer` (a página rola, não a tabela),
+  espaçadores `aria-hidden` mantendo a altura total, `measureElement` por linha e `scrollMargin` medido.
+- Leitor de tela: `aria-rowcount` na tabela e `aria-rowindex` em cada linha ("linha 1.204 de 2.833").
+- Foco: a linha focada entra no recorte mesmo fora da tela (`rangeExtractor`). Sem isso, rolar desmontaria
+  a linha e o foco cairia no `body`.
+- Teclado: `useTecladoClientes` recebe `{ total, irPara }`. J/K andam pela lista INTEIRA pelo `data-indice`
+  do link; com o alvo fora do DOM, rola até ele (`scrollToIndex`) e foca quando a linha monta.
+- Voltar da 360: as alturas medidas sobrevivem à remontagem (`initialMeasurementsCache`), então o
+  `scrollTo` da rolagem salva cai na mesma linha.
+- O link real da linha (onda C), o sensor `cliente_aberto` com `posicao` = índice real + 1 e a ação na
+  linha (ligar/WhatsApp) não mudaram.
+
+Teste: `CustomerListView.virtual.test.tsx` (2.000 clientes, < 40 linhas no DOM, rolar, K ao último fora
+do DOM, foco que não desmonta). Falsificação com controle verde na mesma invocação, uma camada por vez:
+foco desmontando, J/K sem `irPara`, sem `aria-rowindex`, sem virtualizar e `data-indice` errado. As
+cinco ficaram vermelhas.
 
 ## RPC agregada (score + último contato): o desenho, sem implementar nesta onda
 
