@@ -4,15 +4,16 @@
 // Aqui só há leitura — useAdminCustomers consome este scope e detém as mutações.
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { useMemo } from 'react';
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { isSearchablePostgrestTerm } from '@/lib/postgrest';
 import {
-  resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, hashIds, ordenarCarteira,
+  resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, ordenarCarteira,
 } from '@/lib/carteira/escopo-clientes';
+import { hashIds } from '@/lib/lotes';
 import {
   TAMANHO_PAGINA_CLIENTES, normalizarFiltroSaude, normalizarOrdem, type EstadoScores, type FiltroSaude, type OrdemClientes,
 } from './config';
@@ -86,6 +87,11 @@ export interface ClientesScope {
   scoresEstado: EstadoScores;
   /** Retry só dos scores (o "Tentar novamente" do aviso do filtro de saúde). */
   refetchScores: () => void;
+  /**
+   * Ids em lotes ESTÁVEIS e só-acrescenta (página do servidor na base; carteira A–Z em um lote):
+   * chave das leituras por lote (scores, último contato). Filtro/busca locais não mudam os lotes.
+   */
+  lotesIds: string[][];
 }
 
 export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade', customerIdAlvo = null }: {
@@ -236,17 +242,28 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     baseQuery.isPending,
   ]);
 
-  const visibleIds = useMemo(() => customers.map((c) => c.user_id), [customers]);
-  // Hash estável dos IDs (não só a contagem) p/ a key dos scores não reusar o map de um
-  // conjunto anterior de mesmo tamanho (reatribuição que mantém a length). Codex P2.
-  const idsHash = useMemo(() => hashIds(visibleIds), [visibleIds]);
+  // Lotes de ids ESTÁVEIS e só-acrescenta (onda E): base completa = uma página do servidor por lote
+  // (o "carregar mais" só ACRESCENTA um lote — os anteriores mantêm a key e o cache); carteira = a
+  // lista crua A–Z (não a reordenada por prioridade, que mudaria quando os scores chegam).
+  const lotesIds = useMemo<string[][]>(() => {
+    if (isCarteira) return customers.length ? [customers.map((c) => c.user_id)] : [];
+    return (baseQuery.data?.pages ?? [])
+      .map((p) => p.customers.map((c) => c.user_id))
+      .filter((ids) => ids.length > 0);
+  }, [isCarteira, customers, baseQuery.data]);
 
-  /* ─── SCORES por customer_user_id (ambos os modos) ─── */
-  const scoresQuery = useQuery({
-    queryKey: ['admin-clientes-scores', isCarteira ? 'carteira' : 'completa', baseId, idsHash],
-    enabled: queriesReady && visibleIds.length > 0,
-    staleTime: 60_000,
-    queryFn: () => fetchScoresPorCustomer(visibleIds),
+  /* ─── SCORES por customer_user_id, UMA query por lote (ambos os modos) ─── */
+  // Hash estável dos IDs (não só a contagem) p/ a key não reusar o map de um conjunto anterior de
+  // mesmo tamanho (reatribuição que mantém a length). Codex P2. Antes a key era o hash de TODAS as
+  // páginas: cada "carregar mais" relia os scores (e a margem) das páginas já lidas.
+  const hashesLotes = useMemo(() => lotesIds.map(hashIds), [lotesIds]);
+  const scoresQueries = useQueries({
+    queries: lotesIds.map((ids, i) => ({
+      queryKey: ['admin-clientes-scores', isCarteira ? 'carteira' : 'completa', baseId, hashesLotes[i]],
+      enabled: queriesReady,
+      staleTime: 60_000,
+      queryFn: () => fetchScoresPorCustomer(ids),
+    })),
   });
   // Score do cliente do deep link que não está na lista: consulta própria (1 id), para não
   // re-buscar os scores da lista inteira só por causa dele.
@@ -257,14 +274,19 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     staleTime: 60_000,
     queryFn: () => fetchScoresPorCustomer([alvoForaDaLista as string]),
   });
-  const scoresEstado: EstadoScores = visibleIds.length === 0 || scoresQuery.data
+  // Estado agregado: 'ok' só com TODOS os lotes lidos; qualquer lote sem dado e com erro = 'falha'.
+  const scoresEstado: EstadoScores = scoresQueries.every((q) => q.data)
     ? 'ok'
-    : scoresQuery.isError ? 'falha' : 'carregando';
+    : scoresQueries.some((q) => !q.data && q.isError) ? 'falha' : 'carregando';
+  // `useQueries` devolve array novo a cada render: a versão (lotes + quando cada um foi lido) é a dep real.
+  const versaoScores = hashesLotes.map((hash, i) => `${hash}@${scoresQueries[i]?.dataUpdatedAt ?? 0}`).join('|');
   const scores = useMemo(() => {
-    const base = scoresQuery.data ?? new Map<string, ClientScore>();
-    if (!alvoScoreQuery.data?.size) return base;
-    return new Map([...base, ...alvoScoreQuery.data]);
-  }, [scoresQuery.data, alvoScoreQuery.data]);
+    const base = new Map<string, ClientScore>();
+    for (const q of scoresQueries) if (q.data) for (const [k, v] of q.data) base.set(k, v);
+    if (alvoScoreQuery.data?.size) for (const [k, v] of alvoScoreQuery.data) base.set(k, v);
+    return base;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versaoScores, alvoScoreQuery.data]);
 
   // Carteira (lida inteira): a ordem escolhida é aplicada AQUI, com os scores — espelho da ordem do
   // servidor na base completa. Os ids/hash dos scores usam a lista crua (A–Z), não esta: reordenar
@@ -302,6 +324,8 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     totalRecorte,
     clienteAlvo,
     scoresEstado,
-    refetchScores: () => { scoresQuery.refetch(); },
+    // Retry só dos lotes que falharam (os lidos seguem no cache).
+    refetchScores: () => { for (const q of scoresQueries) if (q.isError) q.refetch(); },
+    lotesIds,
   };
 }
