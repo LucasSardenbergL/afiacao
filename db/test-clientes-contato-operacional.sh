@@ -10,7 +10,7 @@
 # ║  ex-employee X, customer C1) + cadastro pendente PN. Objetos: pedido SO1 (de C3) e SO2 (de C1),
 # ║  OS OS1, tarefa de picking PT1 (→ SO1), visita RV1.
 # ║  JWT pela GUC real request.jwt.claims. FALSIFICAÇÃO na MESMA invocação: controle verde antes,
-# ║  13 sabotagens com o SEU vermelho exato, e a suíte inteira verde de novo depois.
+# ║  uma sabotagem POR CAMADA com o SEU vermelho exato, e a suíte inteira verde de novo depois.
 # ╚══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -131,6 +131,9 @@ OS1=a3000000-0000-0000-0000-0000000000a3 # OS de afiação de C3
 PT1=a4000000-0000-0000-0000-0000000000a4 # tarefa de picking do SO1
 RV1=a5000000-0000-0000-0000-0000000000a5 # visita de rota a C3
 NADA=a9000000-0000-0000-0000-0000000000a9 # objeto inexistente
+E2=e2000000-0000-0000-0000-0000000000e2  # employee por PAPEL, sem a flag is_employee
+EX2=e3000000-0000-0000-0000-0000000000e3 # flag is_employee sem papel
+SO3=a6000000-0000-0000-0000-0000000000a6 # pedido do ALIAS CA
 
 # ── ZONA 1b: tabelas dos OBJETOS operacionais (colunas de prod, psql-ro 2026-11-24) ──
 P -q <<'SQL'
@@ -163,16 +166,19 @@ SQL
 P -q <<SQL
 INSERT INTO public.user_roles VALUES
  ('$F','employee'),('$O','employee'),('$K','employee'),('$K2','employee'),('$G','employee'),
- ('$M','master'),('$B','employee'),('$E','employee'),('$C1','customer'),('$PN','customer');
+ ('$M','master'),('$B','employee'),('$E','employee'),('$E2','employee'),('$C1','customer'),('$PN','customer');
 INSERT INTO public.commercial_roles VALUES ('$F','farmer'),('$G','gerencial');
 INSERT INTO public.profiles(user_id,name,email,phone,document,cnpj,razao_social,is_employee,is_approved) VALUES
  ('$C1','Cliente Um','um@x.test','fone-c1','doc-c1',NULL,'Um Ltda',false,true),
  ('$CR','Cliente Raiz','raiz@x.test','fone-cr','doc-cr','cnpj-cr','Raiz SA',false,true),
  ('$C3','Cliente Tres','tres@x.test','fone-c3','doc-c3','cnpj-c3','Tres Ltda',false,true),
  ('$PN','Cadastro Pendente','pend@x.test','fone-pn','doc-pn',NULL,NULL,false,false),
- ('$E','Funcionaria Cliente','func@x.test','fone-e','doc-e',NULL,NULL,true,false);
+ ('$E','Funcionaria Cliente','func@x.test','fone-e','doc-e',NULL,NULL,true,false),
+ ('$E2','Funcionario Sem Flag','e2@x.test','fone-e2','doc-e2',NULL,NULL,false,true),
+ ('$EX2','Flag Sem Papel','ex2@x.test','fone-ex2','doc-ex2',NULL,NULL,true,true);
 INSERT INTO public.carteira_assignments(customer_user_id,owner_user_id,eligible) VALUES
- ('$C1','$F',true),('$CR','$F',true),('$CA','$F',false),('$C3','$O',true);
+ ('$C1','$F',true),('$CR','$F',true),('$CA','$F',false),('$C3','$O',true),
+ (NULL,'$F',true);  -- Codex P1: NULL no conjunto visível não pode apagar a exceção
 INSERT INTO public.customer_canonical_alias VALUES ('$CA','$CR','active');
 INSERT INTO public.carteira_coverage(covering_user_id,covered_user_id,valid_until,active) VALUES
  ('$K','$O',NULL,true),('$K2','$O',now() - interval '1 day',true);
@@ -183,10 +189,12 @@ INSERT INTO public.customer_contacts(customer_user_id,phone,nome,cargo) VALUES
  ('$C1','cc-fone-c1','Ana','compras'),('$C3','cc-fone-c3','Beto','dono');
 INSERT INTO public.sales_orders VALUES
  ('$SO1','$C3','snap-doc-c3','snap-end-c3','snap-fone-c3'),
- ('$SO2','$C1','snap-doc-c1','snap-end-c1','snap-fone-c1');
+ ('$SO2','$C1','snap-doc-c1','snap-end-c1','snap-fone-c1'),
+ ('$SO3','$CA','snap-doc-ca','snap-end-ca','snap-fone-ca');  -- pedido no ALIAS (clone sem profiles)
 INSERT INTO public.orders VALUES ('$OS1','$C3',NULL);
 INSERT INTO public.picking_tasks VALUES ('$PT1','$SO1');
-INSERT INTO public.route_visits VALUES ('$RV1','$C3');
+INSERT INTO public.route_visits VALUES ('$RV1','$C3'),
+ ('$SO2','$C3');  -- MESMO uuid do pedido SO2 (de C1), noutra tabela e noutro cliente
 SQL
 
 # como <uid|""> <sql> — authenticated com o JWT pela GUC REAL.
@@ -218,13 +226,16 @@ SQL
 }
 veredito() { case "$1" in *MARCA_BARRADO_7Q*) echo barrado ;; *MARCA_VAZOU_7Q*) echo vazou ;; *) echo "outro: $1" ;; esac; }
 # op <uid> <tipo> <ids-csv> [motivo] → "cliente:via_excecao:phone:pedido_telefone:rua" por objeto
+motivo_de() { case "$1" in pedido) echo detalhe_pedido ;; ordem_servico) echo detalhe_os ;; expedicao) echo separacao ;;
+  rota) echo visita_agendada ;; aprovacao) echo aprovar_cadastro ;; *) echo novo_pedido ;; esac; }
 op() {
-  local mot="${4:-teste_motivo}"
-  como "$1" "SELECT coalesce(string_agg(customer_user_id::text||':'||via_excecao||':'||coalesce(phone,'(null)')||':'||coalesce(pedido_telefone,'-')||':'||coalesce(enderecos->0->>'street','-'), ',' ORDER BY customer_user_id),'(vazio)') FROM public.contato_cliente_operacional('$2', '{$3}'::uuid[], '$mot');"
+  local mot="${4:-$(motivo_de "$2")}"
+  como "$1" "SELECT coalesce(string_agg(customer_user_id::text||':'||coalesce(via_excecao::text,'NULO')||':'||coalesce(phone,'(null)')||':'||coalesce(pedido_telefone,'-')||':'||coalesce(enderecos->0->>'street','-'), ',' ORDER BY customer_user_id),'(vazio)') FROM public.contato_cliente_operacional('$2', '{$3}'::uuid[], '$mot');"
 }
+campo() { como "$1" "SELECT coalesce(string_agg(coalesce($4,'(null)'), ','),'(vazio)') FROM public.contato_cliente_operacional('$2', '{$3}'::uuid[], '$(motivo_de "$2")');"; }
 ledger() { P -tA -q -c "SELECT count(*) FROM public.contato_acesso_operacional $1;"; }
 fone() { como "$1" "SELECT coalesce(contato_visivel::text,'(sem-linha)')||'|'||coalesce(phone,'(null)') FROM public.v_perfil_contato WHERE user_id='$2' UNION ALL SELECT '(sem-linha)' WHERE NOT EXISTS (SELECT 1 FROM public.v_perfil_contato WHERE user_id='$2');"; }
-ender() { como "$1" "SELECT coalesce(string_agg(city||'/'||contato_visivel||'/'||coalesce(street,'(null)')||'/'||coalesce(zip_code,'(null)'), ','),'(sem-linha)') FROM public.v_endereco_contato WHERE user_id='$2';"; }
+ender() { como "$1" "SELECT coalesce(string_agg(city||'/'||coalesce(contato_visivel::text,'NULO')||'/'||coalesce(label,'(null)')||'/'||coalesce(street,'(null)')||'/'||coalesce(zip_code,'(null)'), ','),'(sem-linha)') FROM public.v_endereco_contato WHERE user_id='$2';"; }
 contatos() { como "$1" "SELECT coalesce(string_agg(nome||'/'||phone, ','),'(sem-linha)') FROM public.v_cliente_contatos WHERE customer_user_id='$2';"; }
 
 P -q -f "$MIG1"; P -q -f "$MIG2"
@@ -240,16 +251,17 @@ asserts() {
   eq "O1 back-office SEM carteira lê o pedido alheio (exceção, com snapshot e endereço)" \
      "$(op $B pedido $SO1)" "$C3:true:fone-c3:snap-fone-c3:rua-c3"
   eq "O2 a exceção gravou 1 linha no ledger (só referência)" \
-     "$(ledger "WHERE staff_user_id='$B' AND customer_user_id='$C3' AND objeto_tipo='pedido' AND objeto_id='$SO1' AND motivo='teste_motivo'")" "1"
+     "$(ledger "WHERE staff_user_id='$B' AND customer_user_id='$C3' AND objeto_tipo='pedido' AND objeto_id='$SO1' AND motivo='detalhe_pedido'")" "1"
   op $B pedido $SO1 >/dev/null
   eq "O3 refetch em 10 min não duplica (dedupe)" "$(ledger "WHERE staff_user_id='$B'")" "1"
-  op $B pedido $SO1 outro_motivo >/dev/null
+  op $B pedido $SO1 impressao_pedido >/dev/null
   eq "O3b motivo diferente grava outra linha" "$(ledger "WHERE staff_user_id='$B'")" "2"
   eq "O4 farmer no pedido do PRÓPRIO cliente: não é exceção" "$(op $F pedido $SO2)" "$C1:false:fone-c1:snap-fone-c1:rua-c1"
   eq "O4b ... e não grava ledger" "$(ledger "WHERE staff_user_id='$F'")" "0"
   eq "O5 gestor: não é exceção" "$(op $G pedido $SO1)" "$C3:false:fone-c3:snap-fone-c3:rua-c3"
   eq "O5b cobertura vigente: não é exceção" "$(op $K pedido $SO1)" "$C3:false:fone-c3:snap-fone-c3:rua-c3"
   eq "O5c cobertura VENCIDA: é exceção" "$(op $K2 pedido $SO1)" "$C3:true:fone-c3:snap-fone-c3:rua-c3"
+  eq "O5e master: não é exceção" "$(op $M pedido $SO1)" "$C3:false:fone-c3:snap-fone-c3:rua-c3"
   eq "O5d gestor/master/cobertura não gravam ledger" "$(ledger "WHERE staff_user_id IN ('$G','$K','$M')")" "0"
   eq "O6 expedição deriva o cliente do pedido da tarefa" "$(op $F expedicao $PT1)" "$C3:true:fone-c3:-:rua-c3"
   eq "O7 rota (visita)" "$(op $F rota $RV1)" "$C3:true:fone-c3:-:rua-c3"
@@ -257,29 +269,60 @@ asserts() {
   eq "O9 aprovação de cadastro PENDENTE" "$(op $B aprovacao $PN)" "$PN:true:fone-pn:-:-"
   eq "O9b aprovação de cliente JÁ aprovado = sem linha" "$(op $B aprovacao $C3)" "(vazio)"
   eq "O10 aprovação de staff = sem linha" "$(op $B aprovacao $E)" "(vazio)"
-  eq "O10b novo_pedido de staff = sem linha" "$(op $B novo_pedido $E)" "(vazio)"
+  eq "O10b novo_pedido de staff (papel, sem flag) = sem linha" "$(op $B novo_pedido $E2)" "(vazio)"
+  eq "O10d novo_pedido de perfil com flag is_employee (sem papel) = sem linha" "$(op $B novo_pedido $EX2)" "(vazio)"
   eq "O10c novo_pedido de cliente existente" "$(op $B novo_pedido $C3)" "$C3:true:fone-c3:-:rua-c3"
   eq "O11 objeto inexistente = sem linha" "$(op $B pedido $NADA)" "(vazio)"
   eq "O11b ... e sem ledger" "$(ledger "WHERE objeto_id='$NADA'")" "0"
   eq "O12 id de pedido passado como rota = sem linha (tipo amarra a tabela)" "$(op $B rota $SO1)" "(vazio)"
   eq "O12b o cliente sai do OBJETO: pedido do C1 nunca devolve o C3" "$(op $B pedido $SO2)" "$C1:true:fone-c1:snap-fone-c1:rua-c1"
-  eq "O13 lote: 2 pedidos, 2 linhas" "$(como $B "SELECT count(*) FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1','$SO2','$SO1']::uuid[], 'lote_teste');")" "2"
+  eq "O13 lote: 2 pedidos, 2 linhas" "$(como $B "SELECT count(*) FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1','$SO2','$SO1']::uuid[], 'impressao_pedido');")" "2"
   eq "O14 array vazio = sem linha" "$(op $B pedido "")" "(vazio)"
-  eq "O15 customer → 42501" "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'x_teste')")")" "barrado"
-  eq "O16 ex-employee → 42501" "$(veredito "$(nega authenticated $X insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1']::uuid[], 'x_teste')")")" "barrado"
-  eq "O17 anon → 42501" "$(veredito "$(nega anon "" insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1']::uuid[], 'x_teste')")")" "barrado"
-  eq "O18 tipo inválido → 22023" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('cliente', ARRAY['$C3']::uuid[], 'x_teste')")")" "barrado"
+  eq "O15 customer → 42501" "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'detalhe_pedido')")")" "barrado"
+  eq "O16 ex-employee → 42501" "$(veredito "$(nega authenticated $X insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1']::uuid[], 'detalhe_pedido')")")" "barrado"
+  eq "O17 anon → 42501" "$(veredito "$(nega anon "" insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1']::uuid[], 'detalhe_pedido')")")" "barrado"
+  eq "O18 tipo inválido → 22023" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('cliente', ARRAY['$C3']::uuid[], 'detalhe_pedido')")")" "barrado"
   eq "O19 motivo vazio → 22023" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO1']::uuid[], '')")")" "barrado"
-  eq "O20 201 objetos → 22023 (teto estrutural)" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY(SELECT gen_random_uuid() FROM generate_series(1,201)), 'x_teste')")")" "barrado"
-  eq "O21 200 objetos passa" "$(como $B "SELECT count(*) FROM public.contato_cliente_operacional('pedido', ARRAY(SELECT gen_random_uuid() FROM generate_series(1,200)), 'x_teste');")" "0"
+  eq "O20 201 objetos → 22023 (teto estrutural)" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY(SELECT gen_random_uuid() FROM generate_series(1,201)), 'detalhe_pedido')")")" "barrado"
+  eq "O21 200 objetos passa" "$(como $B "SELECT count(*) FROM public.contato_cliente_operacional('pedido', ARRAY(SELECT gen_random_uuid() FROM generate_series(1,200)), 'detalhe_pedido');")" "0"
+
+  echo "-- N. NULL, alias, uuid repetido, minimização, motivo, teto --"
+  eq "N1 NULL no conjunto da farmer: alheio segue EXCEÇÃO" "$(op $F expedicao $PT1)" "$C3:true:fone-c3:-:rua-c3"
+  eq "N2 ... e gravou ledger" "$(ledger "WHERE staff_user_id='$F' AND objeto_id='$PT1'")" "1"
+  eq "N3 pedido no ALIAS da raiz da farmer: não é exceção" "$(op $F pedido $SO3)" "$CA:false:(null):snap-fone-ca:-"
+  eq "N4 mesmo uuid como rota → cliente da VISITA" "$(op $B rota $SO2)" "$C3:true:fone-c3:-:rua-c3"
+  eq "N5 mesmo uuid como pedido → cliente do PEDIDO" "$(op $B pedido $SO2)" "$C1:true:fone-c1:snap-fone-c1:rua-c1"
+  eq "N6 rota não devolve documento" "$(campo $B rota $RV1 document)" "(null)"
+  eq "N7 expedição não devolve documento" "$(campo $B expedicao $PT1 document)" "(null)"
+  eq "N8 pedido devolve documento" "$(campo $B pedido $SO1 document)" "doc-c3"
+  eq "N9 pedido não devolve e-mail" "$(campo $B pedido $SO1 email)" "(null)"
+  eq "N10 aprovação devolve e-mail" "$(campo $B aprovacao $PN email)" "pend@x.test"
+  eq "N11 aprovação não devolve endereços" "$(campo $B aprovacao $PN "enderecos::text")" "[]"
+  eq "N12 motivo de outro tipo → 22023" "$(veredito "$(nega authenticated $F invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'separacao')")")" "barrado"
+  eq "N13 novo_pedido com 2 clientes → 22023" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('novo_pedido', ARRAY['$C3','$C1']::uuid[], 'novo_pedido')")")" "barrado"
+  P -q -c "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) SELECT '$B', g, 'novo_pedido', g, 'novo_pedido' FROM (SELECT gen_random_uuid() g FROM generate_series(1,79)) z;" >/dev/null
+  eq "N14 79 clientes hoje + 1 = 80: passa" "$(op $B novo_pedido $C3)" "$C3:true:fone-c3:-:rua-c3"
+  eq "N15 81º cliente distinto fora da carteira → 54000" "$(veredito "$(nega authenticated $B program_limit_exceeded "SELECT * FROM public.contato_cliente_operacional('novo_pedido', ARRAY['$C1']::uuid[], 'novo_pedido')")")" "barrado"
+  eq "N16 o teto não grava a linha barrada" "$(ledger "WHERE staff_user_id='$B' AND objeto_tipo='novo_pedido' AND customer_user_id='$C1'")" "0"
+  eq "N17 releitura de cliente já lido hoje não conta de novo" "$(op $B novo_pedido $C3)" "$C3:true:fone-c3:-:rua-c3"
+  eq "N18 teto não vale para a carteira própria (farmer no C1)" "$(op $F novo_pedido $C1)" "$C1:false:fone-c1:-:rua-c1"
+  P -q -c "DELETE FROM public.contato_acesso_operacional WHERE objeto_tipo='novo_pedido';" >/dev/null
+  P -q -c "UPDATE public.contato_acesso_operacional SET acessado_em = acessado_em - interval '11 minutes' WHERE staff_user_id='$B' AND objeto_id='$SO1';" >/dev/null
+  op $B pedido $SO1 >/dev/null
+  eq "N19 depois de 10 min a mesma leitura grava de novo" "$(ledger "WHERE staff_user_id='$B' AND objeto_id='$SO1' AND motivo='detalhe_pedido'")" "2"
 
   echo "-- R. ledger: RLS e 1 writer --"
   eq "R1 staff vê só as PRÓPRIAS leituras" "$(como $F "SELECT count(*) FROM public.contato_acesso_operacional WHERE staff_user_id<>'$F';")" "0"
   eq "R2 o próprio vê as suas" "$(como $B "SELECT (count(*)>0)::text FROM public.contato_acesso_operacional;")" "true"
   eq "R3 gestor vê as de todos" "$(como $G "SELECT (count(*) FILTER (WHERE staff_user_id='$B')>0)::text FROM public.contato_acesso_operacional;")" "true"
   eq "R4 customer não vê nada" "$(como $C1 "SELECT count(*) FROM public.contato_acesso_operacional;")" "0"
-  eq "R5 INSERT direto de authenticated → 42501" "$(veredito "$(nega authenticated $B insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','forjado')")")" "barrado"
+  eq "R5 INSERT direto de authenticated → 42501" "$(veredito "$(nega authenticated $B insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','detalhe_pedido')")")" "barrado"
   eq "R6 DELETE direto de authenticated → 42501" "$(veredito "$(nega authenticated $G insufficient_privilege "DELETE FROM public.contato_acesso_operacional")")" "barrado"
+  P -q -c "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$X','$C3','pedido','$SO1','detalhe_pedido');" >/dev/null
+  eq "R8 ex-employee não vê o próprio histórico" "$(como $X "SELECT count(*) FROM public.contato_acesso_operacional;")" "0"
+  eq "R9 service_role não escreve no ledger → 42501" "$(veredito "$(nega service_role "" insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','detalhe_pedido')")")" "barrado"
+  eq "R10 par tipo/motivo fora do vocabulário é recusado pelo próprio ledger (CHECK)" \
+     "$(P -tA -q -c "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','separacao');" 2>&1 | grep -c 'contato_acesso_operacional_motivo_chk')" "1"
   eq "R7 anon não lê → 42501" "$(veredito "$(nega anon "" insufficient_privilege "SELECT 1 FROM public.contato_acesso_operacional")")" "barrado"
 
   echo "-- V. v_perfil_contato (forma de conjunto, mesma regra da fatia 1) --"
@@ -296,15 +339,15 @@ asserts() {
   eq "V11 customer não recebe linha alheia" "$(fone $C1 $C3)" "(sem-linha)"
   eq "V12 ex-employee não recebe linha alheia" "$(fone $X $C3)" "(sem-linha)"
   eq "V13 sem uid → 0" "$(como "" "SELECT count(*) FROM public.v_perfil_contato;")" "0"
-  eq "V14 farmer: total visível = carteira (C1, CR) sobre 5 perfis" \
-     "$(como $F "SELECT count(*)||'/'||count(*) FILTER (WHERE contato_visivel) FROM public.v_perfil_contato;")" "5/2"
+  eq "V14 farmer: total visível = carteira (C1, CR) sobre 7 perfis" \
+     "$(como $F "SELECT count(*)||'/'||count(*) FILTER (WHERE contato_visivel) FROM public.v_perfil_contato;")" "7/2"
 
   echo "-- E. v_endereco_contato --"
-  eq "E1 farmer: endereço do cliente dela" "$(ender $F $C1)" "Curitiba/true/rua-c1/cep-c1"
-  eq "E2 farmer: alheio = cidade sim, rua e CEP não" "$(ender $F $C3)" "Joinville/false/(null)/(null)"
-  eq "E3 cobertura vigente vê a rua" "$(ender $K $C3)" "Joinville/true/rua-c3/cep-c3"
-  eq "E4 gestor vê a rua" "$(ender $G $C3)" "Joinville/true/rua-c3/cep-c3"
-  eq "E5 customer vê o próprio" "$(ender $C1 $C1)" "Curitiba/true/rua-c1/cep-c1"
+  eq "E1 farmer: endereço do cliente dela" "$(ender $F $C1)" "Curitiba/true/Sede/rua-c1/cep-c1"
+  eq "E2 farmer: alheio = cidade sim, rua e CEP não" "$(ender $F $C3)" "Joinville/false/(null)/(null)/(null)"
+  eq "E3 cobertura vigente vê a rua" "$(ender $K $C3)" "Joinville/true/Sede/rua-c3/cep-c3"
+  eq "E4 gestor vê a rua" "$(ender $G $C3)" "Joinville/true/Sede/rua-c3/cep-c3"
+  eq "E5 customer vê o próprio" "$(ender $C1 $C1)" "Curitiba/true/Sede/rua-c1/cep-c1"
   eq "E6 customer não recebe endereço alheio" "$(ender $C1 $C3)" "(sem-linha)"
   eq "E7 filtro pela rua oculta → 0" "$(como $F "SELECT count(*) FROM public.v_endereco_contato WHERE street='rua-c3';")" "0"
   eq "E8 anon → 42501" "$(veredito "$(nega anon "" insufficient_privilege "SELECT 1 FROM public.v_endereco_contato")")" "barrado"
@@ -323,7 +366,7 @@ asserts
 
 echo "-- I. idempotência --"
 P -q -f "$MIG"
-eq "I1 re-apply não reabre" "$(ender $F $C3)" "Joinville/false/(null)/(null)"
+eq "I1 re-apply não reabre" "$(ender $F $C3)" "Joinville/false/(null)/(null)/(null)"
 eq "I2 re-apply mantém o ledger com RLS" "$(P -tA -q -c "SELECT relrowsecurity::text FROM pg_class WHERE oid='public.contato_acesso_operacional'::regclass;")" "true"
 
 # ═════════════════════════ FALSIFICAÇÃO (mesma invocação; o controle verde acima já rodou) ═════════
@@ -343,9 +386,9 @@ restaura() { P -q -c "DELETE FROM public.contato_acesso_operacional;" >/dev/null
 
 sabota 's/IF v_uid IS NULL\n     OR NOT \(COALESCE/IF v_uid IS NULL\n     OR false AND NOT (COALESCE/'
 exige_vermelho "K1 RPC sem gate de staff → O15 customer" \
-  "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'x_teste')")")" "barrado" "vazou"; restaura
+  "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'detalhe_pedido')")")" "barrado" "vazou"; restaura
 
-sabota 's/NOT \(a\.cid = v_uid OR v_gestao OR a\.cid IN \(SELECT vis\.c FROM vis\)\) AS exc/false AS exc/'
+sabota 's/NOT COALESCE\(a\.cid = v_uid OR v_gestao OR EXISTS \(SELECT 1 FROM vis WHERE vis\.c = a\.cid\), false\) AS exc/false AS exc/'
 P -q -c "DELETE FROM public.contato_acesso_operacional;" >/dev/null; op $B pedido $SO1 >/dev/null
 exige_vermelho "K2 exceção nunca marcada → O2 ledger" "$(ledger "WHERE staff_user_id='$B'")" "1" "0"; restaura
 
@@ -354,33 +397,66 @@ op $B pedido $SO1 >/dev/null; op $B pedido $SO1 >/dev/null
 exige_vermelho "K3 sem dedupe → O3" "$(ledger "WHERE staff_user_id='$B'")" "1" "2"; restaura
 
 sabota 's/AND \(p_objeto_tipo = .novo_pedido. OR p\.is_approved IS NOT TRUE\)/AND true/'
-exige_vermelho "K4 aprovação sem filtro de pendente → O9b" "$(op $B aprovacao $C3)" "(vazio)" "$C3:true:fone-c3:-:rua-c3"; restaura
+exige_vermelho "K4 aprovação sem filtro de pendente → O9b" "$(op $B aprovacao $C3)" "(vazio)" "$C3:true:fone-c3:-:-"; restaura
 
 sabota 's/CASE WHEN v\.visivel THEN a\.street       END AS street/a.street AS street/'
-exige_vermelho "K5 rua sem máscara → E2" "$(ender $F $C3)" "Joinville/false/(null)/(null)" "Joinville/false/rua-c3/(null)"; restaura
+exige_vermelho "K5 rua sem máscara → E2" "$(ender $F $C3)" "Joinville/false/(null)/(null)/(null)" "Joinville/false/(null)/rua-c3/(null)"; restaura
 
-sabota 's/ WHERE ctx\.staff\n   AND \(ctx\.gestao/ WHERE ctx.staff\n   AND (true/'
+sabota 's/   AND \(ctx\.gestao\n        OR cc\.customer_user_id IN/   AND (true\n        OR cc.customer_user_id IN/'
 exige_vermelho "K6 contatos sem filtro de carteira → C2" "$(contatos $F $C3)" "(sem-linha)" "Beto/cc-fone-c3"; restaura
 
-sabota 's/\(ctx\.staff AND \(ctx\.gestao\n                             OR p\.user_id IN/(ctx.staff AND (false\n                             OR p.user_id IN/'
+sabota 's/\(ctx\.staff AND \(ctx\.gestao(\s+OR p\.user_id IN)/(ctx.staff AND (false$1/'
 exige_vermelho "K7 perfil sem ramo de gestão → V7" "$(fone $G $C3)" "true|fone-c3" "false|(null)"; restaura
 
 sabota 's/ WHERE p\.user_id = ctx\.uid OR ctx\.staff;/ WHERE true;/'
 exige_vermelho "K8 perfil sem fronteira de LINHA → V11" "$(fone $C1 $C3)" "(sem-linha)" "false|(null)"; restaura
 
-sabota 's/USING \(\n    staff_user_id = \(SELECT auth\.uid\(\)\)/USING (\n    true/'
+sabota 's/USING \(\n    COALESCE\(\(SELECT private\.pode_ver_carteira_completa\(\(SELECT auth\.uid\(\)\)\)\), false\)/USING (\n    true/'
 op $B pedido $SO1 >/dev/null
 exige_vermelho "K9 policy do ledger aberta → R1" "$(como $F "SELECT count(*) FROM public.contato_acesso_operacional WHERE staff_user_id<>'$F';")" "0" "1"; restaura
 
 P -q -c "GRANT INSERT ON public.contato_acesso_operacional TO authenticated; CREATE POLICY forja ON public.contato_acesso_operacional FOR INSERT TO authenticated WITH CHECK (true);"
-exige_vermelho "K10 2º writer (grant+policy) → R5" "$(veredito "$(nega authenticated $B insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','forjado')")")" "barrado" "vazou"
+exige_vermelho "K10 2º writer (grant+policy) → R5" "$(veredito "$(nega authenticated $B insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','detalhe_pedido')")")" "barrado" "vazou"
 P -q -c "DROP POLICY forja ON public.contato_acesso_operacional;"; restaura
 
-sabota 's/IF cardinality\(v_ids\) > 200 THEN/IF false THEN/'
-exige_vermelho "K11 sem teto → O20" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY(SELECT gen_random_uuid() FROM generate_series(1,201)), 'x_teste')")")" "barrado" "vazou"; restaura
+sabota 's/IF cardinality\(p_objeto_ids\) > 200 THEN/IF false THEN/'
+exige_vermelho "K11 sem teto → O20" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY(SELECT gen_random_uuid() FROM generate_series(1,201)), 'detalhe_pedido')")")" "barrado" "vazou"; restaura
 
 sabota "s/AND ur\.role IN \('employee'::public\.app_role, 'master'::public\.app_role\)\)/AND false)/"
-exige_vermelho "K12 sem exclusão de staff → O10b" "$(op $B novo_pedido $E)" "(vazio)" "$E:true:fone-e:-:-"; restaura
+exige_vermelho "K12 sem exclusão por PAPEL → O10b" "$(op $B novo_pedido $E2)" "(vazio)" "$E2:true:fone-e2:-:-"; restaura
+
+sabota 's/       AND p\.is_employee IS NOT TRUE\n//'
+exige_vermelho "K12b sem exclusão por FLAG is_employee → O10d" "$(op $B novo_pedido $EX2)" "(vazio)" "$EX2:true:fone-ex2:-:-"; restaura
+
+sabota 's/CASE WHEN v\.visivel THEN a\.label        END AS label/a.label AS label/'
+exige_vermelho "K5b rótulo sem máscara → E2" "$(ender $F $C3)" "Joinville/false/(null)/(null)/(null)" "Joinville/false/Sede/(null)/(null)"; restaura
+
+sabota 's/WHERE x\.c IS NOT NULL AND NOT v_gestao/WHERE NOT v_gestao/; s/NOT COALESCE\(a\.cid = v_uid OR v_gestao OR EXISTS \(SELECT 1 FROM vis WHERE vis\.c = a\.cid\), false\) AS exc/NOT (a.cid = v_uid OR v_gestao OR a.cid IN (SELECT vis.c FROM vis)) AS exc/'
+P -q -c "DELETE FROM public.contato_acesso_operacional;" >/dev/null; op $F expedicao $PT1 >/dev/null
+exige_vermelho "K14 RPC sem NULL-safety → N2 (PII sai sem ledger)" "$(ledger "WHERE staff_user_id='$F' AND objeto_id='$PT1'")" "1" "0"; restaura
+
+sabota 's/(OR p\.user_id IN \(SELECT x\.c FROM private\.clientes_contato_visiveis\(\(SELECT auth\.uid\(\)\)\) x\(c\)\s+)WHERE x\.c IS NOT NULL\)/$1)/'
+exige_vermelho "K15 view sem NULL-safety → V2" "$(fone $F $C3)" "false|(null)" "(sem-linha)|(null)"; restaura
+
+sabota 's/IF p_objeto_tipo = .novo_pedido. AND cardinality\(v_ids\) > 1 THEN/IF false THEN/'
+exige_vermelho "K16 novo_pedido em lote → N13" "$(veredito "$(nega authenticated $B invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('novo_pedido', ARRAY['$C3','$C1']::uuid[], 'novo_pedido')")")" "barrado" "vazou"; restaura
+
+sabota 's/WHEN \(SELECT n FROM teto\) > 80/WHEN (SELECT n FROM teto) > 100000/'
+P -q -c "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) SELECT '$B', g, 'novo_pedido', g, 'novo_pedido' FROM (SELECT gen_random_uuid() g FROM generate_series(1,80)) z;" >/dev/null
+exige_vermelho "K17 sem teto diário → N15" "$(veredito "$(nega authenticated $B program_limit_exceeded "SELECT * FROM public.contato_cliente_operacional('novo_pedido', ARRAY['$C1']::uuid[], 'novo_pedido')")")" "barrado" "vazou"; restaura
+
+sabota "s/CASE WHEN p_objeto_tipo IN \('pedido', 'ordem_servico', 'aprovacao', 'novo_pedido'\) THEN pr\.document END/pr.document/"
+exige_vermelho "K18 sem minimização → N6" "$(campo $B rota $RV1 document)" "(null)" "doc-c3"; restaura
+
+sabota "s/OR \(p_objeto_tipo, p_motivo\) NOT IN \(/OR false AND (p_objeto_tipo, p_motivo) NOT IN (/"
+exige_vermelho "K19 motivo sem amarra ao tipo → N12" "$(veredito "$(nega authenticated $F invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'separacao')")")" "barrado" "vazou"; restaura
+
+sabota 's/AND \(COALESCE\(\(SELECT public\.has_role\(\(SELECT auth\.uid\(\)\), .employee.::public\.app_role\)\), false\)/AND (true OR COALESCE((SELECT public.has_role((SELECT auth.uid()), \x27employee\x27::public.app_role)), false)/'
+P -q -c "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$X','$C3','pedido','$SO1','detalhe_pedido');" >/dev/null
+exige_vermelho "K20 policy sem staff atual → R8" "$(como $X "SELECT count(*) FROM public.contato_acesso_operacional;")" "0" "1"; restaura
+
+P -q -c "GRANT INSERT ON public.contato_acesso_operacional TO service_role;"
+exige_vermelho "K21 service_role como 2º writer → R9" "$(veredito "$(nega service_role "" insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','detalhe_pedido')")")" "barrado" "vazou"; restaura
 
 sabota "s/WHERE p_objeto_tipo = 'rota' AND rv\.id = ANY \(v_ids\)/WHERE p_objeto_tipo = 'rota' AND rv.id = ANY (v_ids)\n    UNION ALL SELECT so2.id, so2.customer_user_id, NULL, NULL, NULL FROM public.sales_orders so2 WHERE p_objeto_tipo = 'rota' AND so2.id = ANY (v_ids)/"
 exige_vermelho "K13 tipo não amarra a tabela → O12" "$(op $B rota $SO1)" "(vazio)" "$C3:true:fone-c3:-:rua-c3"; restaura

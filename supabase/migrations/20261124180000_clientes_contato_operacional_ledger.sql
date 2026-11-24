@@ -11,8 +11,8 @@
 --                                     consulta (subplano hasheado). A forma da fatia 1 chamava o
 --                                     predicado por LINHA: carga aberta estourou 30 s em prod
 --                                     (2026-11-24, farmer); a forma de conjunto mediu 215 ms / 16.102 linhas.
---   public.v_endereco_contato      — addresses: cidade/UF/rótulo sempre (identidade); rua, número,
---                                     complemento, bairro e CEP só onde o contato é visível.
+--   public.v_endereco_contato      — addresses: cidade/UF sempre (identidade); rótulo (texto livre),
+--                                     rua, número, complemento, bairro e CEP só onde o contato é visível.
 --   public.v_cliente_contatos      — customer_contacts: só staff, só linhas de cliente visível.
 --   public.contato_acesso_operacional — ledger: SÓ referência (quem, cliente, objeto, motivo, quando).
 --                                     Nunca o conteúdo da PII. RLS; único writer = a RPC.
@@ -24,7 +24,9 @@
 -- ───────────────────────── v_perfil_contato (forma de conjunto) ─────────────────────────
 -- Owner postgres (BYPASSRLS): o WHERE é a fronteira de LINHA (self exato OU staff); o CASE é a de
 -- COLUNA. visivel = self OU (staff E (gestão OU cliente ∈ clientes_contato_visiveis(uid))) — a mesma
--- semântica de private.cliente_contato_visivel, com o conjunto calculado uma vez.
+-- semântica de private.cliente_contato_visivel, com o conjunto calculado uma vez. NULL-safe: alvo NULL
+-- nunca é visível e o conjunto filtra NULL (senão `x IN (..., NULL)` vira NULL, não false). IN e não
+-- EXISTS de propósito: dentro do OR, EXISTS vira subplano por linha (medido 3,4 s vs 215 ms).
 CREATE OR REPLACE VIEW public.v_perfil_contato
 WITH (security_invoker = off, security_barrier = true) AS
 WITH eu AS (
@@ -48,10 +50,11 @@ SELECT p.user_id,
   FROM public.profiles p
  CROSS JOIN ctx
  CROSS JOIN LATERAL (
-   SELECT (p.user_id = ctx.uid)
-          OR (ctx.staff AND (ctx.gestao
-                             OR p.user_id IN (SELECT x.c FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c))))
-          AS visivel
+   SELECT p.user_id IS NOT NULL
+          AND ((p.user_id = ctx.uid)
+               OR (ctx.staff AND (ctx.gestao
+                                  OR p.user_id IN (SELECT x.c FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c)
+                                              WHERE x.c IS NOT NULL)))) AS visivel
  ) v
  WHERE p.user_id = ctx.uid OR ctx.staff;
 
@@ -74,12 +77,12 @@ WITH eu AS (
 SELECT a.id,
        a.user_id,
        v.visivel AS contato_visivel,
-       a.label,
        a.city,
        a.state,
        a.is_default,
        a.is_from_omie,
        a.created_at,
+       CASE WHEN v.visivel THEN a.label        END AS label,
        CASE WHEN v.visivel THEN a.street       END AS street,
        CASE WHEN v.visivel THEN a.number       END AS number,
        CASE WHEN v.visivel THEN a.complement   END AS complement,
@@ -88,10 +91,11 @@ SELECT a.id,
   FROM public.addresses a
  CROSS JOIN ctx
  CROSS JOIN LATERAL (
-   SELECT (a.user_id = ctx.uid)
-          OR (ctx.staff AND (ctx.gestao
-                             OR a.user_id IN (SELECT x.c FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c))))
-          AS visivel
+   SELECT a.user_id IS NOT NULL
+          AND ((a.user_id = ctx.uid)
+               OR (ctx.staff AND (ctx.gestao
+                                  OR a.user_id IN (SELECT x.c FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c)
+                                              WHERE x.c IS NOT NULL)))) AS visivel
  ) v
  WHERE a.user_id = ctx.uid OR ctx.staff;
 
@@ -120,13 +124,18 @@ SELECT cc.id, cc.customer_user_id, cc.phone, cc.nome, cc.cargo, cc.email, cc.is_
   FROM public.customer_contacts cc
  CROSS JOIN ctx
  WHERE ctx.staff
+   AND cc.customer_user_id IS NOT NULL
    AND (ctx.gestao
-        OR cc.customer_user_id IN (SELECT x.c FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c)));
+        OR cc.customer_user_id IN (SELECT x.c FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c)
+                                              WHERE x.c IS NOT NULL));
 
 REVOKE ALL ON public.v_cliente_contatos FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.v_cliente_contatos TO authenticated, service_role;
 
+
 -- ───────────────────────── ledger ─────────────────────────
+-- Vocabulário FECHADO de motivo por tipo (texto livre deixaria nome/telefone no ledger e inflaria a
+-- chave do dedupe). Novo motivo = migration nova, com a tela que o usa.
 CREATE TABLE IF NOT EXISTS public.contato_acesso_operacional (
   id               bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   staff_user_id    uuid        NOT NULL,
@@ -135,10 +144,14 @@ CREATE TABLE IF NOT EXISTS public.contato_acesso_operacional (
   objeto_id        uuid        NOT NULL,
   motivo           text        NOT NULL,
   acessado_em      timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT contato_acesso_operacional_tipo_chk
-    CHECK (objeto_tipo IN ('pedido', 'ordem_servico', 'expedicao', 'rota', 'aprovacao', 'novo_pedido')),
-  CONSTRAINT contato_acesso_operacional_motivo_chk
-    CHECK (motivo ~ '^[a-z][a-z_]{2,39}$')
+  CONSTRAINT contato_acesso_operacional_motivo_chk CHECK (
+    (objeto_tipo, motivo) IN (
+      ('pedido', 'detalhe_pedido'), ('pedido', 'impressao_pedido'),
+      ('ordem_servico', 'detalhe_os'), ('ordem_servico', 'lista_os'), ('ordem_servico', 'roteirizar_entrega'),
+      ('expedicao', 'separacao'),
+      ('rota', 'visita_agendada'),
+      ('aprovacao', 'aprovar_cadastro'),
+      ('novo_pedido', 'novo_pedido'), ('novo_pedido', 'proposta_recompra')))
 );
 COMMENT ON TABLE public.contato_acesso_operacional IS
   'Onda D fatia 2: leitura de contato de cliente FORA da carteira pelo contexto operacional. Só '
@@ -146,38 +159,42 @@ COMMENT ON TABLE public.contato_acesso_operacional IS
 
 CREATE INDEX IF NOT EXISTS contato_acesso_operacional_cliente_idx
   ON public.contato_acesso_operacional (customer_user_id, acessado_em DESC);
-CREATE INDEX IF NOT EXISTS contato_acesso_operacional_dedupe_idx
-  ON public.contato_acesso_operacional (staff_user_id, objeto_tipo, objeto_id, acessado_em DESC);
+CREATE INDEX IF NOT EXISTS contato_acesso_operacional_staff_idx
+  ON public.contato_acesso_operacional (staff_user_id, objeto_tipo, acessado_em DESC);
 
 ALTER TABLE public.contato_acesso_operacional ENABLE ROW LEVEL SECURITY;
 
--- Leitura: gestão/master veem tudo; o staff vê as PRÓPRIAS leituras. Escrita: nenhuma policy e nenhum
--- grant — o único writer é a RPC SECURITY DEFINER abaixo (owner BYPASSRLS).
+-- Leitura: gestão/master veem tudo; staff ATUAL vê as próprias (ex-employee perde o histórico).
+-- Escrita: nenhuma policy e nenhum grant a papel da aplicação — inclusive service_role (Codex P1:
+-- seria um 2º escritor capaz de forjar/apagar). Único writer = a RPC SECURITY DEFINER (owner).
 DROP POLICY IF EXISTS contato_acesso_operacional_select ON public.contato_acesso_operacional;
 CREATE POLICY contato_acesso_operacional_select ON public.contato_acesso_operacional
   FOR SELECT TO authenticated
   USING (
-    staff_user_id = (SELECT auth.uid())
-    OR COALESCE((SELECT private.pode_ver_carteira_completa((SELECT auth.uid()))), false)
+    COALESCE((SELECT private.pode_ver_carteira_completa((SELECT auth.uid()))), false)
+    OR (staff_user_id = (SELECT auth.uid())
+        AND (COALESCE((SELECT public.has_role((SELECT auth.uid()), 'employee'::public.app_role)), false)
+             OR COALESCE((SELECT public.has_role((SELECT auth.uid()), 'master'::public.app_role)), false)))
   );
 
-REVOKE ALL ON public.contato_acesso_operacional FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.contato_acesso_operacional TO authenticated;
-GRANT ALL ON public.contato_acesso_operacional TO service_role;
+REVOKE ALL ON public.contato_acesso_operacional FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.contato_acesso_operacional TO authenticated, service_role;
 
 -- ───────────────────────── RPC operacional por OBJETO ─────────────────────────
--- O cliente NUNCA vem do chamador: sai do objeto.
---   pedido        sales_orders.id          → customer_user_id (+ snapshot do pedido)
---   ordem_servico orders.id                → user_id (OS de afiação: coleta/entrega)
---   expedicao     picking_tasks.id         → sales_orders.customer_user_id
---   rota          route_visits.id          → customer_user_id
---   aprovacao     profiles.user_id         → só cadastro PENDENTE (is_approved IS NOT TRUE), não staff
---   novo_pedido   profiles.user_id         → pedido/proposta AINDA SEM objeto: cliente existente, não
---                                            staff. É o elo mais fraco (o "objeto" é o cliente); a
---                                            leitura fora da carteira fica no ledger com o motivo.
--- Objeto inexistente (ou sem cliente) não devolve linha e não grava ledger. O ledger grava só a
--- EXCEÇÃO (contato não visível por self/carteira/cobertura/gestão), com dedupe de 10 min por
--- (staff, objeto, cliente, motivo) — refetch de tela não infla o ledger.
+-- O cliente NUNCA vem do chamador: sai do objeto, e o tipo amarra a tabela.
+--   tipo           objeto                 cliente                      devolve (mínimo por operação)
+--   pedido         sales_orders.id        customer_user_id             doc/CNPJ, telefone, endereços, snapshot
+--   ordem_servico  orders.id              user_id (OS de afiação)      doc/CNPJ, telefone, endereços
+--   expedicao      picking_tasks.id       pedido da tarefa             telefone, endereços
+--   rota           route_visits.id        customer_user_id             telefone, endereços
+--   aprovacao      profiles.user_id       só cadastro PENDENTE         doc/CNPJ, telefone, e-mail
+--   novo_pedido    profiles.user_id       pedido/proposta SEM objeto   doc/CNPJ, telefone, endereços
+-- `novo_pedido` é o elo fraco (o "objeto" é o próprio cliente): 1 cliente por chamada e no máximo 80
+-- clientes DISTINTOS fora da carteira por staff/dia (pico medido 2026-11-24: 34 clientes/dia TOTAIS,
+-- dentro e fora da carteira), contados no ledger sob lock por staff.
+-- Objeto inexistente/sem cliente não devolve linha nem grava. Staff (user_roles OU is_employee) nunca
+-- é cliente. O ledger grava só a EXCEÇÃO, com dedupe de 10 min por (staff, tipo, objeto, cliente,
+-- motivo); a decisão é serializada por staff (pg_advisory_xact_lock) — chamadas concorrentes não duplicam.
 CREATE OR REPLACE FUNCTION public.contato_cliente_operacional(
   p_objeto_tipo text,
   p_objeto_ids  uuid[],
@@ -205,28 +222,39 @@ DECLARE
   v_uid    uuid := auth.uid();
   v_ids    uuid[];
   v_gestao boolean;
+  v_hoje   timestamptz := date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'America/Sao_Paulo';
 BEGIN
   IF v_uid IS NULL
      OR NOT (COALESCE(public.has_role(v_uid, 'employee'::public.app_role), false)
              OR COALESCE(public.has_role(v_uid, 'master'::public.app_role), false)) THEN
     RAISE EXCEPTION 'contato_cliente_operacional: sem permissao' USING ERRCODE = '42501';
   END IF;
-  IF p_objeto_tipo IS NULL
-     OR p_objeto_tipo NOT IN ('pedido', 'ordem_servico', 'expedicao', 'rota', 'aprovacao', 'novo_pedido') THEN
-    RAISE EXCEPTION 'contato_cliente_operacional: tipo de objeto invalido' USING ERRCODE = '22023';
+  IF p_objeto_tipo IS NULL OR p_motivo IS NULL
+     OR (p_objeto_tipo, p_motivo) NOT IN (
+       ('pedido', 'detalhe_pedido'), ('pedido', 'impressao_pedido'),
+       ('ordem_servico', 'detalhe_os'), ('ordem_servico', 'lista_os'), ('ordem_servico', 'roteirizar_entrega'),
+       ('expedicao', 'separacao'),
+       ('rota', 'visita_agendada'),
+       ('aprovacao', 'aprovar_cadastro'),
+       ('novo_pedido', 'novo_pedido'), ('novo_pedido', 'proposta_recompra')) THEN
+    RAISE EXCEPTION 'contato_cliente_operacional: tipo/motivo invalido' USING ERRCODE = '22023';
   END IF;
-  IF p_motivo IS NULL OR p_motivo !~ '^[a-z][a-z_]{2,39}$' THEN
-    RAISE EXCEPTION 'contato_cliente_operacional: motivo invalido' USING ERRCODE = '22023';
+  -- teto sobre a cardinalidade BRUTA (antes do unnest/DISTINCT): protege também o servidor
+  IF cardinality(p_objeto_ids) > 200 THEN
+    RAISE EXCEPTION 'contato_cliente_operacional: mais de 200 objetos por chamada' USING ERRCODE = '22023';
   END IF;
 
   SELECT array_agg(DISTINCT u.i) INTO v_ids FROM unnest(p_objeto_ids) AS u(i) WHERE u.i IS NOT NULL;
   IF v_ids IS NULL THEN
     RETURN;
   END IF;
-  IF cardinality(v_ids) > 200 THEN
-    RAISE EXCEPTION 'contato_cliente_operacional: mais de 200 objetos por chamada' USING ERRCODE = '22023';
+  IF p_objeto_tipo = 'novo_pedido' AND cardinality(v_ids) > 1 THEN
+    RAISE EXCEPTION 'contato_cliente_operacional: novo_pedido e um cliente por chamada' USING ERRCODE = '22023';
   END IF;
   v_gestao := COALESCE(private.pode_ver_carteira_completa(v_uid), false);
+
+  -- serializa dedupe e teto diário deste staff (chamadas concorrentes esperam, não duplicam)
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('contato_cliente_operacional:' || v_uid::text, 0));
 
   RETURN QUERY
   WITH alvo AS (
@@ -252,21 +280,34 @@ BEGIN
       FROM public.profiles p
      WHERE p_objeto_tipo IN ('aprovacao', 'novo_pedido') AND p.user_id = ANY (v_ids)
        AND (p_objeto_tipo = 'novo_pedido' OR p.is_approved IS NOT TRUE)
+       AND p.is_employee IS NOT TRUE
        AND NOT EXISTS (SELECT 1 FROM public.user_roles ur
                         WHERE ur.user_id = p.user_id
                           AND ur.role IN ('employee'::public.app_role, 'master'::public.app_role))
   ), vis AS MATERIALIZED (
-    SELECT x.c FROM private.clientes_contato_visiveis(v_uid) x(c) WHERE NOT v_gestao
+    SELECT x.c FROM private.clientes_contato_visiveis(v_uid) x(c) WHERE x.c IS NOT NULL AND NOT v_gestao
   ), classif AS MATERIALIZED (
+    -- NULL-safe (Codex P1): exceção é TRUE a menos que self/gestão/conjunto PROVEM o contrário
     SELECT a.oid, a.cid, a.pdoc, a.pend, a.ptel,
-           NOT (a.cid = v_uid OR v_gestao OR a.cid IN (SELECT vis.c FROM vis)) AS exc
+           NOT COALESCE(a.cid = v_uid OR v_gestao OR EXISTS (SELECT 1 FROM vis WHERE vis.c = a.cid), false) AS exc
       FROM alvo a
      WHERE a.cid IS NOT NULL
+  ), teto AS MATERIALIZED (
+    -- novo_pedido: clientes distintos fora da carteira já lidos hoje + o desta chamada
+    SELECT count(DISTINCT u.c) AS n
+      FROM (SELECT l.customer_user_id AS c FROM public.contato_acesso_operacional l
+             WHERE p_objeto_tipo = 'novo_pedido' AND l.staff_user_id = v_uid
+               AND l.objeto_tipo = 'novo_pedido' AND l.acessado_em >= v_hoje
+            UNION
+            SELECT c.cid FROM classif c WHERE p_objeto_tipo = 'novo_pedido' AND c.exc) u
+  ), barra AS MATERIALIZED (
+    SELECT CASE WHEN (SELECT n FROM teto) > 80
+                THEN private.contato_operacional_teto_estourado() END AS x
   ), grava AS (
     -- CTE de escrita: o Postgres a executa SEMPRE, até o fim, leia o SELECT final dela ou não.
     INSERT INTO public.contato_acesso_operacional (staff_user_id, customer_user_id, objeto_tipo, objeto_id, motivo)
     SELECT v_uid, c.cid, p_objeto_tipo, c.oid, p_motivo
-      FROM classif c
+      FROM classif c, barra
      WHERE c.exc
        AND NOT EXISTS (
          SELECT 1 FROM public.contato_acesso_operacional l
@@ -276,19 +317,37 @@ BEGIN
     RETURNING 1
   )
   SELECT c.oid, c.cid, c.exc,
-         pr.email, pr.phone, pr.document, pr.cnpj,
-         COALESCE((
+         CASE WHEN p_objeto_tipo = 'aprovacao' THEN pr.email END,
+         pr.phone,
+         CASE WHEN p_objeto_tipo IN ('pedido', 'ordem_servico', 'aprovacao', 'novo_pedido') THEN pr.document END,
+         CASE WHEN p_objeto_tipo IN ('pedido', 'ordem_servico', 'aprovacao', 'novo_pedido') THEN pr.cnpj END,
+         CASE WHEN p_objeto_tipo = 'aprovacao' THEN '[]'::jsonb ELSE COALESCE((
            SELECT jsonb_agg(jsonb_build_object(
                     'id', ad.id, 'label', ad.label, 'street', ad.street, 'number', ad.number,
                     'complement', ad.complement, 'neighborhood', ad.neighborhood, 'city', ad.city,
                     'state', ad.state, 'zip_code', ad.zip_code, 'is_default', ad.is_default)
                   ORDER BY ad.is_default DESC NULLS LAST, ad.created_at, ad.id)
-             FROM public.addresses ad WHERE ad.user_id = c.cid), '[]'::jsonb),
+             FROM public.addresses ad WHERE ad.user_id = c.cid), '[]'::jsonb) END,
          c.pdoc, c.pend, c.ptel
     FROM classif c
+    CROSS JOIN barra
     LEFT JOIN public.profiles pr ON pr.user_id = c.cid;
 END
 $function$;
+
+-- Lança o estouro do teto diário DENTRO da consulta (o CASE só a chama quando estoura).
+CREATE OR REPLACE FUNCTION private.contato_operacional_teto_estourado()
+RETURNS boolean
+LANGUAGE plpgsql
+VOLATILE
+SET search_path TO ''
+AS $function$
+BEGIN
+  RAISE EXCEPTION 'contato_cliente_operacional: teto diario de clientes fora da carteira em novo_pedido'
+    USING ERRCODE = '54000';
+END
+$function$;
+REVOKE ALL ON FUNCTION private.contato_operacional_teto_estourado() FROM PUBLIC, anon, authenticated;
 
 REVOKE ALL ON FUNCTION public.contato_cliente_operacional(text, uuid[], text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.contato_cliente_operacional(text, uuid[], text) TO authenticated, service_role;
@@ -300,11 +359,13 @@ BEGIN
     RAISE EXCEPTION 'pos: ledger sem RLS';
   END IF;
   IF has_table_privilege('anon', 'public.contato_acesso_operacional', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
-     OR has_table_privilege('authenticated', 'public.contato_acesso_operacional', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
-    RAISE EXCEPTION 'pos: ledger com privilégio de escrita ou anon';
+     OR has_table_privilege('authenticated', 'public.contato_acesso_operacional', 'INSERT,UPDATE,DELETE,TRUNCATE')
+     OR has_table_privilege('service_role', 'public.contato_acesso_operacional', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
+    RAISE EXCEPTION 'pos: ledger com 2º escritor (anon/authenticated/service_role)';
   END IF;
   IF has_function_privilege('anon', 'public.contato_cliente_operacional(text, uuid[], text)', 'EXECUTE')
-     OR NOT has_function_privilege('authenticated', 'public.contato_cliente_operacional(text, uuid[], text)', 'EXECUTE') THEN
+     OR NOT has_function_privilege('authenticated', 'public.contato_cliente_operacional(text, uuid[], text)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'private.contato_operacional_teto_estourado()', 'EXECUTE') THEN
     RAISE EXCEPTION 'pos: ACL da RPC operacional errado';
   END IF;
   IF (SELECT prosecdef FROM pg_proc WHERE oid = 'public.contato_cliente_operacional(text, uuid[], text)'::regprocedure) IS NOT TRUE THEN
