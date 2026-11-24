@@ -223,6 +223,9 @@ const BASELINE = new Map<string, Waiver>([
   // o types.ts (0ae875df0) e passou a tipar o retorno como array. Corpo vivo conferido via psql-ro em 2026-11-03.
   ['radar_lista @ src/queries/useRadarLista.ts',
     { tipo: 'estrutural', teto: 200, prova: '`p_limit > 200` → RAISE 22023 e `LIMIT $17` (= p_limit); o hook pede PAGE=50 por página' }],
+  // Cmd-K (onda D): o teto é do SERVIDOR — o caller passa p_limite 5 e a função clampa.
+  ['buscar_clientes_global @ src/hooks/useGlobalSearch.ts',
+    { tipo: 'estrutural', teto: 20, prova: '`v_lim := least(greatest(coalesce(p_limite, 5), 1), 20)` e `LIMIT v_lim` no único RETURN QUERY (20261124120000/20261124130000)' }],
   ['order_feed_total @ src/components/salesOrders/useSalesOrders.ts',
     { tipo: 'estrutural', teto: 1, prova: '`RETURN QUERY SELECT count(*), round(sum(…)), count(*) FILTER (…) FROM …` — agregado sem GROUP BY nos dois ramos, 1 linha sempre (20261123120000)' }],
   ['tint_adocao_balcao @ src/hooks/dashboard/useTintometricoZone.ts',

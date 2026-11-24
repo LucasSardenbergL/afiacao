@@ -21,4 +21,14 @@ describe('DREComparativo', () => {
     expect(screen.getByText('Margem Bruta')).toBeTruthy();
     expect(screen.getByText('% da Receita Total')).toBeTruthy();
   });
+
+  it('badge de regime segue o ANO exibido: colacor SN em 2022, LP em 2023', () => {
+    const { unmount } = render(<DREComparativo data={{ colacor: [row], oben: [row] }} ano={2022} />);
+    expect(screen.getAllByText('SN')).toHaveLength(1);
+    expect(screen.getAllByText('LP')).toHaveLength(1);
+    unmount();
+    render(<DREComparativo data={{ colacor: [row], oben: [row] }} ano={2023} />);
+    expect(screen.queryAllByText('SN')).toHaveLength(0);
+    expect(screen.getAllByText('LP')).toHaveLength(2);
+  });
 });

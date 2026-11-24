@@ -1,4 +1,5 @@
 import { Dialer } from './Dialer';
+import type { CallDialerViewProps } from './CallDialerView';
 
 interface CallButtonProps {
   phone: string;
@@ -9,6 +10,8 @@ interface CallButtonProps {
   variant?: 'full' | 'icon';
   /** Mantido por compatibilidade de API; o dialer in-app renderiza o próprio botão. */
   className?: string;
+  /** Fim da ligação iniciada por ESTE botão (duração + estado final) — o sensor separa tentativa de atendida. */
+  onCallEnd?: CallDialerViewProps['onCallEnd'];
 }
 
 /**
@@ -19,6 +22,8 @@ interface CallButtonProps {
  * `<a href="tel:">` — o que abria o app Telefone do SO e perdia gravação + copiloto.
  * Isso foi descontinuado: a ligação de venda agora roda sempre in-app via WebRTC.
  */
-export function CallButton({ phone, customerName, customerId, variant = 'full' }: CallButtonProps) {
-  return <Dialer phoneNumber={phone} customerName={customerName} customerId={customerId} compact={variant === 'icon'} />;
+export function CallButton({ phone, customerName, customerId, variant = 'full', onCallEnd }: CallButtonProps) {
+  return (
+    <Dialer phoneNumber={phone} customerName={customerName} customerId={customerId} compact={variant === 'icon'} onCallEnd={onCallEnd} />
+  );
 }

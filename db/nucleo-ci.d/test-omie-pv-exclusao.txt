@@ -1,0 +1,7 @@
+# Baixa automática de PV excluído no Omie (20261124120000): execução presa à identidade da credencial, orçamento de
+# listagem 6/h, triagem com disjuntor e contradição terminal, 1 consulta/h e 4 tentativas cobradas/24h por conta,
+# 2 ausências com a 2ª iniciada ≥ 1h depois da 1ª resposta, presença (triagem/consulta/sync) zera, baixa com tetos
+# por conta (PVs, R$), reserva pelo par próprio + trilha + impacto, divergência nos 2 sentidos, durabilidade
+# (rollback do front, importação tardia, PID atribuído depois), 2 sessões, ACL/RLS, 11 históricos.
+db/test-omie-pv-exclusao.sh 61  falsificar=16
+# Codex de código: releitura das linhas sob lock (S3), PID atribuído no soft-delete (D5), terminal pós-baixa (D6), sequências e app_hash (A8/A9).

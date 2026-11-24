@@ -11,6 +11,8 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useWebRTCCallContext } from '@/contexts/webrtc-call-context';
 import { toast } from 'sonner';
 import { SignalModifierBadge } from './SignalModifierBadge';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 const AGENDA_META: Record<AgendaItem['agenda_type'], { label: string; icon: typeof Phone; color: string }> = {
   risco: { label: 'Risco', icon: AlertTriangle, color: 'text-status-error' },
@@ -26,6 +28,7 @@ const AGENDA_META: Record<AgendaItem['agenda_type'], { label: string; icon: type
  */
 export function AgendaTodayList() {
   const { agenda, isLoading, agendaIndisponivel, agendaDesatualizada } = useMyAgendaToday(10);
+  const origemTela = estadoOrigemTelaAtual();
   // A agenda sai de `farmer_client_scores` filtrado por [eu, ...cobertos], e o vazio dessa
   // conta tem DUAS origens que falham calado. Se a cobertura não pôde ser lida, a lista
   // encolhe em silêncio; se os SCORES não puderam ser lidos, ela some inteira — e o texto de
@@ -140,7 +143,7 @@ export function AgendaTodayList() {
         return (
           <div key={item.customer_user_id} className="p-3 flex items-center gap-3 hover:bg-muted/30">
             <Icon className={`w-4 h-4 ${meta.color} shrink-0`} />
-            <Link to={`/admin/customers/${item.customer_user_id}/360`} className="flex-1 min-w-0">
+            <Link to={urlCliente360(item.customer_user_id)} state={origemTela} className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{info?.name ?? '…'}</div>
               <div className="text-2xs text-muted-foreground flex items-center gap-2 flex-wrap">
                 <Badge variant="outline" className="text-2xs">{meta.label}</Badge>

@@ -243,7 +243,8 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
     const cobertura = coberturaCustoCliente(s);
     map.set(s.customer_user_id, {
       customer_user_id: s.customer_user_id,
-      health_score: s.health_score ?? 0,
+      // Sem `?? 0` (onda B): score ausente é "não avaliado", não saúde zero.
+      health_score: s.health_score ?? null,
       // Sem `?? 'critico'`: classe ausente é "não avaliado", não um veredito.
       health_class: s.health_class ?? null,
       // Sem `?? 0`: risco ausente chega como null ao consumidor (mesma razão do gross_margin_pct

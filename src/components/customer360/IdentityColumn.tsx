@@ -2,18 +2,19 @@
 // Extraída de src/pages/Customer360.tsx (god-component split).
 import { Link, useLocation } from 'react-router-dom';
 import { Mail, Phone, Building2, User, Users, MapPin, Heart, Wrench } from 'lucide-react';
-import { estadoComOrigem, lerOrigemLista, urlCadastroCliente } from '@/lib/nav/clientes';
+import { lerOrigemLista, repassarOrigem, urlCadastroCliente } from '@/lib/nav/clientes';
+import { registrarUsoClientes } from '@/lib/nav/sensor-clientes';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { DataRow, ContactRow, ScoreRow } from './components';
 import {
-  formatBRL, splitEmails, formatCustomerType, formatPhone, formatCep,
+  formatBRL, splitEmails, formatCustomerType, formatPhone, formatCep, formatCalculadoEm,
 } from './format';
 import type { Customer, CustomerScore, AddressQuery, ContactsQuery } from './viewTypes';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 export function IdentityColumn({
   customer, isPj, customerId, contacts, address, score: s, scoreSemLeitura = null,
@@ -29,14 +30,24 @@ export function IdentityColumn({
 }) {
   // "Cadastro e ferramentas" (a ficha antiga) é aberto DAQUI — a 360 é o destino de "abrir cliente".
   // A fila de origem viaja junto: o voltar do Cadastro devolve a mesma lista (onda 2, item 8).
-  const origem = lerOrigemLista(useLocation().state);
+  // Onda C: a tela de origem (Meu dia, telefonia…) também viaja — Cadastro → 360 → voltar não a perde.
+  const state = useLocation().state;
+  const origem = lerOrigemLista(state);
   const urlCadastro = customerId ? urlCadastroCliente(customerId, origem?.query ?? '') : null;
-  const estadoCadastro = estadoComOrigem(origem);
+  const estadoCadastro = repassarOrigem(state);
+  // Emissor do `abrir_cadastro` (até a onda C o tipo existia sem ninguém que o gravasse).
+  const medirCadastro = () => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'abrir_cadastro' });
+  // Onda B: leitura que NÃO aconteceu não vira "nenhum contato/endereço". Só fala sem dado em mãos —
+  // valor no cache cujo refetch falhou continua na tela.
+  const estadoContatos = estadoDeLeitura(contacts);
+  const contatosSemLeitura = !contacts.data && naoConsegui(estadoContatos) ? estadoContatos : null;
+  const estadoEndereco = estadoDeLeitura(address);
+  const enderecoSemLeitura = !address.data && naoConsegui(estadoEndereco) ? estadoEndereco : null;
   return (
     <div className="lg:col-span-1 space-y-4">
       {urlCadastro && (
         <Button asChild variant="outline" size="sm" className="w-full justify-start gap-2">
-          <Link to={urlCadastro} state={estadoCadastro} data-testid="c360-link-cadastro">
+          <Link to={urlCadastro} state={estadoCadastro} data-testid="c360-link-cadastro" onClick={medirCadastro}>
             <Wrench className="w-3.5 h-3.5" />
             Cadastro e ferramentas
             <span className="ml-auto text-2xs text-muted-foreground">exige OC · chamadas · visitas</span>
@@ -51,6 +62,13 @@ export function IdentityColumn({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2.5 text-sm">
+          {/* Onda D: fora da carteira/cobertura o servidor MASCARA o contato — dizer isso, nunca "—"
+              (que afirmaria "cliente sem telefone"). `null` (desconhecido) cai no ramo normal. */}
+          {customer.contatoVisivel === false ? (
+            <p className="text-xs text-muted-foreground" data-testid="c360-contato-restrito">
+              Contato visível só para a carteira deste cliente.
+            </p>
+          ) : (<>
           {/* F1: profile.email frequentemente vem concatenado por vírgula vindo do Omie.
               Split + render como lista. Cada email vira `mailto:` clicável. */}
           {(() => {
@@ -96,6 +114,7 @@ export function IdentityColumn({
             label="Telefone"
             value={customer.phone ? formatPhone(customer.phone) : null}
           />
+          </>)}
           {/* F9: icon contextual ao tipo (PJ vs PF) em vez de Sparkles decorativo.
               F3: customer_type traduzido pra rótulo humano. */}
           <DataRow
@@ -114,12 +133,21 @@ export function IdentityColumn({
           <CardTitle className="text-sm font-medium flex-1">
             Contatos extras
           </CardTitle>
-          <Badge variant="outline" className="text-[10px] uppercase font-tabular">
-            {contacts.data?.length ?? 0}
-          </Badge>
+          {contacts.data && (
+            <Badge variant="outline" className="text-[10px] uppercase font-tabular">
+              {contacts.data.length}
+            </Badge>
+          )}
         </CardHeader>
         <CardContent className="space-y-2.5 text-sm">
-          {contacts.isLoading ? (
+          {contatosSemLeitura ? (
+            <FalhaComRetry
+              oque="os contatos extras"
+              estado={contatosSemLeitura}
+              onRetry={() => contacts.refetch()}
+              testId="aviso-c360-contatos"
+            />
+          ) : contacts.isLoading ? (
             <div className="space-y-2">
               {[1, 2].map((i) => (
                 <div key={i} className="h-10 bg-muted/40 rounded animate-pulse" />
@@ -164,7 +192,16 @@ export function IdentityColumn({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          {address.data && address.data.length > 0 ? (
+          {enderecoSemLeitura ? (
+            <FalhaComRetry
+              oque="os endereços"
+              estado={enderecoSemLeitura}
+              onRetry={() => address.refetch()}
+              testId="aviso-c360-endereco"
+            />
+          ) : address.isLoading ? (
+            <div className="h-10 bg-muted/40 rounded animate-pulse" />
+          ) : address.data && address.data.length > 0 ? (
             address.data.slice(0, 2).map((a, i) => {
               // F2: "OMIE" e "padrão" são labels técnicos do ERP. Pro usuário, o que
               // importa é se é o endereço padrão ou não. Se for padrão, mostra "Principal".
@@ -214,6 +251,11 @@ export function IdentityColumn({
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Heart className="w-4 h-4 text-muted-foreground" />
               Score comercial
+              {formatCalculadoEm(s.calculated_at) && (
+                <span className="ml-auto text-2xs font-normal text-muted-foreground" data-testid="c360-card-score-calculado-em">
+                  {formatCalculadoEm(s.calculated_at)}
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2.5 text-sm">
@@ -243,6 +285,25 @@ export function IdentityColumn({
             />
           </CardContent>
         </Card>
+      )}
+    </div>
+  );
+}
+
+/** Aviso de leitura falha + "Tentar de novo" (só no erro — sem rede o react-query retoma sozinho). */
+function FalhaComRetry({ oque, estado, onRetry, testId }: {
+  oque: string;
+  estado: EstadoSemLeitura;
+  onRetry: () => void;
+  testId: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <AvisoLeituraFalhou oque={oque} estado={estado} testId={testId} />
+      {estado === 'erro' && (
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRetry} data-testid={`${testId}-retry`}>
+          Tentar de novo
+        </Button>
       )}
     </div>
   );

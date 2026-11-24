@@ -16,6 +16,8 @@ import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
 import { motivoNaSerie, type MotivoDesatualizado } from '@/lib/leitura/serie';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 /**
  * O card colapsava TRÊS estados numa tela em branco só, e o evento só saía num deles.
@@ -97,6 +99,7 @@ function AvisoDesatualizado({ motivo }: { motivo: MotivoDesatualizado }) {
 
 export function MixGapCard() {
   const { data, status, fetchStatus } = useMyMixGap();
+  const origemTela = estadoOrigemTelaAtual();
   const { mutate: markFeedback } = useMarkMixGapFeedback();
   const { isImpersonating, effectiveUserId } = useImpersonation();
 
@@ -248,7 +251,8 @@ export function MixGapCard() {
         {data.lista.slice(0, 20).map((g) => (
           <div key={g.customer_user_id} className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30">
             <Link
-              to={`/admin/customers/${g.customer_user_id}/360`}
+              to={urlCliente360(g.customer_user_id)}
+              state={origemTela}
               onClick={() => track('carteira.mixgap_cliente_aberto', { familia: g.familia_faltante })}
               className="min-w-0 flex-1"
             >

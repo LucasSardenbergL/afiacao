@@ -1403,11 +1403,22 @@ async function syncMovimentacoes(
 // Qualquer mudança aqui deve ser refletida lá e vice-versa.
 type RegimeTributario = 'simples' | 'presumido';
 
-const REGIME_POR_EMPRESA: Record<string, RegimeTributario> = {
-  colacor: 'presumido',
-  oben: 'presumido',
-  colacor_sc: 'simples',
+// Regime VIGENTE por (empresa, competência): a colacor saiu do Simples para o Lucro Presumido em
+// jan/2023 (DAS 2.06.99 até 2022-12; PIS desde 2023-01; IRPJ/CSLL desde 2023-04). desde = aaaamm.
+const REGIMES_POR_EMPRESA: Record<string, ReadonlyArray<{ desde: number | null; regime: RegimeTributario }>> = {
+  colacor: [{ desde: null, regime: 'simples' }, { desde: 202301, regime: 'presumido' }],
+  oben: [{ desde: null, regime: 'presumido' }],
+  colacor_sc: [{ desde: null, regime: 'simples' }],
 };
+
+function regimeVigente(company: string, ano: number, mes: number): RegimeTributario {
+  const faixas = REGIMES_POR_EMPRESA[company];
+  if (!faixas) return 'presumido';
+  const competencia = ano * 100 + mes;
+  let vigente: RegimeTributario = faixas[0].regime;
+  for (const f of faixas) if (f.desde == null || competencia >= f.desde) vigente = f.regime;
+  return vigente;
+}
 
 type DreLinha =
   | 'receita_bruta' | 'deducoes' | 'receitas_financeiras' | 'outras_receitas'
@@ -1853,10 +1864,14 @@ const PRESUNCAO_DEFAULT = { irpj: 0.08, csll: 0.12 }; // comércio/indústria
 
 function normalizarConfigTributario(
   company: string,
-  raw: Record<string, unknown> | null,
+  rawConfig: Record<string, unknown> | null,
+  ano: number,
+  mes: number,
 ): ConfigTributario {
-  const regimeDefault = REGIME_POR_EMPRESA[company] ?? 'presumido';
-  const regime = ((raw?.regime as RegimeTributario) ?? regimeDefault);
+  // Regime da COMPETÊNCIA; a config (1 linha por empresa) descreve o regime de hoje — se declara
+  // outro regime, não vale para este mês → ausente (defaults, completa=false).
+  const regime = regimeVigente(company, ano, mes);
+  const raw = rawConfig != null && rawConfig.regime != null && rawConfig.regime !== regime ? null : rawConfig;
   const anexo = (raw?.anexo as AnexoSimples | undefined) ?? null;
   const presuncaoIrpj = Number(raw?.presuncao_irpj ?? PRESUNCAO_DEFAULT.irpj);
   const presuncaoCsll = Number(raw?.presuncao_csll ?? PRESUNCAO_DEFAULT.csll);
@@ -1886,7 +1901,7 @@ async function calcularDRE(
     mes === 12
       ? `${ano + 1}-01-01`
       : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
-  const regimeTrib: RegimeTributario = REGIME_POR_EMPRESA[company] ?? "presumido";
+  const regimeTrib: RegimeTributario = regimeVigente(company, ano, mes);
 
   // ── Fase 3: baixa REAL derivada (só no regime caixa) ──
   // No caixa, a data de baixa derivada (v_titulo_baixas) é a data EFETIVA do título;
@@ -1949,7 +1964,7 @@ async function calcularDRE(
 
   // Onda 3b: config tributária (coluna opcional — degrade se ausente) + histórico de receita p/ RBT12
   const cfgRes = await db.from("fin_config_cashflow").select("dre_tributario").eq("company", company).maybeSingle();
-  const configTrib = normalizarConfigTributario(company, (cfgRes.data as { dre_tributario?: Record<string, unknown> } | null)?.dre_tributario ?? null);
+  const configTrib = normalizarConfigTributario(company, (cfgRes.data as { dre_tributario?: Record<string, unknown> } | null)?.dre_tributario ?? null, ano, mes);
   const histRes = await db.from("fin_dre_snapshots").select("ano, mes, receita_bruta").eq("company", company).eq("regime", "competencia");
   if (histRes.error) throw histRes.error; // histórico p/ RBT12: falha de DB não vira histórico vazio
   const histReceita = ((histRes.data ?? []) as Array<{ ano: number; mes: number; receita_bruta: number }>);

@@ -8,7 +8,8 @@ vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: (...a: unknown[]) 
 vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => lente }));
 
 import {
-  modoClientes, montarEventoClientes, normalizarFiltroSensor, registrarUsoClientes, type UsoClientes,
+  estadoSensorDestino, lerSensorDestino, modoClientes, montarEventoClientes, normalizarFiltroSensor, registrarFimDaLigacao,
+  registrarSucessoNoDestino, registrarUsoClientes, type UsoClientes,
 } from '../sensor-clientes';
 
 /** Um uso de cada ação — a suíte anti-PII roda sobre TODOS. */
@@ -22,11 +23,13 @@ const USOS: UsoClientes[] = [
   { acao: 'modo_trocado', de: 'carteira_prioridade', para: 'carteira_nome', origem: 'cabecalho' },
   { acao: 'ficha_acao', ficha: 'cadastro', tipo: 'novo_pedido' },
   { acao: 'ficha_acao', ficha: '360', tipo: 'ligar' },
+  { acao: 'ficha_acao', ficha: 'lista', tipo: 'whatsapp' },
+  { acao: 'ficha_acao', ficha: '360', tipo: 'novo_pedido', fase: 'sucesso' },
 ];
 
 // ALLOWLIST de chaves do payload: campo novo (id, nome, termo…) tem de entrar aqui de propósito, com revisão de LGPD.
-const CHAVES_PERMITIDAS = new Set(['modo', 'de', 'para', 'origem', 'valor', 'posicao', 'filtro_saude', 'com_busca', 'pagina', 'ficha', 'tipo']);
-const VALOR_PERMITIDO = /^(prioridade|nome|carteira_prioridade|carteira_nome|cadastro|360|ligar|novo_pedido|abrir_360|ver_pedidos|menu|cabecalho|all|saudavel|estavel|atencao|critico|sem_historico|outro)$/;
+const CHAVES_PERMITIDAS = new Set(['modo', 'de', 'para', 'origem', 'valor', 'posicao', 'filtro_saude', 'com_busca', 'pagina', 'ficha', 'tipo', 'fase']);
+const VALOR_PERMITIDO = /^(prioridade|nome|carteira_prioridade|carteira_nome|lista|cadastro|360|ligar|whatsapp|novo_pedido|abrir_360|ver_pedidos|tentativa|sucesso|menu|cabecalho|all|saudavel|estavel|atencao|critico|sem_historico|outro)$/;
 
 beforeEach(() => {
   trackMock.mockClear();
@@ -85,8 +88,10 @@ describe('sensorClientes — chaves de dedup (1 linha por titular × chave × di
       'prioridade:atencao:b:3',
       'nome:2',
       'carteira_prioridade>carteira_nome',
-      'cadastro:novo_pedido',
-      '360:ligar',
+      'cadastro:novo_pedido:tentativa',
+      '360:ligar:tentativa',
+      'lista:whatsapp:tentativa',
+      '360:novo_pedido:sucesso',
     ]);
   });
 
@@ -107,7 +112,9 @@ describe('modoClientes — carteira e base separadas no sinal', () => {
 
   it('ficha_acao: evento próprio, sem id do cliente', () => {
     const e = montarEventoClientes({ acao: 'ficha_acao', ficha: 'cadastro', tipo: 'abrir_360' });
-    expect(e).toEqual({ evento: 'clientes.ficha_acao', chave: 'cadastro:abrir_360', props: { ficha: 'cadastro', tipo: 'abrir_360' } });
+    expect(e).toEqual({
+      evento: 'clientes.ficha_acao', chave: 'cadastro:abrir_360:tentativa', props: { ficha: 'cadastro', tipo: 'abrir_360', fase: 'tentativa' },
+    });
   });
 });
 
@@ -123,6 +130,43 @@ describe('registrarUsoClientes — os dois canais', () => {
     lente = true;
     registrarUsoClientes({ acao: 'lista_aberta', modo: 'prioridade' });
     expect(trackMock).not.toHaveBeenCalled();
+    expect(ledgerMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('onda C — tentativa × sucesso, sucesso medido no destino', () => {
+  beforeEach(() => { trackMock.mockClear(); ledgerMock.mockClear(); lente = false; });
+
+  it('a fase entra na chave: tentativa e sucesso deduplicam separados no ledger', () => {
+    const t = montarEventoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'ligar', fase: 'tentativa' });
+    const s = montarEventoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'ligar', fase: 'sucesso' });
+    expect(t.chave).toBe('360:ligar:tentativa');
+    expect(s.chave).toBe('360:ligar:sucesso');
+    expect(s.props).toEqual({ ficha: '360', tipo: 'ligar', fase: 'sucesso' });
+  });
+
+  it('o destino só emite sucesso quando o state veio de uma superfície de Clientes, com a ação certa', () => {
+    const st = estadoSensorDestino('lista', 'ver_pedidos');
+    expect(lerSensorDestino(st)).toEqual({ ficha: 'lista', tipo: 'ver_pedidos' });
+    expect(registrarSucessoNoDestino(st, 'novo_pedido')).toBe(false);
+    expect(registrarSucessoNoDestino(undefined, 'ver_pedidos')).toBe(false);
+    expect(registrarSucessoNoDestino({ sensorClientes: { ficha: 'x', tipo: 'ver_pedidos' } }, 'ver_pedidos')).toBe(false);
+    expect(ledgerMock).not.toHaveBeenCalled();
+    expect(registrarSucessoNoDestino(st, 'ver_pedidos')).toBe(true);
+    expect(ledgerMock).toHaveBeenCalledWith('clientes.ficha_acao', 'lista:ver_pedidos:sucesso', { ficha: 'lista', tipo: 'ver_pedidos', fase: 'sucesso' });
+  });
+
+  it('ligação: só a atendida (finished com duração > 0) é sucesso', () => {
+    registrarFimDaLigacao('360', { duration: 0, state: 'finished' });
+    registrarFimDaLigacao('360', { duration: 12, state: 'noanswer' });
+    expect(ledgerMock).not.toHaveBeenCalled();
+    registrarFimDaLigacao('360', { duration: 12, state: 'finished' });
+    expect(ledgerMock).toHaveBeenCalledWith('clientes.ficha_acao', '360:ligar:sucesso', { ficha: '360', tipo: 'ligar', fase: 'sucesso' });
+  });
+
+  it('sob a lente, nem o sucesso grava', () => {
+    lente = true;
+    registrarFimDaLigacao('lista', { duration: 30, state: 'finished' });
     expect(ledgerMock).not.toHaveBeenCalled();
   });
 });

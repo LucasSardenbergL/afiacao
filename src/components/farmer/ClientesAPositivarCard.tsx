@@ -3,6 +3,8 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import type { ClienteAPositivar } from '@/lib/positivacao/types';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 /**
  * `total` conta a carteira (elegíveis sem pedido no mês); `clientes` é a lista que a RPC corta em
@@ -11,6 +13,7 @@ import type { ClienteAPositivar } from '@/lib/positivacao/types';
  * docs/historico/positivacao-win-back-era-novos.md.
  */
 export function ClientesAPositivarCard({ clientes, total }: { clientes: ClienteAPositivar[]; total: number }) {
+  const origemTela = estadoOrigemTelaAtual();
   if (total === 0) {
     return (
       <Card className="p-6 text-2xs text-muted-foreground">
@@ -30,7 +33,8 @@ export function ClientesAPositivarCard({ clientes, total }: { clientes: ClienteA
         {clientes.slice(0, 30).map((c) => (
           <Link
             key={c.customer_user_id}
-            to={`/admin/customers/${c.customer_user_id}/360`}
+            to={urlCliente360(c.customer_user_id)}
+            state={origemTela}
             onClick={() => track('carteira.a_positivar_cliente_aberto', {
               dias_sem_comprar: c.days_since_last_purchase,
               // `churn_risk` é `number | null` (medido em @/lib/positivacao/types). O

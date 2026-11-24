@@ -160,3 +160,6 @@ verify_jwt = false
 
 [functions.sonda-relay]
 verify_jwt = false
+
+[functions.omie-pv-exclusao-reconciliar]
+verify_jwt = false

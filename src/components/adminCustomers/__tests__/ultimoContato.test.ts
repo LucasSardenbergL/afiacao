@@ -40,6 +40,24 @@ describe('rotuloUltimoContato — ausente ≠ zero', () => {
     expect(rotuloUltimoContato(undefined, 'ok', HOJE)).toBe('sem contato registrado em 180d');
   });
 
+  // Onda B: as duas fontes estão vazias em prod — "sem contato" em TODA linha é ruído.
+  it('escopo inteiro sem registro: nada na linha (null)', () => {
+    expect(rotuloUltimoContato(undefined, 'ok', HOJE, { escopoSemRegistro: true })).toBeNull();
+  });
+
+  it('escopo sem registro NÃO cala a falha', () => {
+    expect(rotuloUltimoContato(undefined, 'falha', HOJE, { escopoSemRegistro: true })).toBe('último contato indisponível');
+  });
+
+  it('não-master (RLS só mostra os próprios): "não visível para você", não "não houve"', () => {
+    expect(rotuloUltimoContato(undefined, 'ok', HOJE, { soOsProprios: true })).toBe('sem contato visível para você em 180d');
+  });
+
+  it('com registro, o contexto não muda o rótulo', () => {
+    expect(rotuloUltimoContato(reg(new Date(2026, 10, 22, 9).toISOString(), 'vendeu'), 'ok', HOJE, { soOsProprios: true }))
+      .toBe('contato hoje · vendeu');
+  });
+
   it('dias de calendário + desfecho legível', () => {
     expect(rotuloUltimoContato(reg(new Date(2026, 10, 22, 9).toISOString(), 'vendeu'), 'ok', HOJE)).toBe('contato hoje · vendeu');
     expect(rotuloUltimoContato(reg(new Date(2026, 10, 21, 23).toISOString()), 'ok', HOJE)).toBe('contato ontem');

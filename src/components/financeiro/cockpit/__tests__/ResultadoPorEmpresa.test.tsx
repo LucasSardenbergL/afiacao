@@ -29,4 +29,20 @@ describe("ResultadoPorEmpresa", () => {
     expect(screen.getByText("R$ 100.0k")).toBeTruthy(); // receita
     expect(screen.getByText("ICMS")).toBeTruthy(); // dedução
   });
+
+  it("teórico do presumido mostra o TOTAL uma vez e rotula o Δ como IRPJ+CSLL", () => {
+    const d = { ...dre, detalhamento: { ...(dre as unknown as { detalhamento: object }).detalhamento,
+      imposto_teorico: { irpj: 400, csll: 360, pis: 650, cofins: 3000, total: 4410 }, delta_imposto_pct: 0.1 } } as unknown as FinDRE;
+    render(<ResultadoPorEmpresa dreConsolidado={[d]} confiabilidade={[]} />);
+    const linha = screen.getByText(/Imposto teórico esperado/);
+    expect(linha.textContent).toMatch(/4\.410,00/);
+    expect(linha.textContent).not.toMatch(/8\.820/);
+    expect(linha.textContent).toMatch(/Δ IRPJ\+CSLL 10% vs realizado/);
+  });
+
+  it("teórico do simples com DAS desconhecido → indisponível, nunca R$ 0", () => {
+    const d = { ...dre, detalhamento: { impostos: {}, regime_tributario: "simples", imposto_teorico: { das: null } } } as unknown as FinDRE;
+    render(<ResultadoPorEmpresa dreConsolidado={[d]} confiabilidade={[]} />);
+    expect(screen.getByText(/Imposto teórico esperado/).textContent).toMatch(/indisponível/);
+  });
 });

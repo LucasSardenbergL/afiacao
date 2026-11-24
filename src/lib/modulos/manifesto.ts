@@ -141,7 +141,10 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/TarefasTemplates.tsx",
       "src/hooks/useTarefas*.ts",
     ],
-    testes: ["src/components/tarefas/__tests__/ProvasParaAuditar.estados.test.tsx"],
+    testes: [
+      "src/components/tarefas/__tests__/ProvasParaAuditar.estados.test.tsx",
+      "src/components/tarefas/__tests__/CriarTarefaDialog.empresa.test.tsx",
+    ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
@@ -298,6 +301,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/cross-sell-lote-profiles-falha.test.tsx",
       "src/hooks/__tests__/cross-sell-golden-universo-pedidos.test.tsx",
       "src/hooks/__tests__/useAlertaCreditoCliente.test.ts",
+      "src/hooks/__tests__/useAlertaCreditoCliente.fronteira.test.ts",
       "src/hooks/__tests__/usePedidosProgramados.cancelamento.test.tsx",
       "src/hooks/__tests__/usePricingEngine.test.ts",
       "src/hooks/__tests__/useReguaPreco.test.tsx",
@@ -1080,6 +1084,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",
       "src/hooks/__tests__/useUrlState.composicao.test.tsx",
+      "src/hooks/__tests__/useGlobalSearch.pii.test.tsx",
       "src/components/shell/__tests__/badge-de-contagem.test.tsx",
       "src/components/shell/__tests__/safe-area-paginas.test.ts",
       "src/components/shell/__tests__/useContagensDoShell.badge-leitura.test.tsx",
