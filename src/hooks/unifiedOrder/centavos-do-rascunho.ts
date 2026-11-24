@@ -12,8 +12,8 @@ import { emCentavos } from '@/lib/pricing/centavos';
  * Tint fica intocado: já nasce em centavos pela regra própria (`lib/tint`), e uma 2ª passada divergiria.
  * Valor não numérico fica como veio — o `priceGuard` barra o envio (ausente ≠ zero).
  */
-export function centavosDoRascunho(cart: unknown[]): unknown[] {
-  return cart.map((item) => {
+export function centavosDoRascunho<T>(cart: T[]): T[] {
+  return cart.map((item): T => {
     if (!item || typeof item !== 'object') return item;
     const it = item as Record<string, unknown>;
     if (it.type !== 'product' || it.tint_cor_id || it.tint_formula_id) return item;
@@ -22,6 +22,6 @@ export function centavosDoRascunho(cart: unknown[]): unknown[] {
     if (typeof it.precoNascimento === 'number' && Number.isFinite(it.precoNascimento)) {
       out.precoNascimento = emCentavos(it.precoNascimento);
     }
-    return out;
+    return out as T;
   });
 }
