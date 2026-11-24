@@ -66,9 +66,6 @@ const ALLOWED = new Set([
   // FarmerCalls: effectiveUserId SÓ na leitura da lista de ligações (loadCallLogs); a escrita
   // (handleSaveCall, farmer_id=user.id) é write-identity e o botão "Nova ligação" é disabled na lente.
   'src/pages/FarmerCalls.tsx',
-  // Customer360 (onda C): effectiveUserId SÓ na leitura do score (a carteira da persona vista). Escrita
-  // (tarefa, desfecho) segue do useAuth() real; a tarefa por voz exige o papel real E o da persona.
-  'src/pages/Customer360.tsx',
   // useFarmerScoring: effectiveUserId SÓ na leitura/cálculo da agenda do alvo. Hook DISPLAY-ONLY:
   // não persiste scores (writer autoritativo = edge calculate-scores). Nenhuma mutation no hook.
   'src/hooks/useFarmerScoring.ts',

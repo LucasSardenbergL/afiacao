@@ -12,10 +12,8 @@ vi.mock('@/lib/nav/sensor-clientes', async (original) => ({
 }));
 let lente = false;
 vi.mock('@/lib/impersonation/useLenteAtiva', () => ({ useLenteAtiva: () => lente }));
-// O dialer real (WebRTC, lazy) não interessa aqui: um botão simples com o mesmo contrato.
-vi.mock('@/components/call/CallButton', () => ({
-  CallButton: ({ customerName }: { customerName: string }) => <button type="button">Ligar para {customerName}</button>,
-}));
+// O dialer real (WebRTC, lazy) fica de fora: o teste toca o invólucro da linha (sem importar a telefonia,
+// que é outro módulo — fronteira), e é nele que mora o sensor da tentativa.
 vi.mock('../useUltimoContato', () => ({ useUltimoContato: () => ({ porCliente: new Map(), estado: 'ok', estadoDe: () => 'ok' }) }));
 
 import { CustomerListView } from '../CustomerListView';
@@ -94,7 +92,7 @@ describe('CustomerListView — linha acessível (onda C)', () => {
 describe('CustomerListView — agir pela lista (onda C)', () => {
   it('telefone vira Ligar + WhatsApp na linha, sem abrir a ficha', () => {
     const { onSelect } = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Ligar para Alfa' }));
+    fireEvent.click(screen.getAllByTestId('ligar-na-linha')[0]);
     const wa = screen.getByRole('link', { name: 'WhatsApp de Alfa' });
     expect(wa.getAttribute('href')).toMatch(/^https:\/\/wa\.me\/55/);
     fireEvent.click(wa);
@@ -105,7 +103,7 @@ describe('CustomerListView — agir pela lista (onda C)', () => {
 
   it('sem telefone, nenhuma ação de contato na linha', () => {
     setup([cliente('c2', 'Beta')]);
-    expect(screen.queryByRole('button', { name: /Ligar/ })).toBeNull();
+    expect(screen.queryByTestId('ligar-na-linha')).toBeNull();
     expect(screen.queryByRole('link', { name: /WhatsApp/ })).toBeNull();
   });
 

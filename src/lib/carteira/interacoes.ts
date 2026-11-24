@@ -8,7 +8,9 @@ export type CanalInteracao =
   | 'whatsapp'
   | 'visita'
   | 'tarefa'
-  | 'mensagem_pedido';
+  | 'mensagem_pedido'
+  /** Onda B: desfecho manual do contato (`venda_contato`). */
+  | 'desfecho';
 
 /** "kind" consumido pelo ActivityColumn do Customer360 (ícone + agrupamento visual). */
 export type KindInteracao = 'call' | 'message' | 'visit' | 'task';
@@ -19,6 +21,7 @@ const LABEL_POR_CANAL: Record<CanalInteracao, string> = {
   visita: 'Visita',
   tarefa: 'Tarefa',
   mensagem_pedido: 'Mensagem do pedido',
+  desfecho: 'Desfecho do contato',
 };
 
 const TONE_POR_CANAL: Record<CanalInteracao, string> = {
@@ -27,6 +30,7 @@ const TONE_POR_CANAL: Record<CanalInteracao, string> = {
   visita: 'text-status-warning',
   tarefa: 'text-muted-foreground',
   mensagem_pedido: 'text-status-info',
+  desfecho: 'text-status-success',
 };
 
 const KIND_POR_CANAL: Record<CanalInteracao, KindInteracao> = {
@@ -35,6 +39,7 @@ const KIND_POR_CANAL: Record<CanalInteracao, KindInteracao> = {
   visita: 'visit',
   tarefa: 'task',
   mensagem_pedido: 'message',
+  desfecho: 'call',
 };
 
 export function canalToLabel(canal: CanalInteracao): string {

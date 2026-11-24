@@ -159,7 +159,7 @@ export function Customer360View({
       {score && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <MetricCard icon={DollarSign} label="Média mensal (180d)" value={fmtGasto(metricasExibiveis(score).gasto)} />
-          <MetricCard icon={Activity} label="Score saúde" value={score.health_score.toFixed(0)} />
+          <MetricCard icon={Activity} label="Score saúde" value={score.health_score != null ? score.health_score.toFixed(0) : NAO_APURADO} />
           {/* churn_risk é PERCENTUAL 0–100, não fração: prod (2026-07-21) tem 6.632/6.632 linhas
               acima de 1 (mín. 33, máx. 100, média 96). O `* 100` que estava aqui exibia "9600%",
               e o limiar `> 0.5` deixava o realce de perigo permanentemente ligado.

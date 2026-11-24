@@ -10,11 +10,11 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { DataRow, ContactRow, ScoreRow } from './components';
 import {
-  formatBRL, splitEmails, formatCustomerType, formatPhone, formatCep,
+  formatBRL, splitEmails, formatCustomerType, formatPhone, formatCep, formatCalculadoEm,
 } from './format';
 import type { Customer, CustomerScore, AddressQuery, ContactsQuery } from './viewTypes';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 export function IdentityColumn({
   customer, isPj, customerId, contacts, address, score: s, scoreSemLeitura = null,
@@ -37,6 +37,12 @@ export function IdentityColumn({
   const estadoCadastro = repassarOrigem(state);
   // Emissor do `abrir_cadastro` (até a onda C o tipo existia sem ninguém que o gravasse).
   const medirCadastro = () => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'abrir_cadastro' });
+  // Onda B: leitura que NÃO aconteceu não vira "nenhum contato/endereço". Só fala sem dado em mãos —
+  // valor no cache cujo refetch falhou continua na tela.
+  const estadoContatos = estadoDeLeitura(contacts);
+  const contatosSemLeitura = !contacts.data && naoConsegui(estadoContatos) ? estadoContatos : null;
+  const estadoEndereco = estadoDeLeitura(address);
+  const enderecoSemLeitura = !address.data && naoConsegui(estadoEndereco) ? estadoEndereco : null;
   return (
     <div className="lg:col-span-1 space-y-4">
       {urlCadastro && (
@@ -127,12 +133,21 @@ export function IdentityColumn({
           <CardTitle className="text-sm font-medium flex-1">
             Contatos extras
           </CardTitle>
-          <Badge variant="outline" className="text-[10px] uppercase font-tabular">
-            {contacts.data?.length ?? 0}
-          </Badge>
+          {contacts.data && (
+            <Badge variant="outline" className="text-[10px] uppercase font-tabular">
+              {contacts.data.length}
+            </Badge>
+          )}
         </CardHeader>
         <CardContent className="space-y-2.5 text-sm">
-          {contacts.isLoading ? (
+          {contatosSemLeitura ? (
+            <FalhaComRetry
+              oque="os contatos extras"
+              estado={contatosSemLeitura}
+              onRetry={() => contacts.refetch()}
+              testId="aviso-c360-contatos"
+            />
+          ) : contacts.isLoading ? (
             <div className="space-y-2">
               {[1, 2].map((i) => (
                 <div key={i} className="h-10 bg-muted/40 rounded animate-pulse" />
@@ -177,7 +192,16 @@ export function IdentityColumn({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          {address.data && address.data.length > 0 ? (
+          {enderecoSemLeitura ? (
+            <FalhaComRetry
+              oque="os endereços"
+              estado={enderecoSemLeitura}
+              onRetry={() => address.refetch()}
+              testId="aviso-c360-endereco"
+            />
+          ) : address.isLoading ? (
+            <div className="h-10 bg-muted/40 rounded animate-pulse" />
+          ) : address.data && address.data.length > 0 ? (
             address.data.slice(0, 2).map((a, i) => {
               // F2: "OMIE" e "padrão" são labels técnicos do ERP. Pro usuário, o que
               // importa é se é o endereço padrão ou não. Se for padrão, mostra "Principal".
@@ -227,6 +251,11 @@ export function IdentityColumn({
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Heart className="w-4 h-4 text-muted-foreground" />
               Score comercial
+              {formatCalculadoEm(s.calculated_at) && (
+                <span className="ml-auto text-2xs font-normal text-muted-foreground" data-testid="c360-card-score-calculado-em">
+                  {formatCalculadoEm(s.calculated_at)}
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2.5 text-sm">
@@ -256,6 +285,25 @@ export function IdentityColumn({
             />
           </CardContent>
         </Card>
+      )}
+    </div>
+  );
+}
+
+/** Aviso de leitura falha + "Tentar de novo" (só no erro — sem rede o react-query retoma sozinho). */
+function FalhaComRetry({ oque, estado, onRetry, testId }: {
+  oque: string;
+  estado: EstadoSemLeitura;
+  onRetry: () => void;
+  testId: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <AvisoLeituraFalhou oque={oque} estado={estado} testId={testId} />
+      {estado === 'erro' && (
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRetry} data-testid={`${testId}-retry`}>
+          Tentar de novo
+        </Button>
       )}
     </div>
   );

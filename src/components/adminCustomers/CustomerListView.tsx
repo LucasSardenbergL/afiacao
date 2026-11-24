@@ -72,10 +72,10 @@ function cliqueDoNavegador(e: EventoMouse): boolean {
   return e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
 }
 
-/** O clique na linha veio de um controle dela (link, botão, menu)? Então é dele, não da linha. */
+/** O clique na linha veio de um controle dela (link, botão, menu, área de ações)? Então é dele, não da linha. */
 function cliqueEmControle(e: EventoMouse<HTMLElement>): boolean {
   const alvo = e.target as HTMLElement | null;
-  const controle = alvo?.closest('a, button, input, [role="menuitem"]');
+  const controle = alvo?.closest('a, button, input, [role="menuitem"], [data-acoes-linha]');
   return !!controle && e.currentTarget.contains(controle);
 }
 
@@ -523,7 +523,7 @@ export function CustomerListView({
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
                 const motivo = motivoContato(score);
-                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estadoDe(customer.user_id), hoje);
+                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estadoDe(customer.user_id), hoje, ultimoContato.contexto);
                 const nome = decodeHtmlEntities(customer.name);
                 const waHref = whatsappLink(customer.phone);
                 const abrir = () => {
@@ -577,11 +577,12 @@ export function CustomerListView({
                             </p>
                           )}
                           {customer.phone && (
-                            <div className="mt-0.5 flex items-center gap-1">
+                            <div className="mt-0.5 flex items-center gap-1" data-acoes-linha="">
                               <span className="text-xs text-muted-foreground">{customer.phone}</span>
                               {/* Agir pela lista (onda C): ligar e WhatsApp sem abrir a ficha. */}
                               <span
                                 className="inline-flex"
+                                data-testid="ligar-na-linha"
                                 onClickCapture={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: 'lista', tipo: 'ligar', fase: 'tentativa' })}
                               >
                                 <CallButton

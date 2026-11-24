@@ -23,12 +23,11 @@ function adiada<T>(): Adiada<T> {
 }
 
 const CLIENTE = 'cli-1';
-const FARMER = 'farmer-1';
 const LINHA = { health_class: 'saudavel', churn_risk: 10, priority_score: 70, sales_history_status: 'ok' };
 const ERRO_PG = { message: 'canceling statement due to statement timeout', code: '57014' };
 
-/** Cada leitura de `farmer_client_scores`, na ordem em que SAIU: própria (com farmer_id) ou fallback. */
-let leiturasScore: Array<{ tipo: 'proprio' | 'fallback'; resposta: Adiada<Resposta> }> = [];
+/** Cada leitura de `farmer_client_scores`, na ordem em que SAIU (e se filtrou por farmer_id). */
+let leiturasScore: Array<{ comFarmer: boolean; resposta: Adiada<Resposta> }> = [];
 let margem: Adiada<{ margem: number | null; visivel: boolean } | null>;
 let chamadasMargem = 0;
 
@@ -44,7 +43,7 @@ function cadeiaScore(): unknown {
   c.then = (sim: (v: Resposta) => unknown, nao?: (e: unknown) => unknown) => {
     if (!registrada) {
       registrada = adiada<Resposta>();
-      leiturasScore.push({ tipo: temFarmer ? 'proprio' : 'fallback', resposta: registrada });
+      leiturasScore.push({ comFarmer: temFarmer, resposta: registrada });
     }
     return registrada.promessa.then(sim, nao);
   };
@@ -71,10 +70,10 @@ import type { Customer, CustomerScore, AddressQuery, ContactsQuery } from '../vi
 function montar() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
-  return renderHook(() => useCustomerScore(CLIENTE, FARMER), { wrapper });
+  return renderHook(() => useCustomerScore(CLIENTE), { wrapper });
 }
 
-const leitura = (tipo: 'proprio' | 'fallback') => leiturasScore.find((l) => l.tipo === tipo);
+const leitura = () => leiturasScore[0];
 
 beforeEach(() => {
   leiturasScore = [];
@@ -92,21 +91,27 @@ describe('useCustomerScore — score e margem em PARALELO (F12)', () => {
     expect(result.current.isPending).toBe(true);
 
     margem.resolver({ margem: 42.5, visivel: true });
-    leitura('proprio')!.resposta.resolver({ data: LINHA, error: null });
+    leitura().resposta.resolver({ data: LINHA, error: null });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toMatchObject({ ...LINHA, gross_margin_pct: 42.5, margem_oculta: false });
-    // Score próprio com linha: o fallback não roda.
-    expect(leitura('fallback')).toBeUndefined();
   });
 
-  it('fallback: a margem também não espera a leitura própria NEM o fallback', async () => {
+  // Onda B: `farmer_client_scores` é UNIQUE(customer_user_id) — UMA ida, sem filtro de farmer e sem
+  // o antigo fallback "qualquer score do cliente" (que buscava a mesma linha de novo).
+  it('UMA leitura por cliente, sem farmer_id — mesmo quando não há linha', async () => {
     const { result } = montar();
     await waitFor(() => expect(leiturasScore).toHaveLength(1));
-    expect(chamadasMargem).toBe(1);
-    leitura('proprio')!.resposta.resolver({ data: null, error: null });
-    await waitFor(() => expect(leitura('fallback')).toBeDefined());
-    leitura('fallback')!.resposta.resolver({ data: LINHA, error: null });
-    // Score em mãos, margem em voo: o resultado espera a margem (o número não é fabricado).
+    expect(leitura().comFarmer).toBe(false);
+    leitura().resposta.resolver({ data: null, error: null });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(leiturasScore).toHaveLength(1);
+  });
+
+  it('score em mãos espera a margem (o número não é fabricado)', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(leiturasScore).toHaveLength(1));
+    leitura().resposta.resolver({ data: LINHA, error: null });
     await new Promise((r) => setTimeout(r, 0));
     expect(result.current.isPending).toBe(true);
     margem.resolver({ margem: 30, visivel: true });
@@ -115,12 +120,10 @@ describe('useCustomerScore — score e margem em PARALELO (F12)', () => {
     expect(chamadasMargem).toBe(1);
   });
 
-  it('ausência legítima (própria e fallback sem linha) → `null`, sem esperar a margem', async () => {
+  it('ausência legítima (sem linha) → `null`, sem esperar a margem', async () => {
     const { result } = montar();
     await waitFor(() => expect(leiturasScore).toHaveLength(1));
-    leitura('proprio')!.resposta.resolver({ data: null, error: null });
-    await waitFor(() => expect(leitura('fallback')).toBeDefined());
-    leitura('fallback')!.resposta.resolver({ data: null, error: null });
+    leitura().resposta.resolver({ data: null, error: null });
     // A margem segue PENDENTE de propósito: o "sem score" não pode depender dela.
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBeNull();
@@ -128,32 +131,21 @@ describe('useCustomerScore — score e margem em PARALELO (F12)', () => {
 });
 
 describe('useCustomerScore — falha de CADA leitura', () => {
-  it('falha da leitura PRÓPRIA → erro da query (antes virava "sem score"), e o fallback não roda', async () => {
+  it('falha da leitura do score → erro da query (antes virava "sem score")', async () => {
     const { result } = montar();
     await waitFor(() => expect(leiturasScore).toHaveLength(1));
-    leitura('proprio')!.resposta.resolver({ data: null, error: ERRO_PG });
+    leitura().resposta.resolver({ data: null, error: ERRO_PG });
     margem.resolver({ margem: 42.5, visivel: true });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toMatchObject({ code: '57014' });
     expect(result.current.data).toBeUndefined();
-    expect(leitura('fallback')).toBeUndefined();
-  });
-
-  it('falha do FALLBACK → erro da query (antes virava "sem score")', async () => {
-    const { result } = montar();
-    await waitFor(() => expect(leiturasScore).toHaveLength(1));
-    leitura('proprio')!.resposta.resolver({ data: null, error: null });
-    await waitFor(() => expect(leitura('fallback')).toBeDefined());
-    leitura('fallback')!.resposta.resolver({ data: null, error: ERRO_PG });
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(result.current.error).toMatchObject({ code: '57014' });
   });
 
   it('falha da MARGEM não derruba o score: margem some (`margem_oculta`), sem número fabricado', async () => {
     const { result } = montar();
     await waitFor(() => expect(leiturasScore).toHaveLength(1));
     margem.rejeitar(new Error('get_scores_margem: 57014'));
-    leitura('proprio')!.resposta.resolver({ data: LINHA, error: null });
+    leitura().resposta.resolver({ data: LINHA, error: null });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toMatchObject({ ...LINHA, gross_margin_pct: null, margem_oculta: true });
     expect(captureException).toHaveBeenCalledWith(expect.any(Error), { fonte: 'get_scores_margem/c360' });
@@ -165,7 +157,7 @@ describe('useCustomerScore — falha de CADA leitura', () => {
     try {
       const { result } = montar();
       await waitFor(() => expect(leiturasScore).toHaveLength(1));
-      leitura('proprio')!.resposta.resolver({ data: null, error: ERRO_PG });
+      leitura().resposta.resolver({ data: null, error: ERRO_PG });
       await waitFor(() => expect(result.current.isError).toBe(true));
       margem.rejeitar(new Error('get_scores_margem: 57014'));
       await new Promise((r) => setTimeout(r, 10));
