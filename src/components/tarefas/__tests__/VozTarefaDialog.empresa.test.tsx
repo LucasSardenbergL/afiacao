@@ -5,13 +5,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 // o diálogo PERGUNTA e não grava antes da escolha — nunca o "oben" fixo de antes.
 const criarTarefas = vi.fn(async () => undefined);
 vi.mock('@/hooks/useTarefas', () => ({ useTarefaMutations: () => ({ criarTarefas }) }));
-vi.mock('@/hooks/useGravacaoTranscricao', () => ({
-  useGravacaoTranscricao: () => ({
-    isRecording: false, isTranscribing: false, transcricao: 'Regina liga pro cliente',
-    setTranscricao: vi.fn(), toggle: vi.fn(), reset: vi.fn(),
-  }),
-}));
-vi.mock('@/hooks/useBuscaClienteOmie', () => ({ useBuscaClienteOmie: () => ({ buscar: vi.fn(async () => []) }) }));
+// Gravação e busca de cliente ficam REAIS (são de outros módulos: mockar por caminho é aresta de fronteira).
+// O texto entra digitado; com cliente fixo a busca nunca é chamada. O client do Supabase é plataforma.
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { functions: { invoke: vi.fn() }, from: vi.fn() } }));
 vi.mock('@/lib/invoke-function', () => ({
   invokeFunction: vi.fn(async () => ({
     detectei_n: 1, texto_nao_coberto: null,
@@ -37,6 +33,7 @@ const vendedoras = [{ user_id: 'v1', nome: 'Regina' }];
 const clienteFixo = { customer_user_id: 'cli-1', nome: 'Marcenaria X', empresa_omie: null };
 
 async function detectar() {
+  fireEvent.change(screen.getByPlaceholderText(/Grave ou digite/), { target: { value: 'Regina liga pro cliente' } });
   fireEvent.click(screen.getByRole('button', { name: /Detectar tarefas/ }));
   return (await screen.findByRole('button', { name: /Criar 1 tarefa/ })) as HTMLButtonElement;
 }
