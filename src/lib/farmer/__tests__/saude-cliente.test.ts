@@ -5,10 +5,10 @@ import { CLASSES_SAUDE, SAUDE_CLIENTE, tomSaude } from '../saude-cliente';
 // atencao 97 · critico 16.641 · estavel 235 · saudavel 18. Se a edge passar a gravar outro valor,
 // ele cai em "Não avaliado" (neutro) até entrar no dicionário — nunca herda cor/rótulo alheio.
 const PROD: Array<[string, string, string]> = [
-  ['saudavel', 'Saudável', 'text-status-success-bold'],
-  ['estavel', 'Estável', 'text-status-info-bold'],
-  ['atencao', 'Atenção', 'text-status-warning-bold'],
-  ['critico', 'Crítico', 'text-status-error-bold'],
+  ['saudavel', 'Saudável', 'text-status-success-foreground'],
+  ['estavel', 'Estável', 'text-status-info-foreground'],
+  ['atencao', 'Atenção', 'text-status-warning-foreground'],
+  ['critico', 'Crítico', 'text-status-error-foreground'],
 ];
 
 describe('dicionário único de saúde', () => {

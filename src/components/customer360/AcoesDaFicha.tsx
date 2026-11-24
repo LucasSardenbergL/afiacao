@@ -133,7 +133,7 @@ export function AcoesDaFicha({ customerId, tarefas, credito, onCriarTarefa }: {
         <CardContent className="text-sm space-y-1">
           <p
             data-testid="c360-credito"
-            className={resumo.tom === 'alerta' ? 'font-medium text-status-error' : resumo.tom === 'ok' ? 'text-status-success' : 'text-muted-foreground'}
+            className={resumo.tom === 'alerta' ? 'font-medium text-status-error' : resumo.tom === 'ok' ? 'text-status-success-foreground' : 'text-muted-foreground'}
           >
             {resumo.titulo}
           </p>

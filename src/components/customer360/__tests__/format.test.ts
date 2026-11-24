@@ -50,8 +50,8 @@ describe('formatarFracaoPct — entrada é FRAÇÃO, sempre × 100', () => {
 describe('churnTone — entrada é PERCENTUAL 0–100', () => {
   it('usa o valor como percentual, sem multiplicar', () => {
     // Faixa real da coluna em prod (2026-07-21): mín. 33, máx. 100, média 96,03.
-    expect(churnTone(96)).toEqual({ label: '96% risco churn', className: 'text-status-error-bold' });
-    expect(churnTone(33)).toEqual({ label: '33% risco churn', className: 'text-status-success-bold' });
+    expect(churnTone(96)).toEqual({ label: '96% risco churn', className: 'text-status-error-foreground' });
+    expect(churnTone(33)).toEqual({ label: '33% risco churn', className: 'text-status-success-foreground' });
   });
 
   it('não inverte risco BAIXO em máximo — defesa hoje inerte', () => {
@@ -59,14 +59,14 @@ describe('churnTone — entrada é PERCENTUAL 0–100', () => {
     // o menor risco possível exibido como o maior, com o tom de alarme junto. Nenhuma linha em
     // prod está hoje na faixa 0–1 (0 de 6.632), então isto é defesa do futuro, não correção de
     // sintoma observado — o produtor pode passar a emitir a faixa baixa sem avisar o consumidor.
-    expect(churnTone(1)).toEqual({ label: '1% risco churn', className: 'text-status-success-bold' });
-    expect(churnTone(0)).toEqual({ label: '0% risco churn', className: 'text-status-success-bold' });
+    expect(churnTone(1)).toEqual({ label: '1% risco churn', className: 'text-status-success-foreground' });
+    expect(churnTone(0)).toEqual({ label: '0% risco churn', className: 'text-status-success-foreground' });
   });
 
   it('classifica pelas faixas de atenção', () => {
-    expect(churnTone(70).className).toBe('text-status-error-bold');
-    expect(churnTone(40).className).toBe('text-status-warning-bold');
-    expect(churnTone(39).className).toBe('text-status-success-bold');
+    expect(churnTone(70).className).toBe('text-status-error-foreground');
+    expect(churnTone(40).className).toBe('text-status-warning-foreground');
+    expect(churnTone(39).className).toBe('text-status-success-foreground');
   });
 
   it('devolve travessão para ausente', () => {

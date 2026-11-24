@@ -38,7 +38,7 @@ export function KpiCard({
           <div
             className={cn(
               'kpi-delta',
-              trend.value > 0 ? 'text-status-success-bold' : trend.value < 0 ? 'text-status-error-bold' : 'text-muted-foreground',
+              trend.value > 0 ? 'text-status-success-foreground' : trend.value < 0 ? 'text-status-error-foreground' : 'text-muted-foreground',
             )}
           >
             {trend.value > 0 ? '↑' : trend.value < 0 ? '↓' : '·'} {Math.abs(trend.value).toFixed(0)}%
