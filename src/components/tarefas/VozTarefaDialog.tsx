@@ -28,9 +28,19 @@ export interface ClienteFixo {
   empresa_omie?: string | null;
 }
 
-export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clienteFixo }: {
+const NOME_EMPRESA: Record<string, string> = { oben: 'Oben Comercial', colacor: 'Colacor', colacor_sc: 'Colacor SC' };
+
+export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, empresaOpcoes, empresaMotivo, clienteFixo }: {
   open: boolean; onOpenChange: (o: boolean) => void;
-  vendedoras: VendedoraOpcao[]; empresa: string;
+  vendedoras: VendedoraOpcao[];
+  /**
+   * Empresa da tarefa. Com `clienteFixo`, `null` = não comprovada (conta ambígua, nenhuma ou leitura
+   * falha): o diálogo PERGUNTA entre `empresaOpcoes` e não grava antes da escolha — nunca chuta.
+   */
+  empresa: string | null;
+  empresaOpcoes?: readonly string[];
+  /** Por que está perguntando (ex.: "o cliente tem cadastro em mais de uma empresa"). */
+  empresaMotivo?: string;
   /** Quando presente, todos os cards usam este cliente (sem busca/resolução automática). */
   clienteFixo?: ClienteFixo;
 }) {
@@ -41,22 +51,25 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
   const [rascunhos, setRascunhos] = useState<RascunhoVoz[] | null>(null);
   const [naoCoberto, setNaoCoberto] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const [empresaEscolhida, setEmpresaEscolhida] = useState<string | null>(null);
   const hojeSP = spBusinessDate(new Date());
 
-  // Empresa derivada do clienteFixo (fallback = prop empresa)
-  const empresaFixo = clienteFixo
-    ? (empresaDeOmie(clienteFixo.empresa_omie) ?? empresa)
-    : null;
+  // Empresa do clienteFixo: a comprovada (empresa_omie ou a prop); sem prova, a ESCOLHIDA no seletor.
+  const empresaComprovada = clienteFixo ? (empresaDeOmie(clienteFixo.empresa_omie) ?? empresa) : null;
+  const precisaEscolherEmpresa = !!clienteFixo && empresaComprovada == null;
+  const empresaFixo = clienteFixo ? (empresaComprovada ?? empresaEscolhida) : null;
+  // Sem clienteFixo o chamador (Tarefas) sempre passa a empresa do seletor dele.
+  const empresaBase = empresaFixo ?? empresa ?? '';
 
   // reset ao fechar
-  useEffect(() => { if (!open) { reset(); setRascunhos(null); setNaoCoberto(null); } }, [open, reset]);
+  useEffect(() => { if (!open) { reset(); setRascunhos(null); setNaoCoberto(null); setEmpresaEscolhida(null); } }, [open, reset]);
 
   const resolverClienteDoCard = useCallback(async (r: RascunhoVoz): Promise<RascunhoVoz> => {
     // Se há clienteFixo, não resolve por voz — usa o cliente pré-definido
     if (clienteFixo) {
       return {
         ...r,
-        empresa: empresaFixo ?? empresa,
+        empresa: empresaBase,
         cliente: {
           customer_user_id: clienteFixo.customer_user_id,
           nome: clienteFixo.nome,
@@ -78,7 +91,7 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
       ? (empresaDeOmie(match.candidatos[0].empresa_omie) ?? r.empresa)
       : r.empresa;
     return { ...r, cliente: match, empresa: empresaDerivada };
-  }, [buscar, clienteFixo, empresa, empresaFixo]);
+  }, [buscar, clienteFixo, empresaBase]);
 
   const extrair = async () => {
     if (!transcricao.trim()) { toast.error('Grave ou digite o comando primeiro.'); return; }
@@ -88,14 +101,14 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
         transcricao: transcricao.trim(), hoje: hojeSP, tz: 'America/Sao_Paulo',
         vendedoras: vendedoras.map((v) => ({ nome: v.nome })),
       });
-      const base = montarRascunhos(out, { hojeSP, vendedoras, empresaPadrao: empresaFixo ?? empresa });
+      const base = montarRascunhos(out, { hojeSP, vendedoras, empresaPadrao: empresaBase });
       const comCliente = await Promise.all(base.map(resolverClienteDoCard));
       setRascunhos(comCliente);
       setNaoCoberto(out.texto_nao_coberto);
       if (comCliente.length === 0) toast.warning('Não detectei nenhuma tarefa. Revise o texto.');
     } catch (e) {
       // degradação: não perde a fala — vira 1 rascunho cru pra ele preencher
-      const empresaDegradacao = empresaFixo ?? empresa;
+      const empresaDegradacao = empresaBase;
       const clienteDegradacao = clienteFixo
         ? { customer_user_id: clienteFixo.customer_user_id, nome: clienteFixo.nome, status: 'unico' as const, candidatos: [] }
         : { customer_user_id: null, nome: null, status: 'sem_match' as const, candidatos: [] };
@@ -135,6 +148,8 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
     const validos = rascunhos.map((r) => ({ r, v: validarRascunho(r, hojeSP) }));
     const comErro = validos.filter((x) => !x.v.ok);
     if (comErro.length > 0) { toast.error(`Corrija ${comErro.length} tarefa(s) antes de salvar.`); return; }
+    // Cliente fixo sem empresa comprovada: só grava depois que alguém ESCOLHE (nunca o chute "oben").
+    if (clienteFixo && !empresaFixo) { toast.error('Escolha a empresa da tarefa antes de salvar.'); return; }
     setSalvando(true);
     try {
       // 1 insert ATÔMICO: criarTarefas aceita N linhas (cada uma com seu cliente e empresa derivada)
@@ -146,7 +161,9 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
         if (!vendedora || !cliente) throw new Error('Rascunho sem vendedora ou cliente passou da validação.');
         return {
         descricao: r.descricao, categoria: r.categoria, customer_user_id: cliente,
-        assigned_to: vendedora, empresa: r.empresa, modo: r.data.modo,
+        // Com cliente fixo, a empresa é a do cliente (comprovada ou escolhida), mesmo que o card tenha
+        // nascido antes da escolha.
+        assigned_to: vendedora, empresa: clienteFixo ? (empresaFixo as string) : r.empresa, modo: r.data.modo,
         due_date: r.data.modo === 'data' ? r.data.due_date : null,
         interacao_tipo: r.data.modo === 'interacao' ? (r.data.interacao_tipo ?? 'ligacao') : null,
         auto_satisfy_mode: autoSatisfyDaCategoria(r.categoria),
@@ -170,6 +187,20 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
             {clienteFixo ? `Criar tarefa por voz — ${clienteFixo.nome}` : 'Criar tarefa por voz'}
           </DialogTitle>
         </DialogHeader>
+
+        {precisaEscolherEmpresa && (
+          <div className="space-y-1" data-testid="voz-escolher-empresa">
+            <Select value={empresaEscolhida ?? undefined} onValueChange={setEmpresaEscolhida}>
+              <SelectTrigger aria-label="Empresa da tarefa"><SelectValue placeholder="Em qual empresa?" /></SelectTrigger>
+              <SelectContent>
+                {(empresaOpcoes ?? Object.keys(NOME_EMPRESA)).map((e) => (
+                  <SelectItem key={e} value={e}>{NOME_EMPRESA[e] ?? e}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {empresaMotivo && <p className="text-2xs text-muted-foreground">{empresaMotivo}</p>}
+          </div>
+        )}
 
         {/* Gravação / texto */}
         <div className="space-y-2">
@@ -272,7 +303,7 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
 
         <DialogFooter>
           {rascunhos && rascunhos.length > 0 && (
-            <Button onClick={salvar} disabled={salvando}>
+            <Button onClick={salvar} disabled={salvando || (!!clienteFixo && !empresaFixo)}>
               {salvando ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Criar {rascunhos.length} tarefa(s)
             </Button>

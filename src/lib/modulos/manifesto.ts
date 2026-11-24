@@ -144,6 +144,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/components/tarefas/__tests__/ProvasParaAuditar.estados.test.tsx",
       "src/components/tarefas/__tests__/CriarTarefaDialog.empresa.test.tsx",
+      "src/components/tarefas/__tests__/VozTarefaDialog.empresa.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
