@@ -85,7 +85,7 @@ export interface AlertaCredito {
  * - `erro`: a tentativa mais recente falhou depois do último concluído (ou nunca concluiu).
  * - `nunca`: nenhum registro de sync da empresa.
  */
-export type EstadoFrescor = 'ok' | 'defasado' | 'erro' | 'nunca';
+type EstadoFrescor = 'ok' | 'defasado' | 'erro' | 'nunca';
 export interface FrescorEmpresa {
   company: ParCliente['company'];
   syncAt: string | null;

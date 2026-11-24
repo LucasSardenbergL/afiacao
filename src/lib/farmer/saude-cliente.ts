@@ -52,10 +52,10 @@ const NEUTRO = {
   chip: 'bg-muted text-muted-foreground border-border',
 };
 
-export const TOM_SEM_HISTORICO: TomSaude = { label: 'Sem histórico', ...NEUTRO };
+const TOM_SEM_HISTORICO: TomSaude = { label: 'Sem histórico', ...NEUTRO };
 export const TOM_NAO_AVALIADO: TomSaude = { label: 'Não avaliado', ...NEUTRO };
 
-export function ehClasseSaude(v: string | null | undefined): v is ClasseSaude {
+function ehClasseSaude(v: string | null | undefined): v is ClasseSaude {
   return (CLASSES_SAUDE as readonly string[]).includes(v ?? '');
 }
 
