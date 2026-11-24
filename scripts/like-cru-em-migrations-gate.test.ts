@@ -208,7 +208,8 @@ describe('o repo', () => {
     // + 1: a 20261020120200 recria radar_contagem_por_municipio com p_lote (assinatura de 10 args).
     // + 1: a 20261030071150 recria com p_ufs/p_com_contato (12 args).
     // + 1: a 20261103100000 recria a de 12 args lendo o agregado (leitor 4 do Mini); o CNAE segue no caminho vivo.
-    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(27);
+    // + 6: a 20261124120000 (buscar_clientes_global, 5× `ilike v_pat` + 1× prefixo) — a viva é a 20261124130000.
+    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(33);
   });
 
   it('os 2 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {

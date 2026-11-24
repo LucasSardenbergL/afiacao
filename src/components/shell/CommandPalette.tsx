@@ -157,12 +157,23 @@ export function CommandPalette() {
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               Buscando...
             </span>
+          ) : query.trim().length >= 2 && search.erros.length > 0 ? (
+            <span role="alert" className="text-status-error" data-testid="cmdk-erro-busca">
+              Não consegui buscar {search.erros.join(', ')} agora. Tente de novo.
+            </span>
           ) : query.trim().length >= 2 ? (
             'Nada encontrado para esta busca.'
           ) : (
             'Digite ao menos 2 caracteres para buscar clientes, fórmulas ou pedidos.'
           )}
         </CommandEmpty>
+
+        {/* Falha PARCIAL (outra categoria achou algo): avisa em vez de parecer "não há clientes" */}
+        {search.isActive && search.hasResults && search.erros.length > 0 && (
+          <div role="alert" className="px-3 py-2 text-xs text-status-error" data-testid="cmdk-erro-parcial">
+            Não consegui buscar {search.erros.join(', ')} agora.
+          </div>
+        )}
 
         {/* Resultados remotos — aparecem PRIMEIRO quando há query ativa */}
         {search.isActive && search.groups.map(({ heading, results }) => (

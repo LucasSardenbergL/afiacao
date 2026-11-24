@@ -107,9 +107,11 @@ export function CustomerHero({
               )}
             </div>
             <div className="mt-1 flex items-center gap-3 flex-wrap text-sm text-muted-foreground">
-              {customer.document && (
+              {customer.document ? (
                 <span className="font-tabular">{formatDocument(customer.document)}</span>
-              )}
+              ) : customer.contatoVisivel === false ? (
+                <span className="text-xs" data-testid="c360-documento-restrito">Documento visível só para a carteira</span>
+              ) : null}
               {customer.cnae && (
                 <Tooltip>
                   <TooltipTrigger>

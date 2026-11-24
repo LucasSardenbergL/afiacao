@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
+import { regimeVigente } from '@/lib/financeiro/dre-helpers';
 import { COMPANIES, ALL_COMPANIES } from '@/contexts/CompanyContext';
 import { getDRE, type FinDRE } from '@/services/financeiroService';
 import {
@@ -104,7 +105,8 @@ const FinanceiroTributario = () => {
           return det ? (det.irpj ?? 0) + (det.csll ?? 0) + (det.ded_pis ?? 0) + (det.ded_cofins ?? 0) : d.impostos;
         };
         const dre = dreData[co] || [];
-        const regime = COMPANIES[co].regime;
+        // regime do ANO selecionado (trocas caem em janeiro: colacor Simples até 2022)
+        const regime = regimeVigente(co, ano, 1);
         const receitaAnual = dre.reduce((s, d) => s + d.receita_bruta, 0);
         const impostosAnual = dre.reduce((s, d) => s + cargaMes(d), 0);
         const federalAnual = dre.reduce((s, d) => s + federalMes(d), 0);

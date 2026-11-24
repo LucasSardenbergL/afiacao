@@ -12,6 +12,7 @@ import { getDRE, DRE_LINHAS, getCategoryMappings, type FinDRE } from '@/services
 import { getOrcamento, upsertOrcamento, getCategoriasCompetenciaRaw, getTitulosEntidadeRaw, type OrcamentoLinha } from '@/services/financeiroV2Service';
 import { projetarDRE, seedOrcamento, mesesFechados, LINHAS_INPUT, type MesDRE, type LinhaInput } from '@/lib/financeiro/orcamento-forecast-helpers';
 import { drillLinha, fontesDaLinha, codigosDaLinha } from '@/lib/financeiro/orcamento-drill-helpers';
+import { regimeVigente } from '@/lib/financeiro/dre-helpers';
 import { entidadeDaLinha, concentrarPorEntidade } from '@/lib/financeiro/orcamento-entidade-helpers';
 import { DrillVarianciaPanel } from '@/components/financeiro/DrillVarianciaPanel';
 import { toast } from 'sonner';
@@ -27,13 +28,6 @@ const fmtCompact = (v: number) => {
 };
 const mesesNome = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
-// Regime por empresa (espelho de REGIME_POR_EMPRESA do calcularDRE) — usado pelo drill
-// para resolver os aliases fiscais (deducoes/impostos) regime-aware.
-const REGIME_ORCAMENTO: Record<Company, 'simples' | 'presumido'> = {
-  colacor: 'presumido',
-  oben: 'presumido',
-  colacor_sc: 'simples',
-};
 
 const dreLinhas = DRE_LINHAS.map(l => l.value);
 const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
@@ -234,7 +228,8 @@ const FinanceiroOrcamento = () => {
     if (!fl || fontesDaLinha(expandedLinha).length === 0) return null;
     return drillLinha({
       dreLinha: expandedLinha,
-      regime: REGIME_ORCAMENTO[company],
+      // Regime do ANO orçado (as trocas de regime caem em janeiro — colacor: Presumido desde 2023).
+      regime: regimeVigente(company, ano, 1),
       rowsAno: drillBaseQuery.data.rowsAno,
       rowsAnoAnterior: drillBaseQuery.data.rowsAnoAnterior,
       mesesFechados: mesesFechadosArr,
@@ -243,7 +238,7 @@ const FinanceiroOrcamento = () => {
       forecastRestante: fl.forecast_restante,
       varianciaAnual: fl.variancia,
     });
-  }, [expandedLinha, drillBaseQuery.data, forecast.linhas, company, mesesFechadosArr]);
+  }, [expandedLinha, drillBaseQuery.data, forecast.linhas, company, ano, mesesFechadosArr]);
 
   // ── Drill v2: lente "Por fornecedor·cliente" (só em linhas puras) ──
   const [drillLente, setDrillLente] = useState<'categoria' | 'entidade'>('categoria');
@@ -256,8 +251,8 @@ const FinanceiroOrcamento = () => {
 
   const drillCodigos = useMemo(() => {
     if (!expandedLinha || !drillBaseQuery.data) return [];
-    return codigosDaLinha(drillBaseQuery.data.mapping, expandedLinha, REGIME_ORCAMENTO[company]);
-  }, [expandedLinha, drillBaseQuery.data, company]);
+    return codigosDaLinha(drillBaseQuery.data.mapping, expandedLinha, regimeVigente(company, ano, 1));
+  }, [expandedLinha, drillBaseQuery.data, company, ano]);
 
   const entidadeQuery = useQuery({
     queryKey: ['orcamento-drill-entidade', company, ano, mesesFechadosArr.join(','), expandedLinha, drillCodigos.join(',')],

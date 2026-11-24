@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { regimeVigente } from '@/lib/financeiro/dre-helpers';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
   getFechamentos, criarFechamento, atualizarFechamento, getFechamentoLog,
@@ -216,7 +217,7 @@ const FinanceiroFechamento = () => {
               <CardTitle className="text-base flex items-center gap-2">
                 {COMPANIES[co].shortName}
                 <Badge variant="outline" className="text-[10px]">
-                  {COMPANIES[co].regime === 'simples' ? 'Simples Nacional' : 'Lucro Presumido'}
+                  {regimeVigente(co, ano, 1) === 'simples' ? 'Simples Nacional' : 'Lucro Presumido'}
                 </Badge>
               </CardTitle>
             </CardHeader>

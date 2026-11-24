@@ -20,14 +20,34 @@ export function useCustomerCore(customerId: string | undefined) {
     queryKey: ['c360-core', customerId],
     enabled: !!customerId,
     staleTime: 60_000,
+    // Onda D: IDENTIDADE vem de `profiles` (aberta a staff); CONTATO (e-mail/telefone/documento) vem da
+    // view-gate `v_perfil_contato`, que mascara fora da carteira/cobertura e diz isso em `contato_visivel`.
+    // `contato_visivel=false` ≠ contato vazio ≠ falha: a ficha mostra "visível só para a carteira" só no 1º.
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone, document, customer_type, cnae, requires_po, created_at, avatar_url, is_approved')
-        .eq('user_id', customerId!)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
+      const [perfil, contato] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('user_id, name, customer_type, cnae, requires_po, created_at, avatar_url, is_approved')
+          .eq('user_id', customerId!)
+          .maybeSingle(),
+        supabase
+          .from('v_perfil_contato')
+          .select('contato_visivel, email, phone, document, eh_pj')
+          .eq('user_id', customerId!)
+          .maybeSingle(),
+      ]);
+      if (perfil.error) throw perfil.error;
+      if (contato.error) throw contato.error;
+      if (!perfil.data) return null;
+      return {
+        ...perfil.data,
+        email: contato.data?.email ?? null,
+        phone: contato.data?.phone ?? null,
+        document: contato.data?.document ?? null,
+        ehPj: contato.data?.eh_pj ?? null,
+        // linha ausente na view (não deveria, para staff) = desconhecido, nunca "visível"
+        contatoVisivel: contato.data?.contato_visivel ?? null,
+      };
     },
   });
 }

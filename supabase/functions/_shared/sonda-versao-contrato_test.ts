@@ -29,6 +29,7 @@ import * as importarPedidoPortal from "../sayerlack-importar-pedido-portal/versa
 import * as varrerPedidosPortal from "../sayerlack-varrer-pedidos-portal/versao.ts";
 import * as encerrarCanceladoPortal from "../sayerlack-encerrar-cancelado-portal/versao.ts";
 import * as trocarVendedorOmie from "../omie-cliente-trocar-vendedor/versao.ts";
+import * as pvExclusaoOmie from "../omie-pv-exclusao-reconciliar/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
@@ -331,6 +332,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "sayerlack-encerrar-cancelado-portal", mod: encerrarCanceladoPortal },
   // 2026-11-20 — nasce instrumentada: ALTERA no Omie o vendedor do cadastro de clientes (AlterarCliente, em lote).
   { nome: "omie-cliente-trocar-vendedor", mod: trocarVendedorOmie },
+  // 2026-11-21 — nasce instrumentada: lê o Omie (ListarPedidos/ConsultarPedido) e DÁ BAIXA no app de PV excluído lá
+  // (deleted_at nas linhas + reserva de estoque liberada). Não escreve no Omie.
+  { nome: "omie-pv-exclusao-reconciliar", mod: pvExclusaoOmie },
   // 2026-11-17 — lote 5 do rescan do scanner Lovable Security: as duas ganharam o gate de dono
   // (`_shared/dono-pela-rls.ts`) e, com ele, a sonda — sem marcador o deploy do conserto não seria
   // julgável. Ambas escrevem com service-role num registro cujo id vem do body.
@@ -1726,5 +1730,13 @@ Deno.test("omie-cliente-trocar-vendedor: o EFEITO diz que ALTERA o vendedor no O
   // O efeito caro é regravar o cadastro do cliente no ERP; a recusa da sonda tem de dizer isso.
   if (!/altera/i.test(trocarVendedorOmie.EFEITO) || !/omie/i.test(trocarVendedorOmie.EFEITO) || !/vendedor/i.test(trocarVendedorOmie.EFEITO)) {
     throw new Error(`EFEITO não menciona a alteração do vendedor no Omie: ${trocarVendedorOmie.EFEITO}`);
+  }
+});
+
+Deno.test("omie-pv-exclusao-reconciliar: o EFEITO diz que DÁ BAIXA, libera a reserva e não escreve no Omie", () => {
+  // O efeito caro é ocultar a venda e liberar estoque no app; a recusa da sonda tem de dizer isso e o Omie.
+  const e = pvExclusaoOmie.EFEITO;
+  if (!/baixa/i.test(e) || !/reserva/i.test(e) || !/omie/i.test(e)) {
+    throw new Error(`EFEITO não menciona a baixa, a reserva e o Omie: ${e}`);
   }
 });
