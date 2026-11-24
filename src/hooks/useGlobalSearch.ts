@@ -68,7 +68,7 @@ function storage(): Storage | null {
   }
 }
 
-export function limparRecentesLegados(): void {
+function limparRecentesLegados(): void {
   try { storage()?.removeItem(CHAVE_RECENTES_LEGADA); } catch { /* storage bloqueado: nada a limpar */ }
 }
 

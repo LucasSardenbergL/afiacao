@@ -236,6 +236,16 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'radar_atribuir_tarefa: a definição viva (a 20261019225545 só troca o guard de p_cnpj pelo formato RFB '
       + 'alfanumérico), em VIVOS_PERMITIDOS (p_cnpj validado por ^[0-9A-Z]{12}[0-9]{2}$)',
   },
+  {
+    arquivo: 'supabase/migrations/20261124120000_clientes_pii_contrato_carteira.sql',
+    trecho: 'ilike v_pat', n: 5,
+    motivo: 'buscar_clientes_global: definição antiga (a viva é a 20261124130000, com padrao_like_contem … ESCAPE)',
+  },
+  {
+    arquivo: 'supabase/migrations/20261124120000_clientes_pii_contrato_carteira.sql',
+    trecho: "ilike v_termo || '%'", n: 1,
+    motivo: 'buscar_clientes_global: definição antiga (a viva é a 20261124130000, ordena por starts_with)',
+  },
 ];
 
 /** Falso-positivo VIVO: a validação a montante que o torna seguro tem de continuar no corpo. */

@@ -33,3 +33,8 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   desenhar autorização por carteira.
 - Grant de coluna > RLS por linha para separar contato de identidade: leitor antigo quebra com 42501
   (visível) em vez de concluir que o cliente não existe (silencioso). Precedente: margem, 20261014120100.
+- **Correção no CI (`like-cru-em-migrations-gate`):** a 1ª definição da `buscar_clientes_global` montava o
+  ILIKE com o termo cru (`_`/`\` viravam curinga). Migration `20261124130000` recria com
+  `private.padrao_like_contem(...) ESCAPE '\'` e ordena por `starts_with`; a definição antiga fica na
+  baseline como morta. Prova PG17 ganhou S10 (`e_U` não casa `Cliente Um`) e K11 (pattern cru → vermelho):
+  93 ok / 0 fail em C e pt_BR.

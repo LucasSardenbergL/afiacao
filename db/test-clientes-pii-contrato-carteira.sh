@@ -43,6 +43,7 @@ bad() { FAIL=$((FAIL+1)); echo "  XX  $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
 MIG="$REPO_ROOT/supabase/migrations/20261124120000_clientes_pii_contrato_carteira.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261124130000_clientes_busca_global_like_escapado.sql"  # busca com LIKE escapado
 
 # ── ZONA 1: stubs espelhando a PROD (psql-ro, 2026-11-24) ─────────────────────
 P -q <<'SQL'
@@ -73,6 +74,16 @@ AS $f$
   SELECT has_role(_uid, 'master'::app_role)
       OR (has_role(_uid, 'employee'::app_role)
           AND get_commercial_role(_uid) IN ('gerencial'::commercial_role, 'estrategico'::commercial_role, 'super_admin'::commercial_role));
+$f$;
+
+-- corpo de prod de private.padrao_like_contem (20260929000234)
+CREATE OR REPLACE FUNCTION private.padrao_like_contem(p_termo text)
+ RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT SET search_path TO ''
+AS $f$
+  SELECT CASE
+    WHEN btrim(translate(p_termo, '%_', ''), E' \t\r\n') = '' THEN NULL
+    ELSE '%' || replace(replace(replace(p_termo, '\', '\\'), '%', '\%'), '_', '\_') || '%'
+  END
 $f$;
 
 CREATE TABLE public.profiles (
@@ -175,7 +186,7 @@ echo "-- L. linha de base: a fatia 1 NÃO fecha a tabela (lacuna declarada → f
 eq "L1 farmer lê o telefone do cliente alheio DIRETO de profiles (furo que a fatia 3 fecha)" \
    "$(como $F "SELECT phone FROM public.profiles WHERE user_id='$C3';")" "fone-c3"
 
-P -q -f "$MIG"
+P -q -f "$MIG"; P -q -f "$MIG2"
 echo "migration aplicada"
 
 asserts() {
@@ -232,6 +243,7 @@ asserts() {
   eq "S3 documento de cliente da carteira acha, com documento" "$(busca $F "doc-c1")" "Cliente Um:true:doc-c1"
   eq "S4 funcionária nunca aparece como cliente" "$(busca $F "Funcionaria")" "(vazio)"
   eq "S5 termo só-curinga = vazio" "$(busca $F "%%")" "(vazio)"
+  eq "S10 \`_\` do termo é literal, não curinga (\"e_U\" não casa \"Cliente Um\")" "$(busca $F "e_U")" "(vazio)"
   eq "S6 gestor acha pelo documento alheio (devolve CNPJ||documento)" "$(busca $G "doc-c3")" "Cliente Tres:true:cnpj-c3"
   eq "S7 e-mail alheio = vazio" "$(busca $F "tres@x")" "(vazio)"
   eq "S8 customer → 42501" "$(veredito "$(nega authenticated $C1 "SELECT * FROM public.buscar_clientes_global('Tres')")")" "barrado"
@@ -240,7 +252,7 @@ asserts() {
 asserts
 
 echo "-- I. idempotência --"
-P -q -f "$MIG"
+P -q -f "$MIG"; P -q -f "$MIG2"
 eq "I1 re-apply não reabre" "$(fone $F $C3)" "false|(null)"
 
 # ═════════════════════════ FALSIFICAÇÃO (mesma invocação; o controle verde acima já rodou) ═════════
@@ -250,13 +262,14 @@ exige_vermelho() { # <rótulo> <obtido> <verde> <vermelho esperado>
   elif [ "$2" = "$4" ]; then ok "$1 — sabotado ficou vermelho [$2]"
   else bad "$1 — resultado inesperado [$2], esperava o vermelho [$4]"; fi
 }
-sabota() { # <perl expr> — aplica a migration com o corpo sabotado (sem a postcondição)
-  perl -0pe "$1" "$MIG" > "$RODADA/sabotada.sql"
-  if cmp -s "$MIG" "$RODADA/sabotada.sql"; then bad "sabotagem não alterou a migration ($1)"; fi
+sabota() { # <perl expr> [arquivo] — aplica a migration com o corpo sabotado (sem a postcondição)
+  local alvo="${2:-$MIG}"
+  perl -0pe "$1" "$alvo" > "$RODADA/sabotada.sql"
+  if cmp -s "$alvo" "$RODADA/sabotada.sql"; then bad "sabotagem não alterou a migration ($1)"; fi
   perl -0pi -e 's/DO \$pos\$.*?\$pos\$;//s' "$RODADA/sabotada.sql"
   P -q -f "$RODADA/sabotada.sql"
 }
-restaura() { P -q -f "$MIG"; }
+restaura() { P -q -f "$MIG"; P -q -f "$MIG2"; }
 
 sabota 's/AND a\.eligible IS TRUE\n  \), raizes/\n  ), raizes/'
 exige_vermelho "K1 sem eligible → A5 fornecedor" "$(agir $F $CF)" "false" "true"; restaura
@@ -267,7 +280,7 @@ exige_vermelho "K2 sem guarda de raiz ambígua → A7" "$(agir $F $AR)" "false" 
 sabota 's/CASE WHEN v\.visivel THEN p\.phone    END AS phone/p.phone AS phone/'
 exige_vermelho "K3 telefone sem máscara → V2" "$(fone $F $C3)" "false|(null)" "false|fone-c3"; restaura
 
-sabota 's/OR \(s\.vis AND \(p\.document ILIKE/OR (true AND (p.document ILIKE/'
+sabota 's/OR \(s\.vis AND \(p\.document ILIKE/OR (true AND (p.document ILIKE/' "$MIG2"
 exige_vermelho "K4 busca casando documento oculto → S2" "$(busca $F "doc-c3")" "(vazio)" "Cliente Tres:false:(null)"; restaura
 
 sabota 's/IF NOT \(COALESCE\(private\.cliente_pode_agir\(p_comprador, v_uid\), false\)\) THEN/IF false THEN/'
@@ -280,7 +293,7 @@ exige_vermelho "K6 view sem fronteira de LINHA → V11 customer" "$(fone $C1 $C3
 P -q -c "GRANT EXECUTE ON FUNCTION public.pode_agir_no_cliente(uuid) TO anon;"
 exige_vermelho "K7 anon com EXECUTE → A11" "$(veredito "$(nega anon "" "SELECT public.pode_agir_no_cliente('$C1')")")" "barrado" "vazou"; restaura
 
-sabota 's/WHERE ur\.user_id = p\.user_id/WHERE false AND ur.user_id = p.user_id/'
+sabota 's/WHERE ur\.user_id = p\.user_id/WHERE false AND ur.user_id = p.user_id/' "$MIG2"
 P -q -c "UPDATE public.profiles SET is_employee=false WHERE user_id='$E';"
 exige_vermelho "K8 Cmd-K sem exclusão de staff → S4" "$(busca $F "Funcionaria")" "(vazio)" "Funcionaria Cliente:false:(null)"
 P -q -c "UPDATE public.profiles SET is_employee=true WHERE user_id='$E';"; restaura
@@ -291,6 +304,9 @@ exige_vermelho "K9 cobertura sem validade → V6" "$(fone $K2 $C3)" "false|(null
 P -q -c "GRANT UPDATE ON public.v_perfil_contato TO authenticated;"
 exige_vermelho "K10 GRANT de escrita na view → V14" \
   "$(P -tA -q -c "SELECT has_table_privilege('authenticated','public.v_perfil_contato','INSERT,UPDATE,DELETE')::text;")" "false" "true"; restaura
+
+sabota "s/p\.name ILIKE private\.padrao_like_contem\(v_termo\) ESCAPE '\\\\'/p.name ILIKE '%' || v_termo || '%'/" "$MIG2"
+exige_vermelho "K11 pattern cru (curinga do termo vale) → S10" "$(busca $F "e_U")" "(vazio)" "Cliente Um:true:doc-c1"; restaura
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
 asserts
