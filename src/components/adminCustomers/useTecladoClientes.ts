@@ -26,14 +26,42 @@ function proximoIndice(atual: number, total: number, passo: 1 | -1): number | nu
   return alvo < 0 || alvo >= total ? atual : alvo;
 }
 
-export function useTecladoClientes(listaRef: RefObject<HTMLElement>): void {
+/**
+ * Lista virtualizada (onda E): só as linhas perto da tela existem no DOM, então o índice vem do
+ * `data-indice` do link e o total da lista INTEIRA. Alvo fora do DOM → `irPara` rola até ele e o foco
+ * entra quando a linha monta (até ~10 quadros).
+ */
+export interface NavegacaoVirtual {
+  total: number;
+  irPara: (indice: number) => void;
+}
+
+const QUADROS_PARA_FOCAR = 10;
+
+function focarQuandoMontar(lista: HTMLElement, indice: number, quadros = QUADROS_PARA_FOCAR): void {
+  const el = lista.querySelector<HTMLElement>(`${SELETOR_LINK_CLIENTE}[data-indice="${indice}"]`);
+  if (el) { el.focus(); el.scrollIntoView?.({ block: 'nearest' }); return; }
+  if (quadros > 0) requestAnimationFrame(() => focarQuandoMontar(lista, indice, quadros - 1));
+}
+
+export function useTecladoClientes(listaRef: RefObject<HTMLElement>, navegacao?: NavegacaoVirtual): void {
+  const total = navegacao?.total;
+  const irPara = navegacao?.irPara;
   const atalhos = useMemo<Shortcut[]>(() => {
     const mover = (passo: 1 | -1) => {
       const lista = listaRef.current;
       if (!lista) return;
       const links = Array.from(lista.querySelectorAll<HTMLElement>(SELETOR_LINK_CLIENTE));
-      const atual = links.findIndex((l) => l === document.activeElement || l.contains(document.activeElement));
-      const alvo = proximoIndice(atual, links.length, passo);
+      const focado = links.find((l) => l === document.activeElement || l.contains(document.activeElement));
+      if (total != null && irPara) {
+        const atual = focado ? Number(focado.dataset.indice ?? -1) : -1;
+        const alvo = proximoIndice(atual, total, passo);
+        if (alvo == null) return;
+        if (!lista.querySelector(`${SELETOR_LINK_CLIENTE}[data-indice="${alvo}"]`)) irPara(alvo);
+        focarQuandoMontar(lista, alvo);
+        return;
+      }
+      const alvo = proximoIndice(focado ? links.indexOf(focado) : -1, links.length, passo);
       if (alvo == null) return;
       links[alvo].focus();
       links[alvo].scrollIntoView?.({ block: 'nearest' });
@@ -43,6 +71,6 @@ export function useTecladoClientes(listaRef: RefObject<HTMLElement>): void {
       { keys: 'j', label: 'Próximo cliente (Enter abre a 360)', group: 'Clientes', handler: () => mover(1), enabled: vale },
       { keys: 'k', label: 'Cliente anterior', group: 'Clientes', handler: () => mover(-1), enabled: vale },
     ];
-  }, [listaRef]);
+  }, [listaRef, total, irPara]);
   useRegisterShortcuts(atalhos);
 }

@@ -1,6 +1,9 @@
 // Lista de clientes (segmentos, busca, filtros, tabela densa, scroll infinito).
 // Extraído verbatim de src/pages/AdminCustomers.tsx (god-component split).
-import { useState, useMemo, useEffect, useRef, type MouseEvent as EventoMouse } from 'react';
+import {
+  useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, type MouseEvent as EventoMouse, type ReactNode,
+} from 'react';
+import { defaultRangeExtractor, useWindowVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { Link, useLocation } from 'react-router-dom';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
@@ -77,6 +80,104 @@ function cliqueEmControle(e: EventoMouse<HTMLElement>): boolean {
   const alvo = e.target as HTMLElement | null;
   const controle = alvo?.closest('a, button, input, [role="menuitem"], [data-acoes-linha]');
   return !!controle && e.currentTarget.contains(controle);
+}
+
+/** Altura estimada de uma linha (nome + motivo + último contato + telefone), antes de medir. */
+const ALTURA_ESTIMADA_LINHA = 76;
+/** Linhas além da tela, para cima e para baixo: rolar rápido não mostra branco, e Tab/J/K têm vizinhos. */
+const LINHAS_ALEM_DA_TELA = 8;
+/**
+ * Alturas já medidas, por cliente, entre montagens: ao voltar da 360 a lista remonta e o `scrollTo`
+ * da rolagem salva cai na MESMA linha (com só a estimativa, cairia algumas linhas fora).
+ */
+let medidasDaUltimaLista: VirtualItem[] = [];
+
+type PropsDaLinha = {
+  'data-index': number;
+  'aria-rowindex': number;
+  ref: (el: HTMLTableRowElement | null) => void;
+};
+
+/**
+ * Corpo da tabela virtualizado pela JANELA (a página rola, não a tabela): só as linhas perto da tela
+ * existem no DOM. Antes: 2.832 `<tr>` e ~60k nós na carteira. Acessibilidade:
+ * - `aria-rowindex` em cada linha + `aria-rowcount` na tabela: o leitor de tela anuncia "linha 1.204 de 2.833";
+ * - a linha com FOCO nunca desmonta (entra no recorte mesmo fora da tela), senão o foco cairia no body;
+ * - J/K andam pela lista INTEIRA (`useTecladoClientes` com `irPara`), não só pelas linhas montadas;
+ * - espaçadores `aria-hidden` mantêm a altura total (a barra de rolagem e o `scrollTo` seguem valendo).
+ */
+function CorpoClientes({ itens, renderLinha }: {
+  itens: Customer[];
+  renderLinha: (customer: Customer, indice: number, linhaProps: PropsDaLinha) => ReactNode;
+}) {
+  const corpoRef = useRef<HTMLTableSectionElement>(null);
+  // Distância do topo do documento até o corpo — o virtualizer da janela precisa dela (filtros, avisos e
+  // cabeçalho ficam acima e mudam de altura). Medida a cada render; só muda o estado se mudou.
+  const [margemTopo, setMargemTopo] = useState(0);
+  useLayoutEffect(() => {
+    const el = corpoRef.current;
+    if (!el) return;
+    const topo = Math.round(el.getBoundingClientRect().top + window.scrollY);
+    if (topo !== margemTopo) setMargemTopo(topo);
+  });
+  const [indiceFocado, setIndiceFocado] = useState<number | null>(null);
+  const virtualizer = useWindowVirtualizer({
+    count: itens.length,
+    estimateSize: () => ALTURA_ESTIMADA_LINHA,
+    overscan: LINHAS_ALEM_DA_TELA,
+    scrollMargin: margemTopo,
+    getItemKey: (i) => itens[i]?.user_id ?? i,
+    initialMeasurementsCache: medidasDaUltimaLista,
+    rangeExtractor: useCallback((range: Parameters<typeof defaultRangeExtractor>[0]) => {
+      const indices = defaultRangeExtractor(range);
+      if (indiceFocado != null && indiceFocado < range.count && !indices.includes(indiceFocado)) {
+        indices.push(indiceFocado);
+        indices.sort((a, b) => a - b);
+      }
+      return indices;
+    }, [indiceFocado]),
+  });
+  useEffect(() => () => { medidasDaUltimaLista = virtualizer.measurementsCache; }, [virtualizer]);
+
+  const irPara = useCallback((indice: number) => virtualizer.scrollToIndex(indice, { align: 'auto' }), [virtualizer]);
+  useTecladoClientes(corpoRef, { total: itens.length, irPara });
+
+  const linhas: ReactNode[] = [];
+  let fimAnterior = margemTopo;
+  const espacador = (altura: number, chave: string) => (
+    <tr key={chave} aria-hidden="true">
+      <td colSpan={7} style={{ height: altura, padding: 0, border: 0 }} />
+    </tr>
+  );
+  for (const item of virtualizer.getVirtualItems()) {
+    const customer = itens[item.index];
+    if (!customer) continue;
+    // Recorte pode ter buraco (a linha focada fora da tela): um espaçador por buraco.
+    if (item.start > fimAnterior) linhas.push(espacador(item.start - fimAnterior, `vazio-${item.index}`));
+    linhas.push(renderLinha(customer, item.index, {
+      'data-index': item.index,
+      'aria-rowindex': item.index + 2,
+      ref: virtualizer.measureElement,
+    }));
+    fimAnterior = item.end;
+  }
+  const fimTotal = virtualizer.getTotalSize() + margemTopo;
+  if (fimTotal > fimAnterior) linhas.push(espacador(fimTotal - fimAnterior, 'vazio-fim'));
+
+  return (
+    <tbody
+      ref={corpoRef}
+      onFocus={(e) => {
+        const tr = (e.target as HTMLElement).closest<HTMLElement>('tr[data-index]');
+        if (tr) setIndiceFocado(Number(tr.dataset.index));
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIndiceFocado(null);
+      }}
+    >
+      {linhas}
+    </tbody>
+  );
 }
 
 export function CustomerListView({
@@ -156,9 +257,6 @@ export function CustomerListView({
     onLoadMore();
   };
   const sentinelRef = useInfiniteScroll(carregarMais, hasNextPage && !isFetchingNextPage);
-  // Onda C: J/K entre os nomes (links reais); Enter é o do link.
-  const corpoRef = useRef<HTMLTableSectionElement>(null);
-  useTecladoClientes(corpoRef);
   // Ligar já se bloqueia na lente (CallDialerView); o WhatsApp sai do app — também fica desligado nela.
   const isImpersonating = useLenteAtiva();
   // Ordenável nos dois modos (antes só na base completa: a vendedora só tinha o A–Z).
@@ -471,9 +569,10 @@ export function CustomerListView({
       {/* Dense Table */}
       <Card>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          {/* Virtualizada (onda E): aria-rowcount/aria-rowindex dizem ao leitor de tela o tamanho real. */}
+          <table className="w-full text-sm" aria-rowcount={filtered.length + 1}>
             <thead>
-              <tr className="border-b bg-muted/30">
+              <tr className="border-b bg-muted/30" aria-rowindex={1}>
                 <th
                   className="text-left px-4 py-2.5 font-medium text-muted-foreground"
                   aria-sort={ordenavel ? (ordem === 'nome' ? 'ascending' : 'none') : undefined}
@@ -515,8 +614,7 @@ export function CustomerListView({
                 <th className="w-10 px-2"></th>
               </tr>
             </thead>
-            <tbody ref={corpoRef}>
-              {filtered.map((customer, indice) => {
+            <CorpoClientes itens={filtered} renderLinha={(customer, indice, linhaProps) => {
                 const score = scores.get(customer.user_id);
                 const healthInfo = score ? classeSaudeExibida(score.health_class) : undefined;
                 const isSemHistorico = score?.sales_history_status === 'sem_historico';
@@ -536,6 +634,7 @@ export function CustomerListView({
                 return (
                   <tr
                     key={customer.user_id}
+                    {...linhaProps}
                     className="border-b last:border-b-0 hover:bg-muted/30 cursor-pointer transition-colors focus-within:bg-muted/30"
                     // Conveniência do mouse: a linha inteira abre. O caminho acessível é o link do nome.
                     onClick={(e) => { if (!cliqueEmControle(e)) abrir(); }}
@@ -549,6 +648,7 @@ export function CustomerListView({
                             <Link
                               to={urlCliente360(customer.user_id)}
                               data-link-cliente=""
+                              data-indice={indice}
                               className="truncate rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               onClick={(e) => {
                                 if (cliqueDoNavegador(e)) return;
@@ -658,8 +758,7 @@ export function CustomerListView({
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
+              }} />
           </table>
         </div>
 
