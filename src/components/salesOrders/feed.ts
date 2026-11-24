@@ -164,15 +164,19 @@ export function filtrosDoRecorte(r: RecorteFeed): FiltroRecorte[] {
  * listagem (migration 20261123120000; a paridade SQL é provada em db/test-order-feed-vendedor-total.sh).
  * "Todos" vai como `null` — `= ANY('{}')` não acharia linha nenhuma.
  */
+// Filtro ausente vai OMITIDO (undefined some do JSON), não `null`: os 7 parâmetros de
+// `order_feed_total` são `DEFAULT NULL` em prod, então omitir ≡ null no SQL. E o `types.ts` que o
+// Lovable regenera a cada deploy de edge declara `p_x?: string` (sem `| null`) — passar `null`
+// quebrava o typecheck da main a cada regeneração (#4144, #4151, #4158).
 export function paramsTotalDoRecorte(r: RecorteFeed) {
   return {
-    p_account: r.empresa === 'all' ? null : r.empresa,
-    p_status: r.status === 'todos' ? null : [...STATUS_DO_FILTRO[r.status]],
-    p_desde: r.corte?.desde ?? null,
-    p_puros: r.corte ? [...r.corte.puros] : null,
-    p_customer: r.cliente,
-    p_busca: r.busca,
-    p_vendedor: r.vendedor,
+    p_account: r.empresa === 'all' ? undefined : r.empresa,
+    p_status: r.status === 'todos' ? undefined : [...STATUS_DO_FILTRO[r.status]],
+    p_desde: r.corte?.desde ?? undefined,
+    p_puros: r.corte ? [...r.corte.puros] : undefined,
+    p_customer: r.cliente ?? undefined,
+    p_busca: r.busca ?? undefined,
+    p_vendedor: r.vendedor ?? undefined,
   };
 }
 
