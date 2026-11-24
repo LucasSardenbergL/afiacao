@@ -145,8 +145,12 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     const commit = corpo.indexOf('checkoutEnvRef.current = reserva.envelope;\n      if (!reserva.gravou) {');
     expect(corpo).toContain('chaveDoEnvelopeRef.current = chaveDoUsuario;');
     expect(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();')).toBeGreaterThan(commit);
-    expect(corpo.indexOf("if (reserva.decisao === 'indeterminado') {")).toBeLessThan(commit);
-    expect(corpo.indexOf("if (reserva.decisao === 'conflict') {")).toBeLessThan(commit);
+    for (const barra of ["if (reserva.decisao === 'indeterminado') {", "if (reserva.decisao === 'conflict') {"]) {
+      const i = corpo.indexOf(barra);
+      expect(i).toBeGreaterThan(-1);
+      expect(i).toBeLessThan(commit);
+      expect(corpo.slice(i, corpo.indexOf('\n      }', i))).toContain('return;');
+    }
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
     expect(corpo).toMatch(/result\.allConfirmed\) \{\n[^\n]*\n\s*checkoutEnvRef\.current = null; chaveDoEnvelopeRef\.current = null; definirNonce\(null\);\n\s*void comTravaEntreAbas\(nomeDaTrava\(userIdTrava\), \(\) => concluirEnvio\(arm, chaveDoUsuario, checkoutId\)\);\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
