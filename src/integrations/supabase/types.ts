@@ -26482,10 +26482,10 @@ export type Database = {
         Args: { p_limite?: number; p_termo: string }
         Returns: {
           contato_visivel: boolean
-          documento: string
-          email: string
-          name: string
-          razao_social: string
+          documento: string | null
+          email: string | null
+          name: string | null
+          razao_social: string | null
           user_id: string
         }[]
       }
