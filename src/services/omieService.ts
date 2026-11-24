@@ -11,6 +11,8 @@ interface OrderData {
   delivery_fee: number;
   total: number;
   notes?: string;
+  /** Modalidade escolhida (`DeliveryOption`) — a edge grava em orders.delivery_option. */
+  delivery_option?: string;
 }
 
 interface ProfileData {

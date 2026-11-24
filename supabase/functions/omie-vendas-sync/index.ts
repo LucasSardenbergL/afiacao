@@ -33,6 +33,7 @@ import { aplicarCorPreservandoItens, apurarSubtotalPedido, omieStatusDoPedido, p
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { infoAdicionalItem, infoAdicionalItemAninhada, previsaoEntregaOmie, previsaoOrdemProducao } from "./o-que-vai-ao-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
@@ -2235,7 +2236,9 @@ async function criarPedidoVenda(
   // Pedidos programados (Lider): mensagem fixa + nº do PC nas informações
   // complementares da NF e no campo dedicado "Nº do Pedido do Cliente".
   dadosAdicionaisNf?: string,
-  numeroPedidoCliente?: string
+  numeroPedidoCliente?: string,
+  // Data prometida ao cliente, já no formato do Omie (`previsaoEntregaOmie`); null = não vai.
+  previsaoEntrega?: string | null,
 ) {
   // Determinístico (espelha src/lib/omie/pedido-integration-code.ts): re-enviar o mesmo
   // sales_order_id gera a MESMA chave → o Omie rejeita a duplicata (idempotência).
@@ -2257,34 +2260,8 @@ async function criarPedidoVenda(
         valor_unitario: item.valor_unitario,
       },
     };
-    // Add tint color info or ordem de compra to item observations + NF-e
-    if (ordemCompra) {
-      entry.inf_adic = {
-        dados_adicionais_item: ordemCompra,
-        numero_pedido_compra: ordemCompra,
-      };
-    } else if (item.tint_cor_id && item.tint_nome_cor) {
-      // Always build label with cor_id visible, without base info
-      const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
-      const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
-      // Extract embalagem from description (e.g. "...QT", "...GL", "...405ML")
-      const descUpper = (item.descricao || '').toUpperCase();
-      let embTag = '';
-      if (descUpper.includes(' QT') || descUpper.endsWith('QT')) embTag = 'QT';
-      else if (descUpper.includes(' GL') || descUpper.endsWith('GL')) embTag = 'GL';
-      else if (descUpper.includes(' LT') || descUpper.endsWith('LT')) embTag = 'LT';
-      else {
-        const embMatch = descUpper.match(/(\d+(?:[.,]\d+)?)\s*ML\b/);
-        if (embMatch) embTag = embMatch[1].replace(',', '.') + 'ML';
-      }
-      const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
-      entry.inf_adic = {
-        dados_adicionais_item: corInfo,
-      };
-      entry.observacao = {
-        obs_item: corInfo,
-      };
-    }
+    // Cor do tintométrico E ordem de compra JUNTAS (antes a OC apagava a cor) — ./o-que-vai-ao-omie.ts.
+    Object.assign(entry, infoAdicionalItemAninhada(item, ordemCompra));
     return entry;
   });
 
@@ -2326,6 +2303,11 @@ async function criarPedidoVenda(
   };
   if (codigoTransportadora && codigoTransportadora > 0) {
     frete.codigo_transportadora = codigoTransportadora;
+  }
+  // Data prometida → `frete.previsao_entrega`. O `data_previsao` do cabeçalho é a previsão de
+  // FATURAMENTO e segue sendo o dia do envio (o sync e o sensor de empurradas o leem assim).
+  if (previsaoEntrega) {
+    frete.previsao_entrega = previsaoEntrega;
   }
   if (quantidadeVolumes && quantidadeVolumes > 0) {
     frete.quantidade_volumes = quantidadeVolumes;
@@ -3011,7 +2993,7 @@ Deno.serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow, error: soErr } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at")
+          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at, ready_by_date")
           .eq("id", sales_order_id)
           .maybeSingle();
         // Guard de REENVIO (achado Codex 2026-08-29) — ANTES do IncluirPedido, porque um CHECK
@@ -3207,7 +3189,9 @@ Deno.serve(async (req) => {
           quantidade_volumes,
           ordem_compra,
           dados_adicionais_nf,
-          numero_pedido_cliente
+          numero_pedido_cliente,
+          // A data prometida vem do pedido LOCAL (o front a grava antes de chamar), não do params.
+          previsaoEntregaOmie((soRow as { ready_by_date?: unknown } | null)?.ready_by_date, hojeSP()),
         );
         result = { success: true, ...pedido, revisao_credito: revisaoCriacao?.revisao ?? null };
         break;
@@ -3683,21 +3667,9 @@ Deno.serve(async (req) => {
             cfop: defaultCfop,
           };
 
-          if (editOrdemCompra) {
-            inclPayload.dados_adicionais_item = editOrdemCompra;
-            inclPayload.numero_pedido_compra = editOrdemCompra;
-          } else if (item.tint_cor_id && item.tint_nome_cor) {
-            const nomeJaTemCodigo = item.tint_nome_cor.toUpperCase().includes(item.tint_cor_id.toUpperCase());
-            const corLabel = nomeJaTemCodigo ? item.tint_nome_cor : `${item.tint_cor_id} - ${item.tint_nome_cor}`;
-            const descUpper = (item.descricao || '').toUpperCase();
-            let embTag = '';
-            if (descUpper.includes(' QT') || descUpper.endsWith('QT')) embTag = 'QT';
-            else if (descUpper.includes(' GL') || descUpper.endsWith('GL')) embTag = 'GL';
-            else if (descUpper.includes(' LT') || descUpper.endsWith('LT')) embTag = 'LT';
-            const corInfo = `Cor: ${corLabel}${embTag ? ` - ${embTag}` : ''}`;
-            inclPayload.dados_adicionais_item = corInfo;
-            inclPayload.obs_item = corInfo;
-          }
+          // Mesma regra da criação (./o-que-vai-ao-omie.ts): cor E OC juntas — a cópia daqui apagava a cor
+          // quando havia OC e esquecia a embalagem em ML.
+          Object.assign(inclPayload, infoAdicionalItem(item, editOrdemCompra));
 
           try {
             // throwOnTransient: par da exclusão acima — sem ele o `null` do transitório esgotado
@@ -3745,6 +3717,12 @@ Deno.serve(async (req) => {
         }
 
         const editFrete: Record<string, unknown> = { modalidade: "0", especie_volumes: "VOL" };
+        // O frete é REENVIADO inteiro: sem isto a alteração mandava o frete sem a data prometida.
+        // Data já vencida não vai (pedido antigo reeditado) — ./o-que-vai-ao-omie.ts.
+        const editPrevisaoEntrega = previsaoEntregaOmie(existingOrder.ready_by_date, hojeSP());
+        if (editPrevisaoEntrega) {
+          editFrete.previsao_entrega = editPrevisaoEntrega;
+        }
         if (origPayload?.frete?.codigo_transportadora) {
           editFrete.codigo_transportadora = origPayload.frete.codigo_transportadora;
         }
@@ -4489,7 +4467,9 @@ Deno.serve(async (req) => {
             cCodIntOP: `OP_${opSalesId.slice(-12)}_${opItem.omie_codigo_produto}`,
             nCodProd: opItem.omie_codigo_produto,
             nQtde: opItem.quantidade,
-            dDtPrevisao: paraDataOmie(hojeSP()),
+            // Previsão da PRODUÇÃO = a data prometida ao cliente (já gravada em production_orders.ready_by_date
+            // logo abaixo); sem ela, hoje. ./o-que-vai-ao-omie.ts.
+            dDtPrevisao: previsaoOrdemProducao(opItem.ready_by_date, hojeSP()),
             cObservacao: `Gerado automaticamente via App - Pedido ${opSalesId.substring(0, 8)}`,
           };
 

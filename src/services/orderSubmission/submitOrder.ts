@@ -678,6 +678,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         total: subtotals.service + DELIVERY_FEES[delivery.option],
         notes: observacaoOsAfiacao,
         payment_method: payment.afiacaoMethod,
+        // A modalidade escolhida vai à OS (orders.delivery_option): a edge gravava 'retirada' fixo.
+        delivery_option: delivery.option,
       };
       const profileData = {
         name: nomeClienteExibicao(customer),

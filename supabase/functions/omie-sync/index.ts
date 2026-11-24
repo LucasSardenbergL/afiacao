@@ -11,6 +11,7 @@ import { montarParcelasOS, parcelasComValor } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
+import { modalidadeDaOs } from "./modalidade-os.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -493,6 +494,8 @@ type PedidoOS = {
   total: number;
   notes?: string;
   payment_method?: string;
+  /** Modalidade escolhida no Novo Pedido (`DeliveryOption`); o front antigo não envia. */
+  delivery_option?: string;
 };
 
 // Payload do IncluirOS — inalterado, exceto a chave: `cCodIntOS` agora é determinística do pedido
@@ -1128,6 +1131,11 @@ Deno.serve(async (req) => {
 
         // 3. Registro em `orders` — idempotente (PK = orderId): o reenvio que reconcilia completa o
         //    que a chamada anterior não chegou a gravar. Erro → success:false (o reenvio conclui).
+        // Modalidade REAL (antes 'retirada' fixo, e a OS nunca entrava no roteirizador) — ./modalidade-os.ts.
+        const modalidade = modalidadeDaOs(orderData.delivery_option);
+        if (modalidade.invalida) {
+          console.warn(`[Omie Sync] delivery_option fora do vocabulário (${String(orderData.delivery_option)}) — gravando '${modalidade.valor}'`);
+        }
         const { error: orderInsertError } = await supabaseAdmin
           .from("orders")
           .upsert({
@@ -1138,7 +1146,7 @@ Deno.serve(async (req) => {
             subtotal: orderData.subtotal || 0,
             delivery_fee: orderData.delivery_fee || 0,
             total: orderData.total || 0,
-            delivery_option: 'retirada',
+            delivery_option: modalidade.valor,
             notes: orderData.notes || null,
             status: 'pedido_recebido',
           }, { onConflict: "id", ignoreDuplicates: true });
