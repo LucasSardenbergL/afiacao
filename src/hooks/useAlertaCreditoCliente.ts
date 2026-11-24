@@ -8,8 +8,10 @@ import { addDias, hojeSP } from '@/lib/time/sp-day';
  * Alerta de crédito no wizard de venda — FASE 1 do programa "back to basics"
  * (não bloqueia nada; a Fase 2 adiciona o enforcement na fronteira).
  *
- * Critério: cliente com saldo em aberto vencido há 60+ dias (mesma régua que a
- * Fase 2 endurece — não mudar o critério entre fases).
+ * Critério: cliente com saldo em aberto vencido há 60+ dias — `data_vencimento <= hoje_SP - 60`
+ * (onda B: o título no 60º dia ENTRA; antes `<` o deixava de fora e o rótulo "60+" mentia por um dia).
+ * ⚠️ O gate da Fase 2 (`venda_gate_credito_grupo`) ainda bloqueia só com > 60 d (`< hoje_SP - 60`):
+ * no 60º dia este alerta aparece e o pedido NÃO é bloqueado. Divergência registrada no PR da onda B.
  *
  * ⚠️ Join por (company, omie_codigo_cliente), NUNCA por CNPJ: o ListarContasReceber
  * do Omie não retorna cnpj_cpf (verificado em prod: vazio nos 43k títulos, código
@@ -155,7 +157,8 @@ function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<Titulo
         .eq('company', par.company)
         .eq('omie_codigo_cliente', par.codigo)
         .in('status_titulo', [...OPEN_TITLE_STATUSES])
-        .lt('data_vencimento', corte)
+        // ≥ 60 dias de atraso: vencimento NO corte conta (fronteira provada em useAlertaCreditoCliente.fronteira.test).
+        .lte('data_vencimento', corte)
         .gt('saldo', 0)
         .order('id', { ascending: true })
         .range(de, ate),
@@ -190,7 +193,7 @@ export interface ResultadoCredito {
 }
 
 /** Vencido 60+ dos pares (company, código), com o frescor POR EMPRESA. Lança em qualquer falha de leitura. */
-async function buscarAlertaCredito(pares: ParCliente[]): Promise<ResultadoCredito> {
+export async function buscarAlertaCredito(pares: ParCliente[]): Promise<ResultadoCredito> {
   if (pares.length === 0) return { alerta: null, frescor: [] };
   const corte = addDias(hojeSP(), -ALERTA_CREDITO.diasVencidoMin);
   const agora = new Date();

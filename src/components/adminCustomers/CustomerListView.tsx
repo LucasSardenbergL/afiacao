@@ -498,7 +498,7 @@ export function CustomerListView({
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
                 const motivo = motivoContato(score);
-                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estado, hoje);
+                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estado, hoje, ultimoContato.contexto);
 
                 return (
                   <tr

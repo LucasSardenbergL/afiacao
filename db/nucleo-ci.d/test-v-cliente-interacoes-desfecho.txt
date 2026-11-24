@@ -1,0 +1,4 @@
+# Timeline 360 ganha o desfecho manual (venda_contato) em v_cliente_interacoes (20261124150000, onda B):
+# replace sobre a view de PROD, colunas idênticas, security_invoker=true preservado, gate de carteira + RLS da
+# tabela (interseção); 3 sabotagens em espelho tmpdir (sem invoker, sem gate, guarda de drift) com controle verde.
+db/test-v-cliente-interacoes-desfecho.sh 15

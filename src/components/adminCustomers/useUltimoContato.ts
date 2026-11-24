@@ -2,9 +2,11 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { subDays } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import {
-  JANELA_ULTIMO_CONTATO_DIAS, ultimoPorCliente, type EstadoUltimoContato, type RegistroContato,
+  JANELA_ULTIMO_CONTATO_DIAS, ultimoPorCliente, type ContextoUltimoContato, type EstadoUltimoContato,
+  type RegistroContato,
 } from './ultimoContato';
 
 const TAMANHO_LOTE = 200;
@@ -21,7 +23,13 @@ function lotes<T>(xs: T[], n: number): T[][] {
  * registros); `route_contact_log` abre para todo staff. Qualquer página que falhe LANÇA → a lista diz
  * "indisponível", nunca "sem contato".
  */
-export function useUltimoContato(ids: string[]): { porCliente: Map<string, RegistroContato>; estado: EstadoUltimoContato } {
+export function useUltimoContato(ids: string[]): {
+  porCliente: Map<string, RegistroContato>;
+  estado: EstadoUltimoContato;
+  contexto: ContextoUltimoContato;
+} {
+  // RLS usa o usuário REAL (lente "Ver como" não muda o que o banco devolve) — por isso useAuth().
+  const { isMaster } = useAuth();
   const chave = [...ids].sort().join(',');
   const q = useQuery({
     queryKey: ['ultimo-contato-clientes', chave],
@@ -60,5 +68,9 @@ export function useUltimoContato(ids: string[]): { porCliente: Map<string, Regis
   });
   const estado: EstadoUltimoContato = ids.length === 0 || q.data ? 'ok' : q.isError ? 'falha' : 'carregando';
   const porCliente = useMemo(() => ultimoPorCliente(q.data ?? []), [q.data]);
-  return { porCliente, estado };
+  const contexto: ContextoUltimoContato = {
+    escopoSemRegistro: q.data != null && q.data.length === 0,
+    soOsProprios: !isMaster,
+  };
+  return { porCliente, estado, contexto };
 }
