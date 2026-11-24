@@ -20,6 +20,11 @@ Deno.test("régua: ativo atrasado acima do inativo há 3 anos", () => {
   assertEquals(atrasado.faixa, "atrasado");
   assertEquals(inativo.faixa, "reativacao");
   if (!(atrasado.nota > inativo.nota)) throw new Error(`${atrasado.nota} <= ${inativo.nota}`);
+  // O pior caso da régua: o MENOR atrasado (R$ 1/mês, 1 dia) contra o inativo MAIS recente (181d). Comparar
+  // só com o de 3 anos passava mesmo com a faixa do atrasado sabotada para baixo (falsificação S5).
+  const menorAtrasado = calcularPrioridade({ status: "ativo", dias: 31, intervalo: 30, gastoMensal: 1 }, K, A)!;
+  const inativoRecente = calcularPrioridade({ status: "stale", dias: 181, intervalo: 30, gastoMensal: 0 }, K, A)!;
+  if (!(menorAtrasado.nota > inativoRecente.nota)) throw new Error(`${menorAtrasado.nota} <= ${inativoRecente.nota}`);
 });
 
 Deno.test("valores pinados (mesma aritmética do canônico)", () => {
