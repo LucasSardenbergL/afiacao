@@ -114,6 +114,9 @@ function CorpoClientes({ itens, renderLinha }: {
   // Distância do topo do documento até o corpo — o virtualizer da janela precisa dela (filtros, avisos e
   // cabeçalho ficam acima e mudam de altura). Medida a cada render; só muda o estado se mudou.
   const [margemTopo, setMargemTopo] = useState(0);
+  // Sem deps DE PROPÓSITO: o que está acima do corpo (avisos, filtros) muda de altura sem trocar prop
+  // nenhuma daqui. O guard impede o laço: só muda o estado quando o topo mudou de verdade.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const el = corpoRef.current;
     if (!el) return;
