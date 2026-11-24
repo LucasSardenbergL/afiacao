@@ -10,7 +10,7 @@
  */
 
 // MIRROR-START prioridade-valor — espelhado verbatim de src/lib/scoring/prioridadeValor.ts
-export type FaixaPrioridade = 'atrasado' | 'em_dia' | 'sem_cadencia' | 'reativacao';
+type FaixaPrioridade = 'atrasado' | 'em_dia' | 'sem_cadencia' | 'reativacao';
 
 export interface InsumosPrioridade {
   /** sales_history_status: só `ativo` e `stale` têm prioridade de recompra. */
@@ -33,7 +33,7 @@ export interface PrioridadeCalculada {
 }
 
 /** Referência (R$) da curva logística: exposição igual a ela fica no meio da faixa. */
-export const REFERENCIA_EXPOSICAO_PADRAO = 1000;
+const REFERENCIA_EXPOSICAO_PADRAO = 1000;
 
 function finito(v: number | null | undefined): v is number {
   return typeof v === 'number' && Number.isFinite(v);

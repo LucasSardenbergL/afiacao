@@ -4,11 +4,10 @@ import {
   calcularPrioridade,
   explicarPrioridade,
   referenciaExposicao,
-  REFERENCIA_EXPOSICAO_PADRAO,
   type InsumosPrioridade,
 } from '@/lib/scoring/prioridadeValor';
 
-const K = REFERENCIA_EXPOSICAO_PADRAO;
+const K = referenciaExposicao(undefined); // o padrão (R$ 1.000), sem exportar a constante
 const A = 180;
 const nota = (i: InsumosPrioridade) => calcularPrioridade(i, K, A)?.nota ?? null;
 

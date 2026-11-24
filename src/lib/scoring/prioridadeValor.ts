@@ -25,7 +25,7 @@
  */
 
 // MIRROR-START prioridade-valor — espelhado verbatim em supabase/functions/_shared/prioridade-valor.ts
-export type FaixaPrioridade = 'atrasado' | 'em_dia' | 'sem_cadencia' | 'reativacao';
+type FaixaPrioridade = 'atrasado' | 'em_dia' | 'sem_cadencia' | 'reativacao';
 
 export interface InsumosPrioridade {
   /** sales_history_status: só `ativo` e `stale` têm prioridade de recompra. */
@@ -48,7 +48,7 @@ export interface PrioridadeCalculada {
 }
 
 /** Referência (R$) da curva logística: exposição igual a ela fica no meio da faixa. */
-export const REFERENCIA_EXPOSICAO_PADRAO = 1000;
+const REFERENCIA_EXPOSICAO_PADRAO = 1000;
 
 function finito(v: number | null | undefined): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -100,7 +100,7 @@ export function calcularPrioridade(
 // MIRROR-END
 
 /** Limiar ativo × stale padrão da edge (`sales_active_threshold_days`; sem linha configurada em prod). */
-export const DIAS_ATIVO_PADRAO = 180;
+const DIAS_ATIVO_PADRAO = 180;
 
 /**
  * Os 2–3 fatores que decidiram a nota, em linguagem de vendedor — para o tooltip da coluna Prioridade.
