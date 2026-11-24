@@ -243,7 +243,7 @@ describe('AdminCustomers — carteira priorizada (onda 1)', () => {
     customer_user_id: user_id, priority_score, sales_history_status, health_class: 'atencao', health_score: 50,
   });
   const nomesNaTabela = () =>
-    screen.getAllByRole('row').slice(1).map((r) => r.querySelector('td span.truncate')?.textContent);
+    screen.getAllByRole('row').slice(1).map((r) => r.querySelector('td [data-link-cliente]')?.textContent);
 
   it('padrão "Priorizar contatos": prioridade DESC, sem prioridade no fim', async () => {
     h.modo = 'carteira';

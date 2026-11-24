@@ -27,10 +27,23 @@ export function modoClientes(isCarteira: boolean, ordem: 'prioridade' | 'nome'):
   return ordem === 'nome' ? 'carteira_nome' : 'carteira_prioridade';
 }
 
-/** De qual ficha saiu a ação: o cadastro (/admin/customers/:id) ou a visão 360. */
-type FichaClientes = 'cadastro' | '360';
-/** Ações medidas nas fichas. A 360 (onda 3) mede o desfecho registrado, a tarefa criada e a abertura do Cadastro. */
-export type AcaoFicha = 'ligar' | 'novo_pedido' | 'abrir_360' | 'ver_pedidos' | 'registrar_desfecho' | 'criar_tarefa' | 'abrir_cadastro';
+/**
+ * De qual SUPERFÍCIE saiu a ação: a linha da lista (onda C), o cadastro (/admin/customers/:id) ou a 360.
+ * O nome do campo segue `ficha` por compatibilidade com o que o ledger já guardou.
+ */
+export type FichaClientes = 'lista' | 'cadastro' | '360';
+/**
+ * Ações medidas. `abrir_cadastro` = a 360 abriu o Cadastro e ferramentas (emissor em IdentityColumn).
+ * `whatsapp` sai do app (wa.me): só existe a tentativa.
+ */
+export type AcaoFicha =
+  | 'ligar' | 'whatsapp' | 'novo_pedido' | 'abrir_360' | 'ver_pedidos' | 'registrar_desfecho' | 'criar_tarefa' | 'abrir_cadastro';
+/**
+ * Onda C: tentativa (o toque) e sucesso (o resultado confirmado) são eventos SEPARADOS. Ligar: atendida
+ * (fim com duração > 0). Novo pedido: pedido enviado. Ver pedidos: o feed do cliente lido. Desfecho:
+ * só a gravação confirmada pelo servidor (nunca o clique). O resto é navegação: só tentativa.
+ */
+export type FaseAcao = 'tentativa' | 'sucesso';
 
 const FILTROS_SAUDE = ['all', 'saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
 export type FiltroSaudeSensor = (typeof FILTROS_SAUDE)[number] | 'outro';
@@ -53,7 +66,7 @@ export type UsoClientes =
   | { acao: 'busca_usada'; modo: ModoClientes }
   | { acao: 'cliente_aberto'; modo: ModoClientes; posicao: number; filtroSaude: string; comBusca: boolean }
   | { acao: 'pagina_carregada'; modo: ModoClientes; pagina: number }
-  | { acao: 'ficha_acao'; ficha: FichaClientes; tipo: AcaoFicha };
+  | { acao: 'ficha_acao'; ficha: FichaClientes; tipo: AcaoFicha; fase?: FaseAcao };
 
 export interface EventoClientes {
   evento: EventoLedger & `clientes.${string}`;
@@ -98,10 +111,11 @@ export function montarEventoClientes(uso: UsoClientes): EventoClientes {
     }
     case 'ficha_acao':
       // Sem id do cliente: a contagem responde "quem age a partir da ficha, e como" — não "com quem".
+      // Sem `fase` = tentativa (os emissores de antes da onda C só mediam o toque).
       return {
         evento: 'clientes.ficha_acao',
-        chave: `${uso.ficha}:${uso.tipo}`,
-        props: { ficha: uso.ficha, tipo: uso.tipo },
+        chave: `${uso.ficha}:${uso.tipo}:${uso.fase ?? 'tentativa'}`,
+        props: { ficha: uso.ficha, tipo: uso.tipo, fase: uso.fase ?? 'tentativa' },
       };
   }
 }
@@ -115,4 +129,48 @@ export function registrarUsoClientes(uso: UsoClientes): void {
   const { evento, chave, props } = montarEventoClientes(uso);
   track(evento, props);
   void registrarNoLedger(evento, chave, props);
+}
+
+// ─── Sucesso medido no DESTINO (onda C) ──────────────────────────────────────────────────────────
+// "Novo pedido" e "Ver pedidos" navegam: quem sabe se deu certo é a tela de destino. A ação deixa no
+// `location.state` de qual superfície veio; o destino emite o sucesso quando o resultado se confirma.
+
+const FICHAS: readonly FichaClientes[] = ['lista', 'cadastro', '360'];
+const ACOES_COM_DESTINO = ['novo_pedido', 'ver_pedidos'] as const;
+type AcaoComDestino = (typeof ACOES_COM_DESTINO)[number];
+
+export interface SensorDestino {
+  ficha: FichaClientes;
+  tipo: AcaoComDestino;
+}
+
+/** `location.state` (parcial) que leva a origem do sensor ao destino. */
+export function estadoSensorDestino(ficha: FichaClientes, tipo: AcaoComDestino): { sensorClientes: SensorDestino } {
+  return { sensorClientes: { ficha, tipo } };
+}
+
+/** Lê a origem do sensor do `location.state` (`unknown`); formato fora do enum → `null`. */
+export function lerSensorDestino(state: unknown): SensorDestino | null {
+  if (state == null || typeof state !== 'object') return null;
+  const v = (state as { sensorClientes?: unknown }).sensorClientes;
+  if (v == null || typeof v !== 'object') return null;
+  const { ficha, tipo } = v as { ficha?: unknown; tipo?: unknown };
+  if (!FICHAS.includes(ficha as FichaClientes)) return null;
+  if (!(ACOES_COM_DESTINO as readonly string[]).includes(tipo as string)) return null;
+  return { ficha: ficha as FichaClientes, tipo: tipo as AcaoComDestino };
+}
+
+/** Emite o sucesso de uma ação que veio de uma superfície de Clientes (se veio de uma). */
+export function registrarSucessoNoDestino(state: unknown, tipo: AcaoComDestino): boolean {
+  const origem = lerSensorDestino(state);
+  if (!origem || origem.tipo !== tipo) return false;
+  registrarUsoClientes({ acao: 'ficha_acao', ficha: origem.ficha, tipo, fase: 'sucesso' });
+  return true;
+}
+
+/** Ligação encerrada por um botão de Clientes: atendida (durou) vira sucesso; o resto não emite. */
+export function registrarFimDaLigacao(ficha: FichaClientes, fim: { duration: number; state: string }): void {
+  if (fim.state === 'finished' && fim.duration > 0) {
+    registrarUsoClientes({ acao: 'ficha_acao', ficha, tipo: 'ligar', fase: 'sucesso' });
+  }
 }

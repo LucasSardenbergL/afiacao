@@ -22,6 +22,8 @@ import { SlaVencidoCard } from '@/components/farmer/SlaVencidoCard';
 import { ProspectarHojeCard } from '@/components/farmer/ProspectarHojeCard';
 import { FAIXA_LABEL } from '@/lib/scoring/faixaMargem';
 import { formatMargemPct } from '@/lib/format';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -47,6 +49,7 @@ const fmtDur = (s: number) => {
 
 const FarmerDashboard = () => {
   const navigate = useNavigate();
+  const origemTela = estadoOrigemTelaAtual();
   const { isStaff, loading: authLoading } = useAuth();
   const { clientScores, agenda, summary, loading, config, erro, calculating, recalculate } = useFarmerScoring();
   const { metrics } = useFarmerMetrics();
@@ -98,7 +101,7 @@ const FarmerDashboard = () => {
         {/* Fila de SLA de contato vencido — fecha o loop scoring → ação */}
         <SlaVencidoCard
           nomePorCliente={nomePorCliente}
-          onClienteClick={(id) => navigate(`/admin/customers/${id}/360`)}
+          onClienteClick={(id) => navigate(urlCliente360(id), { state: origemTela })}
         />
 
         {/* Radar D2: 3 leads perto da carteira (mesma escolha do e-mail semanal) — some fora do gate do Radar */}
@@ -233,7 +236,7 @@ const FarmerDashboard = () => {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button size="icon" variant="ghost" className="h-8 w-8"
-                                onClick={() => navigate(`/admin/customers/${item.customer_user_id}/360`)}>
+                                onClick={() => navigate(urlCliente360(item.customer_user_id), { state: origemTela })}>
                                 <Eye className="w-3.5 h-3.5" />
                               </Button>
                             </TooltipTrigger>

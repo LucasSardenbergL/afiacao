@@ -41,6 +41,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE TABLE IF NOT EXISTS public.user_roles (user_id uuid NOT NULL, role public.app_role NOT NULL);
+-- Papel COMERCIAL (onda C: o denominador da adoção é por ele). Texto basta: a query só lê o valor.
+CREATE TABLE IF NOT EXISTS public.commercial_roles (user_id uuid NOT NULL, commercial_role text NOT NULL);
 CREATE TABLE IF NOT EXISTS public.pedido_compra_sugerido (
   id bigserial PRIMARY KEY, status text NOT NULL, criado_em timestamptz DEFAULT now(),
   atualizado_em timestamptz DEFAULT now(), aprovado_em timestamptz, aprovado_por text,
@@ -93,6 +95,7 @@ UID_C='33333333-3333-3333-3333-333333333333'   # employee que só abriu a tela (
 P -q <<SQL
 INSERT INTO auth.users(id) VALUES ('$UID_A'), ('$UID_B'), ('$UID_C') ON CONFLICT DO NOTHING;
 INSERT INTO public.user_roles(user_id, role) VALUES ('$UID_A','master'), ('$UID_B','employee'), ('$UID_C','employee');
+INSERT INTO public.commercial_roles(user_id, commercial_role) VALUES ('$UID_A','master'), ('$UID_B','farmer');  -- C: sem papel comercial
 SQL
 
 reg() { # $1 uid  $2 evento  $3 chave  $4 props
@@ -133,16 +136,29 @@ SET test.uid='$UID_B'; SET test.role='authenticated';
 SELECT public.analytics_ledger_registrar('navegacao.rota_servida','/admin/customers','{"rota":"/admin/customers"}');
 SELECT public.analytics_ledger_registrar('clientes.lista_aberta','carteira','{"modo":"carteira"}');
 SELECT public.analytics_ledger_registrar('clientes.cliente_aberto','carteira:all:1','{"modo":"carteira","posicao":1,"filtro_saude":"all","com_busca":false}');
+-- Onda C: a 360 chega mascarada ('360' só tem dígitos → :id) e a ação tem fase.
+SELECT public.analytics_ledger_registrar('navegacao.rota_servida','/admin/customers/:id/:id','{"rota":"/admin/customers/:id/:id"}');
+SELECT public.analytics_ledger_registrar('clientes.ficha_acao','360:ligar:tentativa','{"ficha":"360","tipo":"ligar","fase":"tentativa"}');
+SELECT public.analytics_ledger_registrar('clientes.ficha_acao','360:ligar:sucesso','{"ficha":"360","tipo":"ligar","fase":"sucesso"}');
 SET test.uid='$UID_A';
 SELECT public.analytics_ledger_registrar('navegacao.rota_servida','/admin/customers','{"rota":"/admin/customers"}');
+SELECT public.analytics_ledger_registrar('clientes.modo_trocado','prioridade>nome','{"de":"prioridade","para":"nome","origem":"menu"}');
+-- A age no Cadastro SEM ter a rota do Cadastro servida na janela: denominador NULL, nunca 0 nem 100%.
+SELECT public.analytics_ledger_registrar('clientes.ficha_acao','cadastro:novo_pedido','{"ficha":"cadastro","tipo":"novo_pedido"}');
 SQL
 OUT=$(P -tA -F'|' -f "$ADOCAO" 2>&1)
 printf '    %s\n' "${OUT//$'\n'/$'\n'    }"
-# denominador por papel: master 1 (A), employee 2 (B e C abriram a rota)
-case "$OUT" in *"denominador|master|1|1"*) ok "D1 denominador master = 1 usuário";; *) bad "D1 denominador master ausente";; esac
-case "$OUT" in *"denominador|employee|2|2"*) ok "D2 denominador employee = 2 usuários (C só abriu)";; *) bad "D2 denominador employee ausente";; esac
-case "$OUT" in *"clientes.cliente_aberto|employee|1|2"*) ok "D3 cliente_aberto: 1 de 2 employees";; *) bad "D3 adoção cliente_aberto employee errada";; esac
-case "$OUT" in *"clientes.modo_trocado|master|1|1"*) ok "D4 modo_trocado: 1 de 1 master";; *) bad "D4 adoção modo_trocado master errada";; esac
+# denominador por SUPERFÍCIE × papel comercial (onda C)
+case "$OUT" in *"denominador|lista|master|master|1|1"*) ok "D1 lista: master = 1 usuário";; *) bad "D1 denominador lista master ausente";; esac
+case "$OUT" in *"denominador|lista|farmer|employee|1|1"*) ok "D2 lista: farmer = 1 usuário";; *) bad "D2 denominador lista farmer ausente";; esac
+case "$OUT" in *"denominador|lista|sem_papel_comercial|employee|1|1"*) ok "D2b lista: C sem papel comercial conta à parte";; *) bad "D2b C sem papel comercial ausente";; esac
+case "$OUT" in *"denominador|360|farmer|employee|1|1"*) ok "D2c 360 (rota mascarada :id/:id) tem denominador próprio";; *) bad "D2c denominador da 360 ausente";; esac
+case "$OUT" in *"adocao|lista|abrir_360|tentativa|farmer|1|1|1|100"*) ok "D3 lista→360: 1 de 1 farmer";; *) bad "D3 adoção cliente_aberto farmer errada";; esac
+case "$OUT" in *"adocao|360|ligar|sucesso|farmer|1|1|1|100"*) ok "D3b 360 ligar atendida: 1 de 1 farmer da 360";; *) bad "D3b sucesso da 360 errado";; esac
+case "$OUT" in *"adocao|cadastro|novo_pedido|tentativa|master|1||1|"*) ok "D3c sem denominador: NULL (sem fase legado = tentativa)";; *) bad "D3c denominador ausente virou número";; esac
+case "$OUT" in *"funil|360|ligar|1|1"*) ok "D3d funil 360 ligar: 1 dia tentativa, 1 dia sucesso";; *) bad "D3d funil errado";; esac
+case "$OUT" in *"regua_dias_uteis|360|farmer|"*) ok "D3e régua N de M dias úteis por superfície";; *) bad "D3e régua ausente";; esac
+case "$OUT" in *"detalhe_lista|clientes.modo_trocado|prioridade>nome (menu)|1|1"*) ok "D4 modo_trocado: 1 master";; *) bad "D4 detalhe modo_trocado errado";; esac
 case "$OUT" in *"FIM_ADOCAO_OK"*) ok "D5 a query terminou (marcador positivo)";; *) bad "D5 query de adoção sem marcador de fim";; esac
 
 echo "── falsificação: PRE e PÓS têm de abortar a migration sabotada ──"

@@ -23,7 +23,9 @@ vi.mock('@/contexts/AuthContext', () => {
 });
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false }) }));
 vi.mock('@/components/venda-cliente/BotoesContato', () => ({
-  BotoesContato: ({ compradorId }: { compradorId: string }) => <button>desfecho de {compradorId}</button>,
+  BotoesContato: ({ compradorId, superficie }: { compradorId: string; superficie?: string }) => (
+    <button data-superficie={superficie ?? 'nenhuma'}>desfecho de {compradorId}</button>
+  ),
 }));
 vi.mock('@/lib/nav/sensor-clientes', () => ({ registrarUsoClientes: h.uso }));
 
@@ -49,10 +51,13 @@ beforeEach(() => {
 });
 
 describe('AcoesDaFicha', () => {
-  it('cliente na carteira (elegível, do usuário REAL): mostra os botões de desfecho e mede a ação', async () => {
+  it('cliente na carteira (elegível, do usuário REAL): mostra os botões de desfecho; o sensor é dos botões', async () => {
     renderiza();
-    fireEvent.click(await screen.findByText('desfecho de cli-1'));
-    expect(h.uso).toHaveBeenCalledWith({ acao: 'ficha_acao', ficha: '360', tipo: 'registrar_desfecho' });
+    const botao = await screen.findByText('desfecho de cli-1');
+    // Onda C: o desfecho conta na gravação CONFIRMADA (dentro do BotoesContato), não no toque daqui.
+    expect(botao.getAttribute('data-superficie')).toBe('360');
+    fireEvent.click(botao);
+    expect(h.uso).not.toHaveBeenCalledWith(expect.objectContaining({ tipo: 'registrar_desfecho' }));
     expect(h.carteiraQuery).toContainEqual(['eq', ['owner_user_id', 'vendedora-1']]);
     expect(h.carteiraQuery).toContainEqual(['eq', ['eligible', true]]);
   });

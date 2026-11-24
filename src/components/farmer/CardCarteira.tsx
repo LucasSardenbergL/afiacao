@@ -4,9 +4,12 @@ import { Badge } from '@/components/ui/badge';
 import { Eye } from 'lucide-react';
 import { CallButton } from '@/components/call/CallButton';
 import { healthBadge, type CardCarteiraVM } from '@/lib/carteira/board';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 export function CardCarteira({ card }: { card: CardCarteiraVM }) {
   const navigate = useNavigate();
+  const origemTela = estadoOrigemTelaAtual();
   const hb = healthBadge(card.healthClass);
   return (
     <div className="rounded-md border p-3 space-y-2">
@@ -27,7 +30,7 @@ export function CardCarteira({ card }: { card: CardCarteiraVM }) {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => navigate(`/admin/customers/${card.customer_user_id}/360`)}
+          onClick={() => navigate(urlCliente360(card.customer_user_id), { state: origemTela })}
         >
           <Eye className="w-3.5 h-3.5 mr-1" /> 360
         </Button>

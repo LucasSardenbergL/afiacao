@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   estadoComOrigem, lerOrigemLista, lerRolagemARestaurar, montarOrigemLista, queryDaFila, urlCliente360, urlCadastroCliente,
-  urlListaClientes, urlNovoPedido, urlPedidosDoCliente,
+  urlListaClientes, urlNovoPedido, urlPedidosDoCliente, estadoComOrigemTela, lerOrigemTela, destinoDoVoltar, repassarOrigem, rotuloDaTela,
 } from '../clientes';
 
 describe('queryDaFila — só busca, saúde e ordem viajam', () => {
@@ -66,5 +66,46 @@ describe('origem da lista no location.state', () => {
     expect(lerRolagemARestaurar({ rolagem: 300 })).toBe(300);
     expect(lerRolagemARestaurar({ rolagem: null })).toBeNull();
     expect(lerRolagemARestaurar(null)).toBeNull();
+  });
+});
+
+describe('origem fora da lista — o voltar da 360 lembra Meu dia, agenda, telefonia… (onda C)', () => {
+  it('estadoComOrigemTela guarda pathname+search e o rótulo; lerOrigemTela devolve igual', () => {
+    const st = estadoComOrigemTela('Meu dia', { pathname: '/', search: '?aba=agenda' });
+    expect(lerOrigemTela(st)).toEqual({ rotulo: 'Meu dia', url: '/?aba=agenda' });
+  });
+  it('URL externa, protocol-relative ou com barra invertida → null (nunca redireciona para fora)', () => {
+    for (const url of ['https://x.com', '//x.com/a', '/\\x.com', 'javascript:alert(1)', '', 42]) {
+      expect(lerOrigemTela({ origemTela: { rotulo: 'X', url } })).toBeNull();
+    }
+  });
+  it('rótulo vazio ou formato torto → null', () => {
+    expect(lerOrigemTela({ origemTela: { rotulo: '  ', url: '/' } })).toBeNull();
+    expect(lerOrigemTela({ origemTela: 'oi' })).toBeNull();
+    expect(lerOrigemTela(null)).toBeNull();
+  });
+  it('destinoDoVoltar: a fila da lista vence; depois a tela; sem nada → lista crua', () => {
+    const lista = { origemLista: { query: '?health=critico', rolagem: 300 } };
+    const tela = estadoComOrigemTela('Telefonia', { pathname: '/telefonia' });
+    expect(destinoDoVoltar({ ...lista, ...tela })).toEqual({
+      rotulo: 'Clientes', url: '/admin/customers?health=critico', state: { rolagem: 300 },
+    });
+    expect(destinoDoVoltar(tela)).toEqual({ rotulo: 'Telefonia', url: '/telefonia', state: undefined });
+    expect(destinoDoVoltar(undefined)).toEqual({ rotulo: 'Clientes', url: '/admin/customers', state: { rolagem: null } });
+  });
+  it('repassarOrigem leva as duas origens adiante e some quando não há nenhuma', () => {
+    const tela = estadoComOrigemTela('Carteira', { pathname: '/farmer/carteira' });
+    expect(repassarOrigem({ ...tela, lixo: 1 })).toEqual(tela);
+    expect(repassarOrigem({ lixo: 1 })).toBeUndefined();
+  });
+});
+
+describe('rotuloDaTela', () => {
+  it('telas conhecidas têm nome; barra final não importa; desconhecida → Voltar', () => {
+    expect(rotuloDaTela('/meu-dia')).toBe('Meu dia');
+    expect(rotuloDaTela('/telefonia/')).toBe('Telefonia');
+    expect(rotuloDaTela('/')).toBe('Início');
+    expect(rotuloDaTela('/farmer/carteira')).toBe('Carteira');
+    expect(rotuloDaTela('/algo/novo')).toBe('Voltar');
   });
 });

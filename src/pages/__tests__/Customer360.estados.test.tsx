@@ -57,6 +57,11 @@ vi.mock('@/integrations/supabase/client', () => ({
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'staff-1' }, isMaster: false, isGestorComercial: false, isStaff: true }),
 }));
+// Sem lente: a persona exibida é o próprio usuário (paridade total do useDisplayAccess fora da lente).
+vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false, effectiveUserId: 'staff-1' }) }));
+vi.mock('@/hooks/useDisplayAccess', () => ({
+  useDisplayAccess: () => ({ displayIsStaff: true, displayIsMaster: false, displayIsGestorComercial: false }),
+}));
 // O esqueleto não tem âncora própria — o stub dá uma, sem casar classe de estilo.
 vi.mock('@/components/ui/page-skeleton', () => ({ PageSkeleton: () => <div data-testid="page-skeleton" /> }));
 // Os filhos são do MESMO módulo e têm testes próprios; aqui interessa QUAL ramo a página escolhe.

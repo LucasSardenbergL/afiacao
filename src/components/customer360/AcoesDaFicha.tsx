@@ -68,9 +68,9 @@ export function AcoesDaFicha({ customerId, tarefas, credito, onCriarTarefa }: {
         </CardHeader>
         <CardContent className="text-sm">
           {naCarteira.data === true ? (
-            <span onClickCapture={() => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'registrar_desfecho' })}>
-              <BotoesContato compradorId={customerId} variante="grade" />
-            </span>
+            // O sensor conta o desfecho na gravação CONFIRMADA (onda C), não no toque — o toque que falha
+            // (42501, rede) inflava a adoção.
+            <BotoesContato compradorId={customerId} variante="grade" superficie="360" />
           ) : naCarteira.data === false ? (
             <p className="text-xs text-muted-foreground">
               O desfecho é registrado por quem tem este cliente na carteira.

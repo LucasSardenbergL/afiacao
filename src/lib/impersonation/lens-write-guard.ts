@@ -1,6 +1,16 @@
 let lensActive = false;
-export function setLensActive(v: boolean): void { lensActive = v; }
+// Quem quer REAGIR à lente sem o contexto (o `useLenteAtiva`) assina aqui; o guard em si não precisa.
+const ouvintesLente = new Set<() => void>();
+export function setLensActive(v: boolean): void {
+  if (lensActive === v) return;
+  lensActive = v;
+  ouvintesLente.forEach((f) => f());
+}
 export function isLensActive(): boolean { return lensActive; }
+export function assinarLente(f: () => void): () => void {
+  ouvintesLente.add(f);
+  return () => { ouvintesLente.delete(f); };
+}
 
 export class LensReadOnlyError extends Error {
   constructor(public readonly op: string) {
@@ -68,6 +78,10 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Extrato bancário F1 (migration 20261121123119) — STABLE, SECURITY INVOKER, leitura pura: o resumo diário da tela.
   // banco_conta_registrar_ancora / banco_extrato_marcar_conferido GRAVAM e ficam de fora de propósito.
   'banco_extrato_resumo_dia',
+  // Clientes (onda C) — STABLE, SECURITY INVOKER, só SELECT (conferido em prod: provolatile='s', sem
+  // INSERT/UPDATE/DELETE no corpo). É a leitura da base completa da tela /admin/customers: bloqueada,
+  // a lente mostrava "não foi possível carregar os clientes" para o master inspecionando uma vendedora.
+  'listar_clientes_base',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

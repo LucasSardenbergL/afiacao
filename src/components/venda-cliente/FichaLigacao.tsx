@@ -31,6 +31,8 @@ import { SecaoSistema } from './SecaoSistema';
 import { SecaoPreco } from './SecaoPreco';
 import { SecaoHistorico } from './SecaoHistorico';
 import { BotoesContato } from './BotoesContato';
+import { estadoOrigemTelaAtual } from '@/lib/nav/origem-atual';
+import { urlCliente360 } from '@/lib/nav/clientes';
 
 interface Props {
   /** comprador canônico; `null` = ficha fechada */
@@ -65,6 +67,7 @@ function Municao({ compradorId }: { compradorId: string }) {
 
 export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: Props) {
   const comprador = useSugestoesDoComprador(compradorId);
+  const origemTela = estadoOrigemTelaAtual();
   const ondas = useOndasVenda();
   const historico = useHistoricoCompras(compradorId);
   const { isImpersonating } = useImpersonation();
@@ -177,7 +180,7 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
               <SecaoHistorico historico={historico.historico} loading={historico.loading} erro={historico.erro} />
 
               <Button asChild variant="ghost" size="sm" className="gap-1 text-2xs px-0 h-auto">
-                <Link to={`/admin/customers/${compradorId}/360`}>
+                <Link to={urlCliente360(compradorId)} state={origemTela}>
                   <ExternalLink className="w-3.5 h-3.5" /> Ver ficha completa do cliente
                 </Link>
               </Button>

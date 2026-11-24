@@ -2,7 +2,8 @@
 // Extraída de src/pages/Customer360.tsx (god-component split).
 import { Link, useLocation } from 'react-router-dom';
 import { Mail, Phone, Building2, User, Users, MapPin, Heart, Wrench } from 'lucide-react';
-import { estadoComOrigem, lerOrigemLista, urlCadastroCliente } from '@/lib/nav/clientes';
+import { lerOrigemLista, repassarOrigem, urlCadastroCliente } from '@/lib/nav/clientes';
+import { registrarUsoClientes } from '@/lib/nav/sensor-clientes';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,14 +30,18 @@ export function IdentityColumn({
 }) {
   // "Cadastro e ferramentas" (a ficha antiga) é aberto DAQUI — a 360 é o destino de "abrir cliente".
   // A fila de origem viaja junto: o voltar do Cadastro devolve a mesma lista (onda 2, item 8).
-  const origem = lerOrigemLista(useLocation().state);
+  // Onda C: a tela de origem (Meu dia, telefonia…) também viaja — Cadastro → 360 → voltar não a perde.
+  const state = useLocation().state;
+  const origem = lerOrigemLista(state);
   const urlCadastro = customerId ? urlCadastroCliente(customerId, origem?.query ?? '') : null;
-  const estadoCadastro = estadoComOrigem(origem);
+  const estadoCadastro = repassarOrigem(state);
+  // Emissor do `abrir_cadastro` (até a onda C o tipo existia sem ninguém que o gravasse).
+  const medirCadastro = () => registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'abrir_cadastro' });
   return (
     <div className="lg:col-span-1 space-y-4">
       {urlCadastro && (
         <Button asChild variant="outline" size="sm" className="w-full justify-start gap-2">
-          <Link to={urlCadastro} state={estadoCadastro} data-testid="c360-link-cadastro">
+          <Link to={urlCadastro} state={estadoCadastro} data-testid="c360-link-cadastro" onClick={medirCadastro}>
             <Wrench className="w-3.5 h-3.5" />
             Cadastro e ferramentas
             <span className="ml-auto text-2xs text-muted-foreground">exige OC · chamadas · visitas</span>
