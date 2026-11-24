@@ -23,6 +23,7 @@ import {
   useCustomerFaturamento12m,
   useCustomerInteractions,
 } from '@/components/customer360/hooks';
+import { EMPRESAS_TAREFA, useEmpresaDaTarefa } from '@/components/customer360/empresa-da-tarefa';
 import { CustomerHero } from '@/components/customer360/CustomerHero';
 import { CustomerKpiStrip } from '@/components/customer360/CustomerKpiStrip';
 import { leituraDaQuery } from '@/components/customer360/kpi-rotulos';
@@ -57,7 +58,7 @@ export default function Customer360() {
     useCustomerCore(customerId);
   const address = useCustomerAddress(customerId);
   const metrics = useCustomerMetrics(customerId);
-  const score = useCustomerScore(customerId, user?.id);
+  const score = useCustomerScore(customerId);
   const preferred = useCustomerPreferredItems(customerId);
   const orders = useCustomerOrders(customerId);
   const faturamento12m = useCustomerFaturamento12m(customerId);
@@ -77,9 +78,21 @@ export default function Customer360() {
   const contacts = useCustomerContacts(customerId ?? null);
   const { data: salespeople = [] } = useSalespeople();
   // #9 (P0-B-bis PR-4): NÃO derivamos a empresa da tarefa do espelho omie_clientes — empresa_omie lá é
-  // 100% 'colacor' (rótulo fabricado, nenhum writer o seta). A tarefa por voz usa o default explícito
-  // empresa="oben" da tela (Oben-cêntrica); derivar da view fresca seria ambíguo p/ cliente multi-conta
-  // (precisão>recall: não fabricar a conta). Ver design §4 #9.
+  // 100% 'colacor' (rótulo fabricado, nenhum writer o seta). Onda B: a prova é o mapa FRESCO
+  // (`omie_customer_account_map_fresco`). Uma conta → ela; várias, nenhuma ou leitura falha → o
+  // diálogo PERGUNTA (nunca grava chute).
+  const empresaTarefa = useEmpresaDaTarefa(customerId);
+  const empresaProvada = empresaTarefa.data?.tipo === 'unica' ? empresaTarefa.data.empresa : null;
+  const opcoesEmpresa = empresaTarefa.data && empresaTarefa.data.tipo !== 'unica'
+    ? empresaTarefa.data.opcoes
+    : EMPRESAS_TAREFA;
+  const motivoEmpresa = empresaTarefa.data?.tipo === 'ambigua'
+    ? 'O cliente tem cadastro em mais de uma empresa.'
+    : empresaTarefa.isError
+      ? 'Não consegui ler as contas Omie do cliente.'
+      : empresaTarefa.data?.tipo === 'sem_dado'
+        ? 'Sem conta Omie comprovada para este cliente.'
+        : undefined;
 
   // Faturamento 12m: query PRÓPRIA no universo de venda (ver useCustomerFaturamento12m). A lista
   // `orders` é só o feed "Pedidos recentes" — todo status, de propósito — e não é fonte de número.
@@ -217,8 +230,10 @@ export default function Customer360() {
           onOpenChange={setAbrirCriarTarefa}
           cliente={{ customer_user_id: customerId, nome: customer.name ?? 'Cliente' }}
           assignedTo={user.id}
-          // Mesmo default explícito da tarefa por voz (§#9 acima): não derivar a conta.
-          empresa="oben"
+          // §#9 acima: empresa comprovada, ou o diálogo pergunta.
+          empresa={empresaProvada}
+          empresaOpcoes={opcoesEmpresa}
+          empresaMotivo={motivoEmpresa}
         />
       )}
 
@@ -228,10 +243,13 @@ export default function Customer360() {
           open={abrirVozTarefa}
           onOpenChange={setAbrirVozTarefa}
           vendedoras={salespeople.map((s) => ({ user_id: s.user_id, nome: s.name }))}
+          // Voz: com empresa comprovada única, ela; senão o default "oben" de antes (o diálogo de voz
+          // não tem seletor de empresa — follow-up anotado no PR da onda B).
           empresa="oben"
           clienteFixo={{
             customer_user_id: customerId,
             nome: customer.name ?? 'Cliente',
+            empresa_omie: empresaProvada,
           }}
         />
       )}

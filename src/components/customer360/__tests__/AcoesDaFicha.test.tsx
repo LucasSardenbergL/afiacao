@@ -42,7 +42,7 @@ beforeEach(() => {
   h.podeAgir = { data: true, error: null };
   props = {
     tarefas: { data: [], isError: false },
-    credito: { data: { semConta: false, conflito: false, aliasesConferidos: false, alerta: null }, isError: false },
+    credito: { data: { semConta: false, conflito: false, aliasesConferidos: false, alerta: null, frescor: [{ company: 'oben', syncAt: '2026-11-22T10:00:00Z', estado: 'ok' }] }, isError: false },
     onCriarTarefa: criar,
   };
 });
