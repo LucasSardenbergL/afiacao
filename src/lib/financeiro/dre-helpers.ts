@@ -6,11 +6,32 @@ import { ANEXOS_SIMPLES, type AnexoSimples, type FaixaSimples, FATOR_R_LIMIAR, P
 
 export type RegimeTributario = 'simples' | 'presumido';
 
-export const REGIME_POR_EMPRESA: Record<string, RegimeTributario> = {
-  colacor: 'presumido',
-  oben: 'presumido',
-  colacor_sc: 'simples',
+// Regime VIGENTE por (empresa, competência). Cada empresa lista os regimes em ordem, cada um com
+// o 1º mês (aaaamm) em que vale; null = desde sempre. A colacor saiu do Simples para o Lucro
+// Presumido em jan/2023 (founder em 2026-11-24; nos dados: DAS 2.06.99 até 2022-12, PIS 2.06.03
+// desde 2023-01, IRPJ/CSLL desde 2023-04 — 1º trimestre do presumido).
+// Empresa desconhecida → 'presumido' (default histórico do motor).
+const REGIMES_POR_EMPRESA: Record<string, ReadonlyArray<{ desde: number | null; regime: RegimeTributario }>> = {
+  colacor: [{ desde: null, regime: 'simples' }, { desde: 202301, regime: 'presumido' }],
+  oben: [{ desde: null, regime: 'presumido' }],
+  colacor_sc: [{ desde: null, regime: 'simples' }],
 };
+
+export function regimeVigente(company: string, ano: number, mes: number): RegimeTributario {
+  const faixas = REGIMES_POR_EMPRESA[company];
+  if (!faixas) return 'presumido';
+  const competencia = ano * 100 + mes;
+  let vigente: RegimeTributario = faixas[0].regime;
+  for (const f of faixas) if (f.desde == null || competencia >= f.desde) vigente = f.regime;
+  return vigente;
+}
+
+// Regime de HOJE (o último da lista) — para o que não tem competência: o mapa de categorias da
+// empresa e badges do cabeçalho. Undefined = empresa desconhecida.
+export function regimeAtual(company: string): RegimeTributario | undefined {
+  const faixas = REGIMES_POR_EMPRESA[company];
+  return faixas ? faixas[faixas.length - 1].regime : undefined;
+}
 
 // Linhas de imposto regime-aware + linhas estruturais. Deduções (sobre receita) ficam
 // acima da receita líquida; das é linha própria (Simples); irpj/csll abaixo (presumido).
@@ -377,7 +398,7 @@ const LINHAS_MAPA_BASE = [
 ];
 export function linhasDreMapeaveis(company: string): string[] {
   if (company === '_default') return [...LINHAS_MAPA_BASE];
-  const regime = REGIME_POR_EMPRESA[company];
+  const regime = regimeAtual(company);
   if (regime === undefined) return [...LINHAS_MAPA_BASE];
   // Presumido também oferece DAS: empresa que migrou do Simples (colacor até 2022) tem DAS
   // histórico, e o motor honra 'das' em qualquer regime (vai para deduções).
@@ -458,14 +479,29 @@ const PRESUNCAO_DEFAULT = { irpj: 0.08, csll: 0.12 }; // comércio/indústria
 
 export function normalizarConfigTributario(
   company: string,
-  raw: Record<string, unknown> | null,
+  rawConfig: Record<string, unknown> | null,
+  ano: number,
+  mes: number,
 ): ConfigTributario {
-  const regimeDefault = REGIME_POR_EMPRESA[company] ?? 'presumido';
-  const regime = ((raw?.regime as RegimeTributario) ?? regimeDefault);
+  // O regime vem da COMPETÊNCIA, não da config: `fin_config_cashflow.dre_tributario` é uma linha
+  // só por empresa e descreve o regime de HOJE. Config que declara outro regime não vale para
+  // este mês → tratada como ausente (teórico com defaults, completa=false → confiança ≤ media).
+  const regime = regimeVigente(company, ano, mes);
+  const raw = rawConfig != null && rawConfig.regime != null && rawConfig.regime !== regime ? null : rawConfig;
   const anexo = (raw?.anexo as AnexoSimples | undefined) ?? null;
   const presuncaoIrpj = Number(raw?.presuncao_irpj ?? PRESUNCAO_DEFAULT.irpj);
   const presuncaoCsll = Number(raw?.presuncao_csll ?? PRESUNCAO_DEFAULT.csll);
   const fatorRHabilitado = Boolean(raw?.fator_r_habilitado ?? false);
   const completa = regime === 'presumido' ? raw != null : anexo != null;
   return { regime, anexo, fatorRHabilitado, presuncaoIrpj, presuncaoCsll, completa };
+}
+
+// Total do imposto teórico do snapshot (detalhamento.imposto_teorico). Presumido grava as parcelas
+// E o `total` — somar tudo DOBRAVA o valor; Simples grava `{das: null}` quando falta dado — somar
+// com `?? 0` fabricava R$ 0. Ausente ≠ zero: sem nenhum valor numérico → null ("indisponível").
+export function impostoTeoricoTotal(teorico: Record<string, number | null | undefined> | null | undefined): number | null {
+  if (!teorico) return null;
+  if ('total' in teorico) return typeof teorico.total === 'number' && Number.isFinite(teorico.total) ? teorico.total : null;
+  const valores = Object.values(teorico).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  return valores.length === 0 ? null : valores.reduce((s, v) => s + v, 0);
 }
