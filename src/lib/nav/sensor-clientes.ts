@@ -43,7 +43,7 @@ export type AcaoFicha =
  * (fim com duração > 0). Novo pedido: pedido enviado. Ver pedidos: o feed do cliente lido. Desfecho:
  * só a gravação confirmada pelo servidor (nunca o clique). O resto é navegação: só tentativa.
  */
-export type FaseAcao = 'tentativa' | 'sucesso';
+type FaseAcao = 'tentativa' | 'sucesso';
 
 const FILTROS_SAUDE = ['all', 'saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
 export type FiltroSaudeSensor = (typeof FILTROS_SAUDE)[number] | 'outro';
