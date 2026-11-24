@@ -5,7 +5,7 @@ app contando nas vendas, e a reserva de estoque ficava `ativa` para sempre (`pri
 a canônica `cancelado`). PV 13693 (Oben, PID 12215613527, limpeza manual #4082) e mais 10 da Oben (recibo #1295). A
 listagem completa de 2026-11-21 achou 18 PVs da Oben e 11 da Colacor ausentes do Omie.
 
-**Entrega.** Edge `omie-pv-exclusao-reconciliar` (cron `17 * * * *`) + migration `20261122130000` + prova
+**Entrega.** Edge `omie-pv-exclusao-reconciliar` (cron `17 * * * *`) + migration `20261124120000` + prova
 `db/test-omie-pv-exclusao.sh` (53 asserts, 12 sabotagens, 2 sessões).
 
 ## Régua

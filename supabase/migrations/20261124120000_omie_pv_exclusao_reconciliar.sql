@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
--- 20261122130000 · omie_pv_exclusao_reconciliar — baixa automática de PV EXCLUÍDO direto no Omie   [money-path]
+-- 20261124120000 · omie_pv_exclusao_reconciliar — baixa automática de PV EXCLUÍDO direto no Omie   [money-path]
 -- Prova: db/test-omie-pv-exclusao.sh (PG17: RPCs executadas, concorrência em 2 sessões, ACL, falsificação)
 -- Edge:  supabase/functions/omie-pv-exclusao-reconciliar (cron de hora em hora, abaixo)
 --

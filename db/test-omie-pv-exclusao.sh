@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═════════════════════════════════════════════════════════════════
-# ║  PROVA PG17 — 20261122130000_omie_pv_exclusao_reconciliar.sql (baixa automática de PV excluído no Omie)
+# ║  PROVA PG17 — 20261124120000_omie_pv_exclusao_reconciliar.sql (baixa automática de PV excluído no Omie)
 # ║      bash db/test-omie-pv-exclusao.sh > /tmp/t.log 2>&1; echo "exit=$?"
 # ║      bash db/test-omie-pv-exclusao.sh --falsificar > /tmp/f.log 2>&1; echo "exit=$?"
 # ║      HARNESS_LOCALE=pt_BR.UTF-8 bash db/test-omie-pv-exclusao.sh   (2º idioma)
@@ -25,7 +25,7 @@ PORT="${PGPORT_TEST:-5791}"
 SLUG="omie-pv-exclusao"
 LOC="${HARNESS_LOCALE:-C}"
 export LC_ALL=C LANG=C          # o CLIENTE fica em C; o idioma do SERVIDOR vem de $LOC
-MIG_REAL="$REPO_ROOT/supabase/migrations/20261122130000_omie_pv_exclusao_reconciliar.sql"
+MIG_REAL="$REPO_ROOT/supabase/migrations/20261124120000_omie_pv_exclusao_reconciliar.sql"
 MIG_COTA="$REPO_ROOT/supabase/migrations/20261010204708_omie_cota_metodo.sql"
 [ -f "$MIG_REAL" ] || { echo "INFRA: ausente: $MIG_REAL"; exit 1; }
 [ -f "$MIG_COTA" ] || { echo "INFRA: ausente: $MIG_COTA"; exit 1; }

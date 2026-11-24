@@ -66,7 +66,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
     motivo: 'sensor de gêmeos push/pull (20261001011500): o EXISTS busca o gêmeo IMPORTADO por (conta, omie_pedido_id) — identidade, não venda; a leitura principal (alias a) segue julgada e é canônica',
   },
   // ── escritor ────────────────────────────────────────────────────────────────────────────────
-  // Reconciliação de PV excluído no Omie (20261122130000): a pergunta é "este PID ainda existe no Omie?", e TODO
+  // Reconciliação de PV excluído no Omie (20261124120000): a pergunta é "este PID ainda existe no Omie?", e TODO
   // status entra de propósito — faturado/cancelado é justamente a contradição a detectar; a baixa é ESCRITA.
   'private.omie_pv_banco_na_janela': { tipo: 'proposito', motivo: 'PV excluído no Omie: PIDs vivos do banco numa janela de inclusão, todo status (faturado/cancelado viram contradição)' },
   'public.omie_pv_triagem_registrar': { tipo: 'proposito', motivo: 'PV excluído no Omie: compara o conjunto do Omie com o do banco e marca contradição em linha terminal (todo status)' },
