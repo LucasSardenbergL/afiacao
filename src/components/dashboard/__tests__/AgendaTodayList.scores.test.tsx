@@ -25,6 +25,11 @@ type Resposta = { data: unknown; error: { message: string } | null };
 let porTabela: Record<string, Resposta> = {};
 
 function respostaDaTabela(t: string): Resposta {
+  // Desde a onda A o escopo do "Meu dia" vem de `carteira_assignments` (eligible): o cliente da
+  // fixture está na carteira. O que muda a tela continua sendo só `farmer_client_scores`.
+  if (t === 'carteira_assignments' && !porTabela[t]) {
+    return { data: [{ customer_user_id: CLIENTE, owner_user_id: EU }], error: null };
+  }
   return porTabela[t] ?? { data: [], error: null };
 }
 

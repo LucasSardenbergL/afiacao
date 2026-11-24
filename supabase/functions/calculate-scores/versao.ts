@@ -24,7 +24,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("calculate-scores");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.8-base-vendas-nula-sem-historico";
+export const VERSAO = "v1.9-prioridade-exposicao-atraso";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

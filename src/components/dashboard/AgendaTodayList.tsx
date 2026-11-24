@@ -145,7 +145,7 @@ export function AgendaTodayList() {
               <div className="text-2xs text-muted-foreground flex items-center gap-2 flex-wrap">
                 <Badge variant="outline" className="text-2xs">{meta.label}</Badge>
                 {item.health_class && <span>health: {item.health_class}</span>}
-                <span>priority: {Math.round(item.priority_score)}</span>
+                {item.priority_score != null && <span>priority: {Math.round(item.priority_score)}</span>}
                 {item.topModifier && (
                   <SignalModifierBadge modifier={item.topModifier} totalSignals={item.signalsCount} />
                 )}
