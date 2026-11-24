@@ -10,19 +10,14 @@ set -euo pipefail
 
 # ── arranque PG17 descartável (idêntico em todos os harnesses; contorna keg-only do brew) ──
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
+export PGVER=17
+# shellcheck disable=SC1091
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # PGBIN portátil (Mac brew / CI apt)
 PORT="${PGPORT_TEST:-5472}"
 SLUG="credito-gate-fronteira-60"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL="${LC_ALL_TESTE:-C}" LANG="${LC_ALL_TESTE:-C}"
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
-
-CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
 SAB="$(mktemp -d "/tmp/sab-${SLUG}.XXXXXX")"
 cleanup() { exec 3>&- 2>/dev/null || true; "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")" "$SAB"; }
