@@ -292,6 +292,41 @@ describe('submitOrder', () => {
     expect(opCalls).toHaveLength(0);
   });
 
+  it('8.4: OP recusada pelo Omie (desfecho falhou) vira erro do envio com o produto e o motivo', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-op1',
+      invokeImpl: (body) => body.action === 'criar_ordem_producao'
+        ? { data: { success: false, falhas: 1, desfecho: [{ status: 'falhou', descricao: 'BASE X', motivo: 'sem estrutura' }] }, error: null }
+        : { data: { omie_numero_pedido: '901' }, error: null },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    const op = r.errors.filter((e) => e.step === 'create_production_order');
+    expect(op).toHaveLength(1);
+    expect(op[0].message).toContain('BASE X');
+    expect(op[0].message).toContain('sem estrutura');
+  });
+
+  it('8.4: erro do invoke da OP (antes ignorado) também vira erro do envio', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-op2',
+      invokeImpl: (body) => body.action === 'criar_ordem_producao'
+        ? { data: null, error: { message: 'edge caiu' } }
+        : { data: { omie_numero_pedido: '902' }, error: null },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('edge caiu'))).toBe(true);
+  });
+
   it('Modo cliente (autoatendimento): OS de afiação NÃO é bloqueada pelo preflight (cliente sintético code 0)', async () => {
     const { client } = makeSupabase();
     const r = await submitOrder(makeParams({

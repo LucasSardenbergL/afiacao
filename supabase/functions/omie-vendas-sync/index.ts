@@ -34,6 +34,15 @@ import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { infoAdicionalItem, infoAdicionalItemAninhada, previsaoEntregaOmie, previsaoOrdemProducao } from "./o-que-vai-ao-omie.ts";
+import {
+  agruparItensOp,
+  type DesfechoOp,
+  type LinhaOpLocal,
+  lerRespostaOp,
+  motivoParaNaoChamar,
+  planoDoItem,
+  resumoOps,
+} from "./ordem-producao.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
@@ -4456,8 +4465,19 @@ Deno.serve(async (req) => {
         const { sales_order_id: opSalesId, items: opItems } = params;
         if (!opSalesId || !opItems?.length) throw new Error("Dados insuficientes para criar ordem de produção");
 
-        const opItemsTyped: OpItemInput[] = opItems;
+        // Mesmo produto em duas linhas → UMA OP com a soma (o cCodIntOP é por produto). ./ordem-producao.ts
+        const opItemsTyped: OpItemInput[] = agruparItensOp(opItems as OpItemInput[]);
         const createdOPs: CreatedOP[] = [];
+        const desfechosOp: (DesfechoOp & { descricao: string | null })[] = [];
+        // Idempotência: as linhas que este pedido JÁ tem nesta conta. Leitura que falha não vira
+        // "nenhuma" (criaria duplicata) — falha a chamada inteira, sem tocar no Omie.
+        const { data: opLinhasRaw, error: opLinhasErr } = await supabaseAdmin
+          .from("production_orders")
+          .select("id, product_id, product_codigo, omie_ordem_producao_id, omie_ordem_numero")
+          .eq("sales_order_id", opSalesId)
+          .eq("account", account);
+        if (opLinhasErr) throw new Error(`Não consegui ler as OPs já criadas deste pedido: ${opLinhasErr.message}`);
+        const opLinhas: LinhaOpLocal[] = (opLinhasRaw ?? []) as LinhaOpLocal[];
         // Data prometida: a do item, senão a do PEDIDO LOCAL (front antigo não manda no item).
         // Leitura que falha não fabrica prazo — degrada para hoje na OP e prazo nulo, como antes.
         const { data: opSoRow, error: opSoErr } = await supabaseAdmin
@@ -4465,7 +4485,20 @@ Deno.serve(async (req) => {
         if (opSoErr) console.warn(`[Omie Vendas][${account}] OP sem prazo do pedido (leitura falhou): ${opSoErr.message}`);
         const prazoDoPedido = (opSoRow as { ready_by_date?: unknown } | null)?.ready_by_date;
         for (const opItem of opItemsTyped) {
-          // Create production order in Omie
+          const descricaoOp = opItem.descricao || opItem.codigo || null;
+          const plano = planoDoItem(opItem, opLinhas);
+          if (plano.acao === "pular") {
+            // Já tem OP no Omie (reenvio): não chama de novo.
+            desfechosOp.push({
+              status: "ja_existia", omie_ordem_id: plano.linha.omie_ordem_producao_id as number,
+              omie_ordem_numero: plano.linha.omie_ordem_numero, descricao: descricaoOp,
+            });
+            createdOPs.push({
+              id: plano.linha.id, omie_ordem_id: plano.linha.omie_ordem_producao_id,
+              omie_ordem_numero: plano.linha.omie_ordem_numero, descricao: opItem.descricao,
+            });
+            continue;
+          }
           const opPayload = {
             // Determinística por (sales_order, produto) → o Omie dedup o re-fire da OP.
             // Últimos 12 chars do UUID (não o inteiro): mantém a chave curta — o limite do
@@ -4481,42 +4514,89 @@ Deno.serve(async (req) => {
 
           let omieOrdemId: number | null = null;
           let omieOrdemNumero: string | null = null;
-          try {
-            const opResult = (await callOmieVendasApi(
-              "manufatura/ordemproducao/",
-              "IncluirOrdemProducao",
-              opPayload,
-              account
-            )) as { nCodOP?: number; cNumOP?: string } | null;
-            omieOrdemId = opResult?.nCodOP || null;
-            omieOrdemNumero = opResult?.cNumOP || String(omieOrdemId);
-            console.log(`[Omie Vendas][${account}] OP criada: ${omieOrdemNumero}`);
-          } catch (opErr) {
-            const msg = opErr instanceof Error ? opErr.message : String(opErr);
-            console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, msg);
+          let motivoFalha: string | null = motivoParaNaoChamar(opItem);
+          if (motivoFalha === null) {
+            try {
+              const opResult = await callOmieVendasApi(
+                "manufatura/ordemproducao/",
+                "IncluirOrdemProducao",
+                opPayload,
+                account
+              );
+              const lida = lerRespostaOp(opResult);
+              if (lida) {
+                omieOrdemId = lida.id;
+                omieOrdemNumero = lida.numero;
+                console.log(`[Omie Vendas][${account}] OP criada: ${omieOrdemNumero}`);
+              } else {
+                motivoFalha = "o Omie respondeu sem o número da OP";
+              }
+            } catch (opErr) {
+              motivoFalha = opErr instanceof Error ? opErr.message : String(opErr);
+            }
+          }
+          if (motivoFalha) console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, motivoFalha);
+
+          // Linha local: a do reenvio é ATUALIZADA (retoma só o que falhou); senão nasce uma — mesmo sem
+          // OP no Omie, para a produção ver o item e o reenvio achar a linha.
+          let linhaId: string | undefined;
+          let erroLocal: string | null = null;
+          if (plano.acao === "reenviar") {
+            linhaId = plano.linha.id;
+            if (omieOrdemId) {
+              const { error: updErr } = await supabaseAdmin.from("production_orders")
+                .update({ omie_ordem_producao_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero })
+                .eq("id", plano.linha.id);
+              if (updErr) erroLocal = updErr.message;
+            }
+          } else {
+            const { data: insertedOP, error: insErr } = await supabaseAdmin.from("production_orders").insert({
+              sales_order_id: opSalesId,
+              product_id: opItem.product_id || null,
+              product_codigo: opItem.codigo || null,
+              product_descricao: opItem.descricao || null,
+              quantidade: opItem.quantidade,
+              unidade: opItem.unidade || 'UN',
+              status: 'pending',
+              omie_ordem_producao_id: omieOrdemId,
+              omie_ordem_numero: omieOrdemNumero,
+              assigned_to: opItem.assigned_to || null,
+              ready_by_date: opItem.ready_by_date || (typeof prazoDoPedido === "string" ? prazoDoPedido : null),
+              account,
+              created_by: userId,
+            }).select('id').single();
+            if (insErr) erroLocal = insErr.message;
+            linhaId = (insertedOP as { id?: string } | null)?.id;
+            if (linhaId) {
+              opLinhas.push({
+                id: linhaId, product_id: opItem.product_id || null, product_codigo: opItem.codigo || null,
+                omie_ordem_producao_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero,
+              });
+            }
           }
 
-          // Save to local DB
-          const { data: insertedOP } = await supabaseAdmin.from("production_orders").insert({
-            sales_order_id: opSalesId,
-            product_id: opItem.product_id || null,
-            product_codigo: opItem.codigo || null,
-            product_descricao: opItem.descricao || null,
-            quantidade: opItem.quantidade,
-            unidade: opItem.unidade || 'UN',
-            status: 'pending',
-            omie_ordem_producao_id: omieOrdemId,
-            omie_ordem_numero: omieOrdemNumero,
-            assigned_to: opItem.assigned_to || null,
-            ready_by_date: opItem.ready_by_date || (typeof prazoDoPedido === "string" ? prazoDoPedido : null),
-            account,
-            created_by: userId,
-          }).select('id').single();
-
-          createdOPs.push({ id: insertedOP?.id, omie_ordem_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero, descricao: opItem.descricao });
+          if (motivoFalha) {
+            desfechosOp.push({ status: "falhou", motivo: motivoFalha, descricao: descricaoOp });
+          } else if (erroLocal) {
+            // A OP EXISTE no Omie, mas o app não a guardou: um reenvio seria recusado pelo cCodIntOP.
+            // Diz o número para a produção achar a OP lá, em vez de fingir que nada foi criado.
+            desfechosOp.push({
+              status: "falhou",
+              motivo: `OP ${omieOrdemNumero} criada no Omie, mas não foi gravada no app (${erroLocal})`,
+              descricao: descricaoOp,
+            });
+          } else {
+            desfechosOp.push({
+              status: "criada", omie_ordem_id: omieOrdemId as number,
+              omie_ordem_numero: omieOrdemNumero as string, descricao: descricaoOp,
+            });
+          }
+          createdOPs.push({ id: linhaId, omie_ordem_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero, descricao: opItem.descricao });
         }
 
-        result = { success: true, production_orders: createdOPs };
+        // success só sem falha (antes: true incondicional). O desfecho por item vai ao front.
+        const resumoOp = resumoOps(desfechosOp);
+        result = { ...resumoOp, production_orders: createdOPs, desfecho: desfechosOp };
         break;
       }
 
