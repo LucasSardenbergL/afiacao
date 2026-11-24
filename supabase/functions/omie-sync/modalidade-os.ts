@@ -7,7 +7,7 @@
 // que não envia a modalidade) — a coluna é NOT NULL, e é o mesmo valor que já ia. Valor presente e
 // fora do vocabulário também cai nele, mas o chamador loga (é defeito do front, não escolha).
 
-export const MODALIDADES_OS = ["coleta_entrega", "somente_coleta", "somente_entrega", "balcao"] as const;
+const MODALIDADES_OS = ["coleta_entrega", "somente_coleta", "somente_entrega", "balcao"] as const;
 export type ModalidadeOS = (typeof MODALIDADES_OS)[number];
 export const MODALIDADE_LEGADA = "retirada";
 
