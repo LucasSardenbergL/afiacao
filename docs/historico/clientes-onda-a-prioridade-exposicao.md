@@ -117,3 +117,23 @@ select count(*) filter (where rk <= 100 and s = 'stale') top100_stale,
 
 Estabilidade real (rode a partir do 2º dia com a v1.9): a interseção do top 10 de dias consecutivos
 em `priority_score_log`, para o mesmo `farmer_id`. A régua é ≥ 8.
+
+### Medido em prod (psql-ro, `ON_ERROR_STOP`, exit 0)
+
+Edge `calculate-scores` atestada em `v1.9-prioridade-exposicao-atraso` pela sonda no ledger
+(`pendencias:deploy` → "✅ confere"). Recálculo manual em 2026-11-24 20:58 UTC.
+
+| Métrica (carteira da vendedora) | Antes (12:09 UTC, v1.8) | Depois (20:59 UTC, v1.9) | Simulação |
+|---|---|---|---|
+| stale no top 100 | 100 | **0** | 0 |
+| dias médios sem compra no top 100 | 1.196 | **64** | — |
+| rank do 1º ativo | 206 | **1** | 1 |
+| valores distintos de nota | 52 | **531** | 551 |
+| clientes com nota | 707 | 709 | 707 |
+
+Régua "ativo atrasado acima de inativo": maior nota stale = 29,82 < menor nota ativa = 30,02 —
+0 violações nos 282 ativos × 427 stale. `sem_historico` (2.123) segue sem nota (NULL, não 0).
+`priority_score_log` do run: os 4 `*_component` = NULL em todas as linhas, notas com 2 casas.
+
+Pendente: estabilidade do top 10 entre dias consecutivos (régua ≥ 8/10) — só mede depois do cron
+de 2026-11-25 06:00 UTC, com a query acima sobre `priority_score_log`.
