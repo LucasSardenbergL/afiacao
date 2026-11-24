@@ -12,6 +12,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const MOTIVO = 'timeout na leitura do fluxo';
 
+// A seção DFC (master pela lente "Ver como", react-query próprio) tem testes próprios; aqui o alvo é o resto da aba.
+vi.mock('@/components/financeiro/dashboard/DFCRealizado', () => ({ DFCRealizado: () => null }));
 vi.mock('@/services/financeiroService', () => ({
   getResumoFinanceiro: async (companies: string[]) =>
     Object.fromEntries(

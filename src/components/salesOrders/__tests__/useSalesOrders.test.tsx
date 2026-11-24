@@ -11,15 +11,21 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 type Linha = {
   origin: string; id: string; created_at: string; account: string; order_number: string | null;
   omie_pedido_id: number | null; customer_user_id: string; customer_name: string | null;
-  item_names: string[]; item_quantity: number; status: string; subtotal: number; total: number; busca: string;
+  item_names: string[]; item_quantity: number; status: string; subtotal: number; total: number | null; busca: string;
+  /** Só o fake sabe (a view não expõe): a "fonte" de `order_feed_do_vendedor`. */
+  vendedor_user_id?: string | null;
 };
 type Pedido = {
-  tabela: string; select?: string; count?: string; filtros: [string, string, string][]; range?: [number, number];
+  tabela: string; vendedor?: string; select?: string; count?: string; filtros: [string, string, string][]; range?: [number, number];
   update?: unknown; in?: [string, string[]]; or?: string; ordens: [string, { ascending?: boolean; nullsFirst?: boolean } | undefined][];
 };
 
 // `segurar`: enquanto houver, as respostas do order_feed esperam por ela (transição de filtro em voo).
-const fake = vi.hoisted(() => ({ linhas: [] as Linha[], pedidos: [] as Pedido[], segurar: null as Promise<void> | null }));
+const fake = vi.hoisted(() => ({
+  linhas: [] as Linha[], pedidos: [] as Pedido[], segurar: null as Promise<void> | null,
+  totais: [] as Record<string, unknown>[], erroTotal: false, efetivo: 'u1' as string | null,
+  filtrarComo: null as null | ((p: Pedido) => Linha[]),
+}));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 
 // Avalia o predicado do `.or()` como o PostgREST avalia a árvore lógica: lista separada por vírgula
@@ -70,14 +76,14 @@ function casaOr(or: string, l: Linha): boolean {
 // minúsculas e sem acento.
 function buscaComoAView(l: Omit<Linha, 'busca'>): string {
   const nome = (l.customer_name ?? '').replace(/&amp;/g, '&').replace(/&apos;/g, "'");
-  const total = l.total.toFixed(2);
+  const total = (l.total ?? 0).toFixed(2);
   return [nome, l.order_number ?? '', l.item_names.join(' '), total, total.replace('.', ',')]
     .join('\n').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
 vi.mock('@/integrations/supabase/client', () => {
-  const builder = (tabela: string) => {
-    const p: Pedido = { tabela, filtros: [], ordens: [] };
+  const builder = (tabela: string, vendedor?: string) => {
+    const p: Pedido = { tabela, vendedor, filtros: [], ordens: [] };
     fake.pedidos.push(p);
     const b = {
       select(cols: string, opts?: { count?: string }) { p.select = cols; p.count = opts?.count; return b; },
@@ -97,14 +103,9 @@ vi.mock('@/integrations/supabase/client', () => {
     return b;
   };
   const responderFeed = (p: Pedido) => {
-        let rs = fake.linhas.filter((l) => p.filtros.every(([op, col, v]) => {
-          const valor = String(l[col as keyof Linha] ?? '');
-          return op === 'eq' ? valor === v : valor.toLowerCase().includes(v.replace(/^%|%$/g, '').toLowerCase());
-        }));
-        if (p.in && p.in[0] === 'status') rs = rs.filter((l) => p.in![1].includes(l.status));
-        if (p.or) rs = rs.filter((l) => casaOr(p.or!, l));
+        let rs = filtrarComo(p);
         const porValor = p.ordens[0]?.[0] === 'total';
-        rs = [...rs].sort((x, y) => (porValor ? y.total - x.total : 0) || y.created_at.localeCompare(x.created_at) || x.origin.localeCompare(y.origin) || x.id.localeCompare(y.id));
+        rs = [...rs].sort((x, y) => (porValor ? (y.total ?? -Infinity) - (x.total ?? -Infinity) : 0) || y.created_at.localeCompare(x.created_at) || x.origin.localeCompare(y.origin) || x.id.localeCompare(y.id));
         const [a, z] = p.range ?? [0, 999];
         const cols = (p.select ?? '').split(',');
         // `alias:coluna::text` (o cursor do total) sai como o PostgREST o devolve: texto exato.
@@ -115,15 +116,64 @@ vi.mock('@/integrations/supabase/client', () => {
         const data = rs.slice(a, z + 1).map((l) => Object.fromEntries(cols.map((c) => valor(l, c))));
         return { data, error: null, count: p.count === 'exact' ? rs.length : null };
   };
+  // As linhas que os filtros GRAVADOS de um pedido trazem (sem ordem nem página) — é o que a paridade
+  // compara com a RPC do valor.
+  const filtrarComo = (p: Pedido) => {
+        const fonte = p.vendedor ? fake.linhas.filter((l) => l.origin === 'sales' && l.vendedor_user_id === p.vendedor) : fake.linhas;
+        let rs = fonte.filter((l) => p.filtros.every(([op, col, v]) => {
+          const valor = String(l[col as keyof Linha] ?? '');
+          return op === 'eq' ? valor === v : valor.toLowerCase().includes(v.replace(/^%|%$/g, '').toLowerCase());
+        }));
+        if (p.in && p.in[0] === 'status') rs = rs.filter((l) => p.in![1].includes(l.status));
+        if (p.or) rs = rs.filter((l) => casaOr(p.or!, l));
+        return rs;
+  };
+  fake.filtrarComo = filtrarComo;
+  // order_feed_total escrito como o SQL da migration (parâmetro a parâmetro), INDEPENDENTE dos filtros
+  // que o hook grava no builder: se o hook derivar params e filtros de fontes diferentes, divergem.
+  const totalComoOSql = (a: Record<string, unknown>) => {
+    const fonte = a.p_vendedor ? fake.linhas.filter((l) => l.origin === 'sales' && l.vendedor_user_id === a.p_vendedor) : fake.linhas;
+    const rs = fonte.filter((l) =>
+      (a.p_account == null || l.account === a.p_account)
+      && (a.p_status == null || (a.p_status as string[]).includes(l.status))
+      && (a.p_desde == null || Date.parse(l.created_at) >= Date.parse(String(a.p_desde))
+          || ((a.p_puros as string[] | null) ?? []).some((x) => Date.parse(x) === Date.parse(l.created_at)))
+      && (a.p_customer == null || l.customer_user_id === a.p_customer)
+      && (a.p_busca == null || l.busca.includes(String(a.p_busca).replace(/^%|%$/g, ''))));
+    const conhecidos = rs.filter((l) => l.total !== null);
+    return {
+      pedidos: rs.length,
+      soma: conhecidos.length ? Math.round(conhecidos.reduce((t, l) => t + (l.total as number), 0) * 100) / 100 : null,
+      sem_total: rs.length - conhecidos.length,
+    };
+  };
   return {
     supabase: {
       from: (t: string) => builder(t),
+      rpc: (nome: string, args: Record<string, unknown>, opts?: { count?: string }) => {
+        if (nome === 'order_feed_do_vendedor') {
+          const b = builder('order_feed', String(args.p_vendedor));
+          const sel = b.select.bind(b);
+          // `.rpc(…, {count}).select(cols)`: o count vem nas opções da rpc, não no select.
+          b.select = (cols: string) => sel(cols, { count: opts?.count });
+          return b;
+        }
+        if (nome === 'order_feed_total') {
+          fake.totais.push(args);
+          if (fake.erroTotal) return Promise.resolve({ data: null, error: { message: 'boom' } });
+          return Promise.resolve({ data: [totalComoOSql(args)], error: null });
+        }
+        throw new Error(`rpc não prevista no fake: ${nome}`);
+      },
       functions: { invoke: vi.fn(async () => ({ data: { logos: {} }, error: null })) },
     },
   };
 });
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'u1' }, isStaff: true, loading: false, role: 'employee' }),
+}));
+vi.mock('@/contexts/ImpersonationContext', () => ({
+  useImpersonation: () => ({ effectiveUserId: fake.efetivo, isImpersonating: fake.efetivo !== 'u1' }),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/lib/analytics', () => ({ track: analytics.track }));
@@ -184,6 +234,9 @@ async function buscar(r: ReturnType<typeof montar>['result'], termo: string) {
 
 beforeEach(() => {
   fake.linhas = gerarLinhas();
+  fake.totais = [];
+  fake.erroTotal = false;
+  fake.efetivo = 'u1';
   fake.pedidos = [];
   fake.segurar = null;
   analytics.track.mockClear();
@@ -223,7 +276,7 @@ describe('useSalesOrders — abertura', () => {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 function ordenar(ls: Linha[], porValor = false): string[] {
   return [...ls]
-    .sort((x, y) => (porValor ? y.total - x.total : 0) || -cmp(x.created_at, y.created_at) || cmp(x.origin, y.origin) || cmp(x.id, y.id))
+    .sort((x, y) => (porValor ? (y.total ?? 0) - (x.total ?? 0) : 0) || -cmp(x.created_at, y.created_at) || cmp(x.origin, y.origin) || cmp(x.id, y.id))
     .map((l) => l.id);
 }
 async function rolarAte(r: ReturnType<typeof montar>['result'], n: number) {
@@ -667,5 +720,92 @@ describe('useSalesOrders — pedidos de UM cliente (?customer=, vindo da ficha)'
     await waitFor(() => expect(result.current.clienteFiltro).toBeNull());
     await waitFor(() => expect(pedidosDoFeed().length).toBeGreaterThan(0));
     expect(pedidosDoFeed().at(-1)?.filtros).toEqual([]);
+  });
+});
+
+describe('useSalesOrders — "Meus pedidos" e valor do recorte', () => {
+  // `comNulos`: total ausente em 1 de cada 13 (a soma sai parcial). Só onde a lista não é RENDERIZADA:
+  // a linha da lista exige `total` (COLUNAS_FEED_EXIGIDAS) — na prod é NOT NULL nas duas tabelas.
+  const marcarVendedores = (comNulos = false) => {
+    fake.linhas = fake.linhas.map((l, i) => ({
+      ...l, vendedor_user_id: i % 3 === 0 ? 'u1' : i % 3 === 1 ? 'u2' : null,
+      status: i % 5 === 0 ? 'faturado' : i % 7 === 0 ? 'cancelado' : i % 11 === 0 ? 'rascunho' : l.status,
+      total: comNulos && i % 13 === 0 ? null : l.total,
+    }));
+  };
+
+  it('?meus=1 lê de order_feed_do_vendedor com o usuário EFETIVO da lente, com os mesmos filtros', async () => {
+    marcarVendedores();
+    fake.efetivo = 'u2'; // "Ver como" u2: a leitura é do vendedor efetivo, não do usuário real (u1)
+    const { result } = montar('/sales?meus=1&empresa=oben&status=faturados');
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const p = pedidosDoFeed()[0];
+    expect(p.vendedor).toBe('u2');
+    expect(p.filtros).toContainEqual(['eq', 'account', 'oben']);
+    expect(p.in).toEqual(['status', ['faturado', 'entregue']]);
+    expect(result.current.orders.length).toBeGreaterThan(0);
+    expect(result.current.orders.every((o) => fake.linhas.find((l) => l.id === o.id)?.vendedor_user_id === 'u2')).toBe(true);
+    expect(fake.totais.at(-1)).toMatchObject({ p_vendedor: 'u2', p_account: 'oben', p_status: ['faturado', 'entregue'] });
+  });
+
+  it('"Meus" sem usuário efetivo NÃO consulta nada (vendedor nulo abriria todos os pedidos)', async () => {
+    fake.efetivo = null;
+    const { result } = montar('/sales?meus=1');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(pedidosDoFeed()).toHaveLength(0);
+    expect(fake.totais).toHaveLength(0);
+    expect(result.current.meusAguardando).toBe(true);
+    expect(result.current.valorRecorte).toEqual({ estado: 'carregando' });
+  });
+
+  it('ligar/desligar "Meus" escreve na URL, mede o filtro e conta como filtro ativo', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.comFiltro).toBe(false);
+    act(() => result.current.setMeus(true));
+    await waitFor(() => expect(result.current.meus).toBe(true));
+    expect(result.current.comFiltro).toBe(true);
+    expect(analytics.track).toHaveBeenCalledWith('sales.lista_filtro', { tipo: 'meus', valor: '1' });
+    act(() => result.current.limparFiltros());
+    await waitFor(() => expect(result.current.meus).toBe(false));
+  });
+
+  // PARIDADE (lado TS): a RPC do valor recebe params derivados do MESMO recorte que monta os filtros
+  // da lista. O fake soma pela leitura dos PARAMS (como o SQL) e a lista é refeita pelos FILTROS
+  // gravados no builder — se uma das duas pontas esquecer um filtro, os números divergem.
+  it.each([
+    '/sales',
+    '/sales?empresa=colacor',
+    '/sales?status=faturados',
+    '/sales?status=rascunhos',
+    '/sales?status=cancelados&empresa=oben',
+    '/sales?periodo=30d',
+    '/sales?q=generico',
+    '/sales?meus=1',
+    '/sales?meus=1&status=faturados&empresa=oben&q=lixa',
+    '/sales?customer=00000000-0000-0000-0000-0000000000c1',
+  ])('paridade valor × filtros da lista: %s', async (url) => {
+    marcarVendedores(true);
+    const agora = Date.now();
+    fake.linhas = fake.linhas.map((l, i) => ({ ...l, created_at: new Date(agora - i * 3_600_000).toISOString(),
+      customer_user_id: i % 4 === 0 ? '00000000-0000-0000-0000-0000000000c1' : l.customer_user_id }));
+    const { result } = montar(url);
+    await waitFor(() => expect(result.current.valorRecorte.estado).toBe('ok'));
+    await waitFor(() => expect(pedidosDoFeed().length).toBeGreaterThan(0));
+    const lista = fake.filtrarComo!(pedidosDoFeed()[0]);
+    const conhecidos = lista.filter((l) => l.total !== null);
+    const v = result.current.valorRecorte;
+    if (v.estado !== 'ok') throw new Error('valor não carregou');
+    expect(v.pedidos).toBe(lista.length);
+    expect(v.semTotal).toBe(lista.length - conhecidos.length);
+    expect(v.soma).toBe(conhecidos.length ? Math.round(conhecidos.reduce((t, l) => t + (l.total as number), 0) * 100) / 100 : null);
+    expect(lista.length).toBeGreaterThan(0); // paridade de recorte vazio seria trivial
+    if (!url.includes('status=rascunhos')) expect(v.semTotal).toBeGreaterThan(0); // a soma parcial também é exercida
+  });
+
+  it('erro da RPC vira estado de erro — nunca 0', async () => {
+    fake.erroTotal = true;
+    const { result } = montar();
+    await waitFor(() => expect(result.current.valorRecorte).toEqual({ estado: 'erro' }));
   });
 });

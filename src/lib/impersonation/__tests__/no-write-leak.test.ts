@@ -121,6 +121,9 @@ const ALLOWED = new Set([
   // Radar pacote F: useRadarMeuTerritorio usa effectiveUserId SÓ como `p_vendedor` da leitura STABLE do território
   // (radar_meu_territorio, na allowlist de leitura da lente; o servidor só aceita outro vendedor de gestor).
   'src/queries/useRadarMeuTerritorio.ts',
+  // /sales "Meus pedidos": effectiveUserId SÓ vira o p_vendedor das LEITURAS (order_feed_do_vendedor e
+  // order_feed_total). A exclusão do mesmo hook usa a sessão REAL (RLS/escrita), sem o id efetivo.
+  'src/components/salesOrders/useSalesOrders.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {

@@ -28,7 +28,7 @@ const DETALHAMENTO_FASE2: Json = {
 function linha(over: Partial<Tables<'fin_dre_snapshots'>> = {}): Tables<'fin_dre_snapshots'> {
   return {
     id: 'snap-1', company: 'oben', ano: 2026, mes: 9, regime: 'competencia', calculated_at: null,
-    receita_bruta: 1000, deducoes: 27.25, receita_liquida: 972.75, cmv: 400, lucro_bruto: 572.75,
+    receita_bruta: 1000, deducoes: 27.25, receita_liquida: 972.75, cmv: 400, cmv_heuristica: null, cmv_heuristica_pct: null, lucro_bruto: 572.75,
     despesas_operacionais: 300, despesas_administrativas: 0, despesas_comerciais: 0, despesas_financeiras: 0,
     receitas_financeiras: 0, resultado_operacional: 272.75, outras_receitas: 0, outras_despesas: 0,
     resultado_antes_impostos: 272.75, impostos: 19, resultado_liquido: 253.75,

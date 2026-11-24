@@ -5,7 +5,7 @@
  * - Vendas em pedidos MTD vs mesmos dias do mês anterior (`useTeamKpis`, segue o seletor). É
  *   PEDIDO, não receita contábil — o rótulo diz isso.
  * - Margem bruta do último mês fechado comum (DRE, regime visível) — com a composição (receita, CMV,
- *   lucro, mês anterior e confiança do mapeamento) por empresa num card próprio —, só das empresas de
+ *   lucro, mês anterior e quanto do CMV veio da heurística) por empresa num card próprio —, só das empresas de
  *   mercadoria — a Colacor SC só presta serviço e aparece como "serviço", não como 100%.
  * - Saldo bancário líquido (soma dos CNPJs) + quais CNPJs estão negativos — caixa não é
  *   fungível entre CNPJs, então o total nunca aparece sozinho como "disponível".
@@ -253,7 +253,7 @@ function CardCobranca({ c, erro, carregando, empresas }: {
 
 type ComposicaoMargemCeo = ReturnType<typeof useCeoPlacar>['composicaoMargem'];
 
-/** De onde vem a margem do tile: receita, CMV e lucro (receita − CMV) por empresa de mercadoria, com o mapeamento da DRE. */
+/** De onde vem a margem do tile: receita, CMV e lucro (receita − CMV) por empresa de mercadoria, com quanto do CMV é heurística. */
 function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: string }) {
   if (c.mes === null || c.linhas.length === 0) return null;
   return (
@@ -280,7 +280,7 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
             <th scope="col" className="py-1.5 pr-3 text-right font-normal">Lucro bruto</th>
             <th scope="col" className="py-1.5 pr-3 text-right font-normal">Margem</th>
             <th scope="col" className="py-1.5 pr-3 text-right font-normal">Mês anterior</th>
-            <th scope="col" className="py-1.5 text-left font-normal">Mapeamento da DRE</th>
+            <th scope="col" className="py-1.5 text-left font-normal">CMV por heurística</th>
           </tr>
         </thead>
         <tbody>
@@ -293,20 +293,23 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
               <td className="py-1.5 pr-3 text-right font-medium">{formatarFracaoPct(l.margem)}</td>
               <td className="py-1.5 pr-3 text-right text-muted-foreground">{formatarFracaoPct(l.margemAnterior)}</td>
               <td className="py-1.5 text-left">
-                {l.semMapeamento !== null && l.semMapeamento > 0 ? (
+                {l.cmvHeuristicaPct === null ? (
                   <span
-                    className="text-status-warning"
-                    title="Categorias da DRE inteira (não só do CMV) classificadas pela descrição, sem mapeamento explícito"
+                    className="text-muted-foreground"
+                    title="Não medido: DRE calculada antes da medição do CMV por heurística, ou mês sem CMV"
                   >
-                    {l.semMapeamento} {l.semMapeamento === 1 ? 'categoria' : 'categorias'} sem mapeamento
+                    —
                   </span>
-                ) : l.semMapeamento === null ? (
-                  <span className="text-muted-foreground">não informada</span>
                 ) : (
-                  <span className="text-muted-foreground">mapeada</span>
+                  <span
+                    className={l.cmvHeuristicaPct > 0 ? 'text-status-warning' : 'text-muted-foreground'}
+                    title="Parte do CMV classificada pela descrição da categoria, sem mapeamento explícito para a DRE"
+                  >
+                    {formatarFracaoPct(l.cmvHeuristicaPct)}
+                  </span>
                 )}
                 {l.provisorio && (
-                  <span className="ml-1 text-status-warning" title="Há lançamentos fora da DRE no mês">
+                  <span className="ml-1 text-status-warning" title={l.motivoProvisorio ?? 'Há lançamentos fora da DRE no mês'}>
                     · DRE provisória
                   </span>
                 )}
@@ -315,6 +318,16 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
           ))}
         </tbody>
       </table>
+      {c.linhas.some((l) => l.provisorio) && (
+        <ul className="mt-2 space-y-1 text-2xs text-muted-foreground" data-testid="ceo-composicao-margem-provisoria">
+          {c.linhas.filter((l) => l.provisorio).map((l) => (
+            <li key={l.empresa}>
+              <span className="text-status-warning">DRE provisória · {COMPANIES[l.empresa].shortName}:</span>{' '}
+              {l.motivoProvisorio ?? 'há lançamentos fora da DRE no mês, sem motivo detalhado gravado.'}
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }

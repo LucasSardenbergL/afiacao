@@ -14,6 +14,7 @@ import { usePeriodLockHandler } from '@/components/financeiro/PeriodLockGuard';
 import { alertasDaView } from '@/utils/financeiroAlerts';
 import { RegimeToggle } from '@/components/financeiro/RegimeToggle';
 import { FluxoCaixaTab } from '@/components/financeiro/dashboard/FluxoCaixaTab';
+import { DFCRealizado } from '@/components/financeiro/dashboard/DFCRealizado';
 import { DRETab } from '@/components/financeiro/dashboard/DRETab';
 import { DREComparativo } from '@/components/financeiro/dashboard/DREComparativo';
 import { VisaoGeralTab } from '@/components/financeiro/dashboard/VisaoGeralTab';
@@ -250,6 +251,8 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
               isso a aba mostraria o empty state "Sincronize os dados primeiro" no meio do sync. */}
           <FluxoCaixaTab data={fluxoCaixa} loading={loading || syncing} saldoCC={activeResumo?.saldo_total_cc}
             indisponivel={errosCarga.fluxoCaixa ?? null} titulosIndisponiveis={activeResumo?.titulos_motivo ?? null} />
+          {/* DFC realizado por atividade (método direto, mapa próprio de fluxo) — lê a view master-only. */}
+          <DFCRealizado view={view} versaoDados={versaoDados} />
         </TabsContent>
 
         {/* ═══════════ TAB: DRE ═══════════ */}

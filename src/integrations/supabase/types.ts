@@ -5380,6 +5380,36 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_categoria_fluxo_mapping: {
+        Row: {
+          company: string
+          created_at: string
+          fluxo_linha: string
+          id: string
+          notas: string | null
+          omie_codigo: string
+          updated_at: string
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          fluxo_linha: string
+          id?: string
+          notas?: string | null
+          omie_codigo: string
+          updated_at?: string
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          fluxo_linha?: string
+          id?: string
+          notas?: string | null
+          omie_codigo?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fin_categorias: {
         Row: {
           ativo: boolean | null
@@ -6085,6 +6115,8 @@ export type Database = {
           ano: number
           calculated_at: string | null
           cmv: number | null
+          cmv_heuristica: number | null
+          cmv_heuristica_pct: number | null
           company: string
           deducoes: number | null
           despesas_administrativas: number | null
@@ -6113,6 +6145,8 @@ export type Database = {
           ano: number
           calculated_at?: string | null
           cmv?: number | null
+          cmv_heuristica?: number | null
+          cmv_heuristica_pct?: number | null
           company: string
           deducoes?: number | null
           despesas_administrativas?: number | null
@@ -6141,6 +6175,8 @@ export type Database = {
           ano?: number
           calculated_at?: string | null
           cmv?: number | null
+          cmv_heuristica?: number | null
+          cmv_heuristica_pct?: number | null
           company?: string
           deducoes?: number | null
           despesas_administrativas?: number | null
@@ -24469,6 +24505,19 @@ export type Database = {
         }
         Relationships: []
       }
+      v_fin_fluxo_caixa_realizado: {
+        Row: {
+          atividade: string | null
+          company: string | null
+          entradas: number | null
+          fluxo_linha: string | null
+          lancamentos: number | null
+          liquido: number | null
+          mes: string | null
+          saidas: number | null
+        }
+        Relationships: []
+      }
       v_fornecedor_lt_logistica_total: {
         Row: {
           cadeia_descricao: string | null
@@ -28076,6 +28125,47 @@ export type Database = {
         Args: { p_account: string }
         Returns: Json
       }
+      order_feed_do_vendedor: {
+        Args: { p_vendedor: string }
+        Returns: {
+          account: string | null
+          busca: string | null
+          created_at: string | null
+          customer_name: string | null
+          customer_user_id: string | null
+          id: string | null
+          item_names: string[] | null
+          item_quantity: number | null
+          omie_pedido_id: number | null
+          order_number: string | null
+          origin: string | null
+          status: string | null
+          subtotal: number | null
+          total: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "order_feed"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      order_feed_total: {
+        Args: {
+          p_account?: string | null
+          p_busca?: string | null
+          p_customer?: string | null
+          p_desde?: string | null
+          p_puros?: string[] | null
+          p_status?: string[] | null
+          p_vendedor?: string | null
+        }
+        Returns: {
+          pedidos: number
+          sem_total: number
+          soma: number
+        }[]
+      }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
@@ -28124,6 +28214,12 @@ export type Database = {
       pedido_venda_exigir_coerencia: {
         Args: { p_id: string }
         Returns: undefined
+      }
+      pedidos_ids_do_vendedor: {
+        Args: { p_vendedor: string }
+        Returns: {
+          id: string
+        }[]
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
       pedidos_vendedor: {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { SalesOrdersToolbar, SalesOrdersAcoes, BUSCA_DEBOUNCE_MS } from '../SalesOrdersToolbar';
+import { SalesOrdersToolbar, SalesOrdersAcoes, BUSCA_DEBOUNCE_MS, ValorDoRecorte } from '../SalesOrdersToolbar';
 
 const filtrosNovos = () => ({
   statusFilter: 'todos' as const,
@@ -78,5 +78,30 @@ describe('SalesOrdersToolbar', () => {
     expect(props.setStatusFilter).toHaveBeenCalledWith('faturados');
     expect(screen.getByRole('combobox', { name: 'Período' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Ordenar por' })).toBeTruthy();
+  });
+});
+
+describe('"Meus pedidos" e valor do recorte', () => {
+  it('o chip "Meus pedidos" alterna e mostra o estado (aria-pressed)', () => {
+    const setMeus = vi.fn();
+    setup({ meus: false, setMeus });
+    const chip = screen.getByRole('button', { name: 'Meus pedidos' });
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(chip);
+    expect(setMeus).toHaveBeenCalledWith(true);
+  });
+
+  it('sem o setter, o chip não aparece', () => {
+    setup();
+    expect(screen.queryByRole('button', { name: 'Meus pedidos' })).toBeNull();
+  });
+
+  it('valor em R$ com o aviso de "Todos"; carregando é "—", nunca R$ 0,00', () => {
+    const { rerender } = render(<ValorDoRecorte valor={{ estado: 'carregando' }} statusTodos meus={false} />);
+    expect(screen.getByTestId('valor-recorte')).toHaveTextContent('—');
+    rerender(<ValorDoRecorte valor={{ estado: 'ok', pedidos: 2, soma: 1234.5, semTotal: 0 }} statusTodos meus />);
+    expect(screen.getByTestId('valor-recorte').textContent).toMatch(/R\$\s1\.234,50/);
+    expect(screen.getByText(/inclui cancelados e rascunhos/)).toBeInTheDocument();
+    expect(screen.getByText(/afiação e sem vendedor não entram/)).toBeInTheDocument();
   });
 });
