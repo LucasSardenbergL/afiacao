@@ -212,7 +212,7 @@ export async function fetchCarteiraClientes(opts: {
  * da lista inteira junto. Agora degrada só a margem — `ok: false` vira `margem_indisponivel` em
  * cada score, e a tela diz "indisponível". Nunca vira "margem não apurada" (null com ok: true).
  */
-export async function lerMargensIsolada(
+async function lerMargensIsolada(
   ids: string[],
 ): Promise<{ ok: true; margens: Map<string, MargemScore> } | { ok: false; erro: unknown }> {
   try {
