@@ -158,4 +158,16 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     expect(pagina).toContain('h.adotarNonceDoRascunho(d.nonce, d.clienteNonce);');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });
+
+  it('Codex no delta do 2.2 (P0 #5/#4): no reuse adota o nonce DO ENVELOPE antes do rascunho; ids corrompidos barram', () => {
+    const corpo = corpoDo('submitOrder');
+    const adota = corpo.indexOf('definirNonce(nonceDoEnvelope,');
+    expect(adota).toBeGreaterThan(corpo.indexOf('checkoutEnvRef.current = reserva.envelope;'));
+    expect(adota).toBeLessThan(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();'));
+    const barra = corpo.indexOf("if (idsDoServidor.estado === 'corrompido') {");
+    expect(barra).toBeGreaterThan(-1);
+    expect(corpo.slice(barra, corpo.indexOf('\n        }', barra))).toContain('return;');
+    expect(barra).toBeLessThan(corpo.indexOf('submitOrderService('));
+    expect(corpo).toContain('idsPorConta: idsDoServidor.ids,');
+  });
 });

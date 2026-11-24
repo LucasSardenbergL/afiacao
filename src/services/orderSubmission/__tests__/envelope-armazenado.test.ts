@@ -8,12 +8,14 @@ import {
   gravarSeAindaFor,
   clienteParaAdotarNonce,
   idDoEnvio,
-  idsDoEnvelope,
+  idsFinaisDoEnvio,
   idsDoEnvio,
   lerEnvelopeEstrito,
   lerPendente,
   limparSeIlegivel,
-  mesmoCliente,
+  conflitaCliente,
+  chaveDoCliente,
+  linhasDoId,
   prefixoCliente,
   reservarEnvio,
   type ArmazemEnvelope,
@@ -50,8 +52,8 @@ function aba(arm: ArmazemEnvelope, nonce: string, user = VEND_A) {
   return {
     async enviar(fp: string): Promise<ReservaEnvio> {
       return reservarEnvio(arm, {
-        chave, fingerprint: fp, idCalculado: await idDoEnvio(nonce, fp), idsCalculados: await idsDoEnvio(nonce, fp, ''),
-      }, criar);
+        chave, fingerprint: fp, idCalculado: await idDoEnvio(nonce, fp), idsCalculados: await idsDoEnvio(nonce, fp),
+      }, (id) => ({ ...criar(id), nonce })); // como o hook: o envelope novo leva o nonce da cópia
     },
     concluir(r: ReservaEnvio) { if (r.decisao === 'new' || r.decisao === 'reuse') concluirEnvio(arm, chave, r.envelope.checkoutId); },
   };
@@ -260,7 +262,7 @@ describe('concluir, limpar e gravar sem atropelar outra aba', () => {
       },
     };
     const [i1, i2] = [await idDoEnvio('N1', FP1), await idDoEnvio('N2', FP1)]; // duas cópias, mesmo carrinho
-    const res = async (id: string) => reservarEnvio(arm, { chave: KA, fingerprint: FP1, idCalculado: id, idsCalculados: await idsDoEnvio(id, FP1, '') }, criar);
+    const res = async (id: string) => reservarEnvio(arm, { chave: KA, fingerprint: FP1, idCalculado: id, idsCalculados: await idsDoEnvio(id, FP1) }, criar);
     const [a, b] = await Promise.all([comTravaEntreAbas('t', () => res(i1), travas), comTravaEntreAbas('t', () => res(i2), travas)]);
     expect([a.decisao, b.decisao]).toEqual(['new', 'reuse']);
     expect(idDe(b)).toBe(idDe(a));
@@ -277,11 +279,12 @@ describe('auxiliares', () => {
     expect(prefixoCliente('#oben:1:2:10.00')).toBe('');
     expect(prefixoCliente('sem-cerquilha')).toBe('');
   });
-  it('mesmoCliente: compartilhar uma identidade não-vazia; código 0 não identifica', () => {
-    expect(mesmoCliente({ codigo_cliente: 123 }, { codigo_cliente: '123', local_user_id: 'u' })).toBe(true);
-    expect(mesmoCliente({ codigo_cliente: 123 }, { codigo_cliente: 124 })).toBe(false);
-    expect(mesmoCliente({ codigo_cliente: 0 }, { codigo_cliente: 0 })).toBe(false);
-    expect(mesmoCliente(null, { codigo_cliente: 1 })).toBe(false);
+  it('conflitaCliente: só um campo presente NOS DOIS que diverge; código 0 não identifica', () => {
+    expect(conflitaCliente({ codigo_cliente: 123 }, { codigo_cliente: '123', local_user_id: 'u' })).toBe(false);
+    expect(conflitaCliente({ codigo_cliente: 123 }, { codigo_cliente: 124 })).toBe(true);
+    expect(conflitaCliente({ codigo_cliente: 0 }, { codigo_cliente: 5 })).toBe(false);
+    expect(conflitaCliente({ codigo_cliente_colacor: 55 }, { local_user_id: 'u1' })).toBe(false);
+    expect(conflitaCliente(null, { codigo_cliente: 1 })).toBe(false);
   });
   it('classificarMudancaOutraAba', () => {
     expect(classificarMudancaOutraAba(JSON.stringify({ checkoutId: 'x', fingerprint: 'f', committed: true }), null)).toBe('enviou');
@@ -293,19 +296,25 @@ describe('auxiliares', () => {
 
 // ─── P0 do Codex no PR 2.2: um id POR CONTA + o nonce que sobrevive à restauração sem cliente ───
 // O "servidor": `sales_orders` com UNIQUE (checkout_id, account) e `pedido_por_checkout` — o mesmo id na
-// mesma conta devolve o PV que já existe (nunca um 2º); id novo cria PV novo.
+// mesma conta devolve o PV que já existe (nunca um 2º); id novo cria PV novo. A OS: idempotente por orderId.
+type Cli = { local_user_id?: string | null; codigo_cliente?: number | null; codigo_cliente_colacor?: number | null };
+const C55: Cli = { local_user_id: null, codigo_cliente: 0, codigo_cliente_colacor: 55 };
+const C99: Cli = { local_user_id: null, codigo_cliente: 0, codigo_cliente_colacor: 99 };
+const C123: Cli = { local_user_id: null, codigo_cliente: 123, codigo_cliente_colacor: 55 };
 function servidor() {
   const pvs = new Map<string, { account: string; itens: string }>();
   return {
-    enviar(r: ReservaEnvio, fp: string) {
+    async enviar(r: ReservaEnvio, fp: string, cliente: Cli = C123, assinaturaOs = '') {
       if (r.decisao !== 'new' && r.decisao !== 'reuse') throw new Error(`não enviou: ${r.decisao}`);
-      const ids = idsDoEnvelope(r.envelope);
+      const f = await idsFinaisDoEnvio(r.envelope, cliente, assinaturaOs);
+      if (f.estado === 'corrompido') throw new Error('corrompido');
       for (const conta of ['oben', 'colacor'] as const) {
         const itens = fp.slice(fp.indexOf('#') + 1).split('|').filter(l => l.startsWith(`${conta}:`)).join('|');
         if (!itens) continue;
-        const k = `${ids[conta]}|${conta}`;
+        const k = `${f.ids[conta]}|${conta}`;
         if (!pvs.has(k)) pvs.set(k, { account: conta, itens });
       }
+      if (assinaturaOs) { const k = `${f.ids.afiacao}|afiacao`; if (!pvs.has(k)) pvs.set(k, { account: 'afiacao', itens: assinaturaOs }); }
     },
     pvsDa(conta: string) { return [...pvs.values()].filter(p => p.account === conta); },
   };
@@ -322,50 +331,46 @@ describe('P0 Codex 2.2 — id por conta: mudar uma conta não muda o id da outra
     const a = aba(arm, 'nonce-rascunho');
     const b = aba(arm, 'nonce-rascunho'); // B restaurou o MESMO rascunho (mesmo nonce)
     const ra = await a.enviar(FP_AB);
-    srv.enviar(ra, FP_AB);
+    await srv.enviar(ra, FP_AB);
     a.concluir(ra); // sucesso TOTAL de A: o envelope sai do armazém
     const rb = await b.enviar(FP_AB_COLACOR_MUDOU);
     expect(rb.decisao).toBe('new');
-    srv.enviar(rb, FP_AB_COLACOR_MUDOU);
+    await srv.enviar(rb, FP_AB_COLACOR_MUDOU);
     expect(srv.pvsDa('oben')).toHaveLength(1); // a Oben de B achou a de A (mesmo id) — sem duplicar
     expect(srv.pvsDa('colacor')).toHaveLength(2); // a Colacor mudou de verdade: é outro pedido
   });
 
-  it('mudar só a Oben não muda o id Colacor nem o da OS; mudar a OS não muda os de produto', async () => {
-    const base = await idsDoEnvio('n', FP_AB, 'os-x');
-    const obenMudou = await idsDoEnvio('n', FP_AB_OBEN_MUDOU, 'os-x');
+  it('mudar só a Oben não muda a base Colacor nem a da OS', async () => {
+    const base = await idsDoEnvio('n', FP_AB);
+    const obenMudou = await idsDoEnvio('n', FP_AB_OBEN_MUDOU);
     expect(obenMudou.oben).not.toBe(base.oben);
     expect(obenMudou.colacor).toBe(base.colacor);
     expect(obenMudou.afiacao).toBe(base.afiacao);
-    const osMudou = await idsDoEnvio('n', FP_AB, 'os-y');
-    expect(osMudou.afiacao).not.toBe(base.afiacao);
-    expect(osMudou.oben).toBe(base.oben);
-    expect(osMudou.colacor).toBe(base.colacor);
   });
 
-  it('os três ids são distintos entre si, independem do cliente e da ordem, e outro nonce dá outros ids', async () => {
-    const ids = await idsDoEnvio('n', FP_AB, '');
+  it('as três bases são distintas, independem do cliente e da ordem, e outro nonce dá outras', async () => {
+    const ids = await idsDoEnvio('n', FP_AB);
     expect(new Set([ids.oben, ids.colacor, ids.afiacao]).size).toBe(3);
-    expect(await idsDoEnvio('n', '456#colacor:7:1:5.00|oben:1:2:10.00', '')).toEqual(ids);
-    const outro = await idsDoEnvio('outro-nonce', FP_AB, '');
+    expect(await idsDoEnvio('n', '456#colacor:7:1:5.00|oben:1:2:10.00')).toEqual(ids);
+    const outro = await idsDoEnvio('outro-nonce', FP_AB);
     expect(outro.oben).not.toBe(ids.oben);
     expect(outro.colacor).not.toBe(ids.colacor);
     expect(outro.afiacao).not.toBe(ids.afiacao);
-    await expect(idsDoEnvio('', FP_AB, '')).rejects.toThrow('idsDoEnvio: nonce vazio');
+    await expect(idsDoEnvio('', FP_AB)).rejects.toThrow('idsDoEnvio: nonce vazio');
   });
 
-  it('o envelope novo CONGELA os ids; o reuse devolve os MESMOS; o legado usa o checkoutId em todas', async () => {
+  it('o envelope novo CONGELA as bases; o reuse devolve as MESMAS; o legado usa o checkoutId em todas', async () => {
     const arm = armazem();
     const a = aba(arm, 'n');
     const r1 = await a.enviar(FP_AB);
     const r2 = await a.enviar(FP_AB); // reenvio (falha parcial): reuse
-    expect(r2.decisao).toBe('reuse');
-    if ((r1.decisao !== 'new') || r2.decisao !== 'reuse') throw new Error('decisões');
-    expect(idsDoEnvelope(r2.envelope)).toEqual(await idsDoEnvio('n', FP_AB, ''));
-    expect(idsDoEnvelope(r2.envelope)).toEqual(idsDoEnvelope(r1.envelope));
+    if (r1.decisao !== 'new' || r2.decisao !== 'reuse') throw new Error('decisões');
+    expect(r2.envelope.idsPorConta).toEqual(await idsDoEnvio('n', FP_AB));
+    expect(await idsFinaisDoEnvio(r2.envelope, C123, 'os')).toEqual(await idsFinaisDoEnvio(r1.envelope, C123, 'os'));
     const legado: CheckoutEnvelope = { checkoutId: 'id-da-main', fingerprint: FP_AB, committed: true };
-    expect(idsDoEnvelope(legado)).toEqual({ oben: 'id-da-main', colacor: 'id-da-main', afiacao: 'id-da-main' });
-    expect(idsDoEnvelope({ ...legado, idsPorConta: { oben: 'x', colacor: '', afiacao: 'z' } }).colacor).toBe('id-da-main');
+    const ids = { oben: 'id-da-main', colacor: 'id-da-main', afiacao: 'id-da-main' };
+    expect(await idsFinaisDoEnvio(legado, C123, 'os')).toEqual({ estado: 'legado', ids });
+    expect(await idsFinaisDoEnvio({ ...legado, idsPorConta: null }, C123, 'os')).toEqual({ estado: 'legado', ids });
   });
 });
 
@@ -376,26 +381,26 @@ describe('P0 Codex 2.2 — o nonce sobrevive à restauração antes de o cliente
   it('cenário 1: código Oben 0, rascunho restaurado SEM cliente na tela → adota o nonce e NÃO nasce 2º PV Colacor', async () => {
     const arm = armazem();
     const srv = servidor();
-    const FP_C = '#colacor:7:1:5.00'; // customerKey '' (sem usuário local, código Oben 0)
+    const FP_C = 'colacor:55#colacor:7:1:5.00';
     const ra = await aba(arm, 'nonce-de-A').enviar(FP_C);
-    srv.enviar(ra, FP_C);
+    await srv.enviar(ra, FP_C, C55);
     aba(arm, 'nonce-de-A').concluir(ra);
     // A aba B restaura o rascunho de A antes de o cliente carregar (identidade atual = null).
     const dono = clienteParaAdotarNonce('nonce-de-A', DONO, null);
     expect(dono).not.toBeNull();
-    // O cliente chega: o efeito de troca de cliente mantém o nonce (é o MESMO cliente).
-    expect(mesmoCliente(dono, { local_user_id: null, codigo_cliente: 0, codigo_cliente_colacor: 55 })).toBe(true);
+    // O cliente chega: o efeito de troca de cliente mantém o nonce (não conflita).
+    expect(conflitaCliente(dono, C55)).toBe(false);
     const rb = await aba(arm, 'nonce-de-A').enviar(FP_C);
-    srv.enviar(rb, FP_C);
+    await srv.enviar(rb, FP_C, C55);
     expect(srv.pvsDa('colacor')).toHaveLength(1);
   });
 
   it('o cliente que chega é OUTRO → o efeito derruba o nonce (nunca "já enviado" com o PV de outro cliente)', () => {
     const dono = clienteParaAdotarNonce('n', DONO, null);
-    expect(mesmoCliente(dono, { codigo_cliente: 0, codigo_cliente_colacor: 99 })).toBe(false);
+    expect(conflitaCliente(dono, C99)).toBe(true);
   });
 
-  it('com cliente na tela: adota se for o dono (mesclando), recusa se for outro; rascunho sem dono → o da tela', () => {
+  it('com cliente na tela: adota se não conflitar (mesclando), recusa se conflitar; rascunho sem dono → o da tela', () => {
     expect(clienteParaAdotarNonce('n', DONO, { local_user_id: 'u1', codigo_cliente: 0, codigo_cliente_colacor: 55 }))
       .toEqual({ local_user_id: 'u1', codigo_cliente: 0, codigo_cliente_colacor: 55 });
     expect(clienteParaAdotarNonce('n', DONO, { codigo_cliente: 0, codigo_cliente_colacor: 99 })).toBeNull();
@@ -408,5 +413,75 @@ describe('P0 Codex 2.2 — o nonce sobrevive à restauração antes de o cliente
     expect(clienteParaAdotarNonce('n', 'lixo', null)).toBeNull();
     expect(clienteParaAdotarNonce('', DONO, null)).toBeNull();
     expect(clienteParaAdotarNonce(42, DONO, null)).toBeNull();
+  });
+});
+
+describe('Codex no delta do 2.2 — os 7 P0', () => {
+  it('P0 #1: o cliente chega em PEDAÇOS (360: só o usuário local primeiro) → o nonce NÃO cai', () => {
+    const dono = clienteParaAdotarNonce('n', C55, null);
+    const parcial = { local_user_id: 'u-55', codigo_cliente: null, codigo_cliente_colacor: null };
+    expect(conflitaCliente(dono, parcial)).toBe(false);
+    expect(clienteParaAdotarNonce('n', C55, parcial)).toEqual({ local_user_id: 'u-55', codigo_cliente: 0, codigo_cliente_colacor: 55 });
+  });
+
+  it('P0 #2: dois clientes só-Colacor (Oben 0, sem usuário) têm prefixos DIFERENTES; quem tinha prefixo mantém', () => {
+    expect(chaveDoCliente(C55)).toBe('colacor:55');
+    expect(chaveDoCliente(C99)).toBe('colacor:99');
+    expect(chaveDoCliente(C123)).toBe('123');
+    expect(chaveDoCliente({ local_user_id: 'u', codigo_cliente: 123 })).toBe('u');
+    expect(chaveDoCliente({ codigo_cliente: '0', codigo_cliente_colacor: 0 })).toBe('');
+    expect(chaveDoCliente(null)).toBe('');
+  });
+
+  it('P0 #2/#3: o MESMO nonce e carrinho para os clientes 55 e 99 → dois PVs Colacor (nunca o "já enviado" do outro)', async () => {
+    const srv = servidor();
+    const FP = '#colacor:7:1:5.00'; // rascunho legado sem dono: o mesmo nonce nas duas abas
+    const ra = await aba(armazem(), 'N').enviar(FP);
+    const rb = await aba(armazem(), 'N').enviar(FP);
+    await srv.enviar(ra, FP, C55);
+    await srv.enviar(rb, FP, C99);
+    expect(srv.pvsDa('colacor')).toHaveLength(2);
+    const outra = await aba(armazem(), 'N').enviar(FP);
+    await srv.enviar(outra, FP, C55); // o MESMO cliente de novo → acha o seu PV
+    expect(srv.pvsDa('colacor')).toHaveLength(2);
+  });
+
+  it('P0 #4: `idsPorConta` presente mas inválido (ou sem nonce) → corrompido, nunca o checkoutId nas três', async () => {
+    const env: CheckoutEnvelope = { checkoutId: 'c', fingerprint: 'f', committed: true, nonce: 'n', idsPorConta: await idsDoEnvio('n', 'f') };
+    expect((await idsFinaisDoEnvio(env, C123, '')).estado).toBe('ok');
+    const sem = (x: unknown) => idsFinaisDoEnvio({ ...env, idsPorConta: x as CheckoutEnvelope['idsPorConta'] }, C123, '');
+    expect(await sem({ oben: 'x', colacor: 'y' })).toEqual({ estado: 'corrompido' });
+    expect(await sem({ oben: 'x', colacor: '', afiacao: 'z' })).toEqual({ estado: 'corrompido' });
+    expect(await sem('lixo')).toEqual({ estado: 'corrompido' });
+    expect(await idsFinaisDoEnvio({ ...env, nonce: null }, C123, '')).toEqual({ estado: 'corrompido' });
+  });
+
+  it('P0 #6: trocar a COR (mesmo SKU/qtd/preço) muda o id Oben e não muda o Colacor', async () => {
+    const linhas = (cor: string) => linhasDoId([
+      { account: 'oben', omie_codigo_produto: 1, quantity: 2, unit_price: 10, tint_cor_id: cor, tint_formula_id: 'f1' },
+      { account: 'colacor', omie_codigo_produto: 7, quantity: 1, unit_price: 5 },
+    ]);
+    const vermelho = await idsDoEnvio('n', linhas('vermelho'));
+    const azul = await idsDoEnvio('n', linhas('azul'));
+    expect(azul.oben).not.toBe(vermelho.oben);
+    expect(azul.colacor).toBe(vermelho.colacor);
+    expect(linhasDoId([{ account: 'colacor', omie_codigo_produto: 7, quantity: 1, unit_price: 5 }])).toBe('colacor:7:1:5.00:cor=-/-');
+  });
+
+  it('P0 #7: a OS acrescentada após falha parcial vai com o id da assinatura ATUAL → a outra aba acha a MESMA OS', async () => {
+    const srv = servidor();
+    const FP = '123#oben:1:2:10.00|colacor:7:1:5.00';
+    const arm = armazem();
+    const a = aba(arm, 'N');
+    const r1 = await a.enviar(FP);
+    await srv.enviar(r1, FP, C123, ''); // sem afiação; a Colacor "falhou" (o envelope segue)
+    const r2 = await a.enviar(FP); // A acrescentou uma ferramenta: produtos iguais → reuse
+    expect(r2.decisao).toBe('reuse');
+    await srv.enviar(r2, FP, C123, 'ferr-1:svc:1:5000#pg=pix#ent=balcao');
+    a.concluir(r2);
+    const rb = await aba(armazem(), 'N').enviar(FP); // B restaurou o carrinho atualizado (mesmo nonce)
+    await srv.enviar(rb, FP, C123, 'ferr-1:svc:1:5000#pg=pix#ent=balcao');
+    expect(srv.pvsDa('afiacao')).toHaveLength(1);
+    expect(srv.pvsDa('oben')).toHaveLength(1);
   });
 });

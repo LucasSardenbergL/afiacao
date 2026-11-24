@@ -59,20 +59,32 @@ export interface IdentidadeCliente {
 // Código Omie 0 não identifica ninguém (cliente sem cadastro naquela conta) — Codex P1.
 const idDe = (x: unknown) => (x == null || x === '' || x === 0 || x === '0' ? null : String(x));
 
+export const identifica = (c: IdentidadeCliente | null | undefined): c is IdentidadeCliente =>
+  !!c && (idDe(c.local_user_id) !== null || idDe(c.codigo_cliente) !== null || idDe(c.codigo_cliente_colacor) !== null);
+
 /**
- * O MESMO cliente com mais um código (o autocadastro trouxe o Colacor, o app ganhou o usuário local)
- * compartilha ao menos uma identidade não-vazia; cliente trocado não compartilha nenhuma. Decide se o
- * nonce sobrevive a uma mudança do cliente selecionado.
+ * Rodada do Codex no delta (P0 #1): o cliente chega em PEDAÇOS (o 360 entrega o `local_user_id` antes do
+ * código Colacor). "Mesmo cliente" exigia um campo em comum e derrubava o nonce no render intermediário →
+ * 2º PV Colacor. Agora só derruba quando um campo presente NOS DOIS diverge — o cliente trocado de fato
+ * acaba conflitando quando a identidade completa chega, e o id final leva o código da conta (`idsFinaisDoEnvio`).
  */
-export function mesmoCliente(a: IdentidadeCliente | null | undefined, b: IdentidadeCliente | null | undefined): boolean {
+export function conflitaCliente(a: IdentidadeCliente | null | undefined, b: IdentidadeCliente | null | undefined): boolean {
   if (!a || !b) return false;
-  const iguais = (x: unknown, y: unknown) => idDe(x) !== null && idDe(x) === idDe(y);
-  return iguais(a.local_user_id, b.local_user_id) || iguais(a.codigo_cliente, b.codigo_cliente)
-    || iguais(a.codigo_cliente_colacor, b.codigo_cliente_colacor);
+  const diverge = (x: unknown, y: unknown) => idDe(x) !== null && idDe(y) !== null && idDe(x) !== idDe(y);
+  return diverge(a.local_user_id, b.local_user_id) || diverge(a.codigo_cliente, b.codigo_cliente)
+    || diverge(a.codigo_cliente_colacor, b.codigo_cliente_colacor);
 }
 
-const identifica = (c: IdentidadeCliente | null | undefined): c is IdentidadeCliente =>
-  !!c && (idDe(c.local_user_id) !== null || idDe(c.codigo_cliente) !== null || idDe(c.codigo_cliente_colacor) !== null);
+/**
+ * O prefixo do cliente na impressão digital. Rodada do Codex no delta (P0 #2): `local_user_id || código Oben`
+ * dava '' para DOIS clientes só-Colacor (Oben 0) — mesma fp → `reuse` entregava a um os ids do outro.
+ * Cai no código Colacor só quando os dois de antes faltam: quem já tinha prefixo mantém o MESMO (legado).
+ */
+export function chaveDoCliente(c: IdentidadeCliente | null | undefined): string {
+  if (!c) return '';
+  const colacor = idDe(c.codigo_cliente_colacor);
+  return idDe(c.local_user_id) ?? idDe(c.codigo_cliente) ?? (colacor ? `colacor:${colacor}` : '');
+}
 
 /** Junta as identidades do MESMO cliente sem que um campo vazio de `b` apague o preenchido de `a`. */
 export function mesclarIdentidade(a: IdentidadeCliente | null | undefined, b: IdentidadeCliente | null | undefined): IdentidadeCliente | null {
@@ -90,8 +102,8 @@ export function mesclarIdentidade(a: IdentidadeCliente | null | undefined, b: Id
  * Restaurar o rascunho: a QUEM o nonce dele fica ligado (null = não adota — o carrinho ganha nonce novo).
  * P0 do Codex no PR 2.2: o rascunho com código Oben 0 é aplicado ANTES de o cliente carregar e o nonce se
  * perdia → id novo → 2º PV Colacor. Agora o rascunho grava o DONO do nonce (`doRascunho`), e o nonce é
- * adotado ligado a ele mesmo sem cliente na tela; o efeito de troca de cliente (`mesmoCliente`) o derruba
- * se o cliente que chegar for outro. Sem dono gravado e sem cliente na tela → não adota (nunca um nonce
+ * adotado ligado a ele mesmo sem cliente na tela; o efeito de troca de cliente (`conflitaCliente`) o
+ * derruba se o cliente que chegar for outro. Sem dono gravado e sem cliente na tela → não adota (nunca um nonce
  * sem dono, que daria "já enviado" com o PV de outro cliente).
  */
 export function clienteParaAdotarNonce(
@@ -109,7 +121,7 @@ export function clienteParaAdotarNonce(
   } : null;
   const dono = identifica(lido) ? lido : null;
   if (!identifica(atual)) return dono;
-  if (dono && !mesmoCliente(dono, atual)) return null;
+  if (dono && conflitaCliente(dono, atual)) return null;
   return mesclarIdentidade(dono, atual);
 }
 
@@ -130,36 +142,78 @@ export async function idDoEnvio(nonce: string, fingerprint: string): Promise<str
   return hashUuid(`checkout-v1|${nonce}|${assinaturaItens(fingerprint)}`);
 }
 
-/** As linhas de UMA conta de produto na impressão digital (`<conta>:<sku>:...`), em ordem estável. */
+/** Um item de produto como entra no id por conta: o da impressão digital MAIS a cor (tingimento). */
+export interface ItemDoId {
+  account: string; omie_codigo_produto: number | string; quantity: number; unit_price: number;
+  tint_cor_id?: string | null; tint_formula_id?: string | null;
+}
+
+/**
+ * As linhas que derivam os ids por conta (`<conta>:<sku>:<qtd>:<preço>:cor=<cor>/<fórmula>`). Rodada do
+ * Codex no delta (P0 #6): a impressão digital não tem a cor — vermelho→azul do mesmo SKU/qtd/preço dava o
+ * MESMO id Oben e o reenvio respondia "já enviado" com a cor errada no Omie.
+ */
+export function linhasDoId(itens: ReadonlyArray<ItemDoId>): string {
+  return itens.map(i => `${i.account}:${i.omie_codigo_produto}:${i.quantity}:${i.unit_price.toFixed(2)}:cor=${i.tint_cor_id ?? '-'}/${i.tint_formula_id ?? '-'}`)
+    .sort().join('|');
+}
+
+/** As linhas de UMA conta (`<conta>:<sku>:...`, com ou sem prefixo `<cliente>#`), em ordem estável. */
 function itensDaConta(fingerprint: string, conta: 'oben' | 'colacor'): string {
   const sig = assinaturaItens(fingerprint);
   return sig ? sig.split('|').filter(l => l.startsWith(`${conta}:`)).sort().join('|') : '';
 }
 
 /**
- * Os ids que vão ao servidor num envelope NOVO, um POR CONTA: SHA(nonce, conta, itens DAQUELA conta) —
- * Oben e Colacor pela impressão digital, a OS pela `assinaturaServicosAfiacao`. P0 do Codex no PR 2.2:
- * com um id só sobre o carrinho inteiro, a aba B que mudava só a quantidade Colacor mudava também o id
- * Oben → 2º PV Oben idêntico. Só o nonce não basta: engoliria um 2º pedido legítimo de outra aba.
+ * As BASES dos ids por conta, congeladas num envelope NOVO: SHA(nonce, conta, itens DAQUELA conta) — as
+ * linhas vêm de `linhasDoId` (com cor) ou de uma impressão digital. P0 do Codex no PR 2.2: com um id só
+ * sobre o carrinho inteiro, a aba B que mudava só a quantidade Colacor mudava também o id Oben → 2º PV
+ * Oben idêntico. Só o nonce não basta: engoliria um 2º pedido legítimo de outra aba. A base da OS é só
+ * (nonce): a assinatura dos serviços entra no ENVIO (`idsFinaisDoEnvio`), não congelada.
  */
-export async function idsDoEnvio(nonce: string, fingerprint: string, assinaturaAfiacao: string): Promise<IdsPorConta> {
+export async function idsDoEnvio(nonce: string, linhas: string): Promise<IdsPorConta> {
   if (!nonce) throw new Error('idsDoEnvio: nonce vazio');
   const [oben, colacor, afiacao] = await Promise.all([
-    hashUuid(`checkout-v2|${nonce}|oben|${itensDaConta(fingerprint, 'oben')}`),
-    hashUuid(`checkout-v2|${nonce}|colacor|${itensDaConta(fingerprint, 'colacor')}`),
-    hashUuid(`checkout-v2|${nonce}|afiacao|${assinaturaAfiacao}`),
+    hashUuid(`checkout-v2|${nonce}|oben|${itensDaConta(linhas, 'oben')}`),
+    hashUuid(`checkout-v2|${nonce}|colacor|${itensDaConta(linhas, 'colacor')}`),
+    hashUuid(`checkout-v2|${nonce}|afiacao`),
   ]);
   return { oben, colacor, afiacao };
 }
 
 const ehId = (x: unknown): x is string => typeof x === 'string' && x.length > 0;
 
-/** Os ids por conta CONGELADOS no envelope; legado (sem `idsPorConta`) → o `checkoutId` em todas, como
- *  a main enviava — o reenvio de um envio parcial antigo acha a MESMA linha/OS. */
-export function idsDoEnvelope(e: CheckoutEnvelope): IdsPorConta {
+export type IdsDoEnvio =
+  | { estado: 'legado' | 'ok'; ids: IdsPorConta }
+  | { estado: 'corrompido' };
+
+/**
+ * Os ids que VÃO ao servidor, calculados NO ENVIO (depois do autocadastro, com o cliente efetivo):
+ *  - envelope legado (sem `idsPorConta`) → o `checkoutId` em todas, como a main enviava;
+ *  - `idsPorConta` presente mas inválido, ou sem o nonce → `corrompido`: BARRA o envio (P0 #4 — cair no
+ *    `checkoutId` trocava também a conta íntegra e a Oben já enviada saía de novo);
+ *  - ok → cada base + o código do cliente NAQUELA conta (P0 #2/#3: dois clientes com o mesmo carrinho
+ *    e nonce nunca recebem o "já enviado" um do outro); a OS = (nonce, cliente, assinatura ATUAL dos
+ *    serviços) — P0 #7: congelada, a ferramenta acrescentada depois de uma falha parcial dava 2 OS.
+ */
+export async function idsFinaisDoEnvio(
+  e: CheckoutEnvelope,
+  cliente: IdentidadeCliente | null | undefined,
+  assinaturaAfiacao: string,
+): Promise<IdsDoEnvio> {
   const ids = e.idsPorConta;
-  if (ids && ehId(ids.oben) && ehId(ids.colacor) && ehId(ids.afiacao)) return { oben: ids.oben, colacor: ids.colacor, afiacao: ids.afiacao };
-  return { oben: e.checkoutId, colacor: e.checkoutId, afiacao: e.checkoutId };
+  if (ids === undefined || ids === null) {
+    return { estado: 'legado', ids: { oben: e.checkoutId, colacor: e.checkoutId, afiacao: e.checkoutId } };
+  }
+  if (typeof ids !== 'object' || !ehId(ids.oben) || !ehId(ids.colacor) || !ehId(ids.afiacao) || !ehId(e.nonce)) {
+    return { estado: 'corrompido' };
+  }
+  const [oben, colacor, afiacao] = await Promise.all([
+    hashUuid(`checkout-v2-cli|${ids.oben}|${idDe(cliente?.codigo_cliente) ?? '-'}`),
+    hashUuid(`checkout-v2-cli|${ids.colacor}|${idDe(cliente?.codigo_cliente_colacor) ?? '-'}`),
+    hashUuid(`checkout-v2-os|${ids.afiacao}|${chaveDoCliente(cliente) || '-'}|${assinaturaAfiacao}`),
+  ]);
+  return { estado: 'ok', ids: { oben, colacor, afiacao } };
 }
 
 function valido(x: unknown): x is CheckoutEnvelope {

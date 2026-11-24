@@ -30,7 +30,7 @@ import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import {
   CHAVE_ENVELOPE_LEGADA, chaveEnvelope, classificarMudancaOutraAba, comTravaEntreAbas, concluirEnvio, gravarSeAindaFor,
-  clienteParaAdotarNonce, idDoEnvio, idsDoEnvelope, idsDoEnvio, lerPendente, limparSeIlegivel, mesclarIdentidade, mesmoCliente,
+  chaveDoCliente, clienteParaAdotarNonce, conflitaCliente, idDoEnvio, identifica, idsDoEnvio, idsFinaisDoEnvio, lerPendente, limparSeIlegivel, linhasDoId, mesclarIdentidade,
   nomeDaTrava, reservarEnvio,
   type ArmazemEnvelope, type IdentidadeCliente,
 } from '@/services/orderSubmission/envelope-armazenado';
@@ -446,7 +446,7 @@ export function useUnifiedOrder() {
   const identidadeAtualRef = useRef(identidadeAtual);
   identidadeAtualRef.current = identidadeAtual;
   // O prefixo da impressão digital (o `customerKey` do envio): é por ele que o legado é deste cliente.
-  const prefixoClienteAtual = String(selectedCustomer?.local_user_id || selectedCustomer?.codigo_cliente || '');
+  const prefixoClienteAtual = chaveDoCliente(identidadeAtual);
   const prefixoClienteRef = useRef(prefixoClienteAtual);
   prefixoClienteRef.current = prefixoClienteAtual;
   const userIdEnv = user?.id ?? null;
@@ -467,7 +467,9 @@ export function useUnifiedOrder() {
     if (submittingRef.current) return; // nunca re-apontar o envelope em voo (reroda no fim: `submitting`)
     const atual = identidadeAtualRef.current;
     // Cliente TROCADO sem passar pelo "Trocar e limpar": o nonce não atravessa para o outro cliente.
-    if (nonceRef.current && atual && !mesmoCliente(clienteDoNonceRef.current, atual)) definirNonce(null);
+    // Codex no delta (P0 #1): só um campo que DIVERGE derruba — o cliente chega em pedaços (360).
+    const dono = clienteDoNonceRef.current;
+    if (nonceRef.current && atual && (!identifica(dono) || conflitaCliente(dono, atual))) definirNonce(null);
     else if (nonceRef.current && atual) ligarDonoDoNonce(mesclarIdentidade(clienteDoNonceRef.current, atual));
     espelharPendente();
   }, [userIdEnv, prefixoClienteAtual, selectedCustomer?.codigo_cliente_colacor, submitting, definirNonce, ligarDonoDoNonce, espelharPendente]);
@@ -1098,7 +1100,7 @@ export function useUnifiedOrder() {
     // abaixo fazia `return` sem soltar a ref e todo envio seguinte morria calado.
     await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
       // Impressão digital do pedido de produto (oben+colacor) + cliente.
-      const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+      const customerKey = chaveDoCliente(identidadeAtualRef.current);
       const fpItems = [
         ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
         ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
@@ -1118,8 +1120,11 @@ export function useUnifiedOrder() {
       const idCalculado = await idDoEnvio(nonceRef.current as string, fingerprint);
       // P0 do Codex no PR 2.2: o que vai ao servidor é um id POR CONTA (itens daquela conta) — a aba que
       // muda só a Colacor não muda o id Oben, e o servidor (`pedido_por_checkout`) não duplica a Oben.
-      const idsCalculados = await idsDoEnvio(nonceRef.current as string, fingerprint,
-        assinaturaAfiacaoDoCarrinho(serviceItems, getServicePrice, afiacaoPaymentMethod, deliveryOption));
+      // Com a COR (P0 #6 do Codex no delta): a impressão digital não a tem.
+      const idsCalculados = await idsDoEnvio(nonceRef.current as string, linhasDoId([
+        ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price, tint_cor_id: c.tint_cor_id ?? null, tint_formula_id: c.tint_formula_id ?? null })),
+        ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price, tint_cor_id: c.tint_cor_id ?? null, tint_formula_id: c.tint_formula_id ?? null })),
+      ]));
       const reserva = await comTravaEntreAbas(nomeDaTrava(userIdTrava), () => reservarEnvio(arm, {
         chave: chaveDoUsuario, fingerprint, idCalculado, idsCalculados,
       }, (id) => {
@@ -1166,6 +1171,12 @@ export function useUnifiedOrder() {
         });
         return;
       }
+      // Codex no delta (P0 #5): no `reuse` o envio é o do ENVELOPE (outra cópia pode tê-lo criado) — adota
+      // o nonce dele antes de gravar o rascunho, senão o rascunho guarda um nonce que não gerou o PV.
+      const nonceDoEnvelope = reserva.envelope.nonce;
+      if (typeof nonceDoEnvelope === 'string' && nonceDoEnvelope && nonceDoEnvelope !== nonceRef.current) {
+        definirNonce(nonceDoEnvelope, mesclarIdentidade(clienteDoNonceRef.current, identidadeAtualRef.current));
+      }
       cicloRascunhoRef.current.aoComprometer?.(); // o envelope já foi gravado pela reserva acima
       const checkoutId = checkoutEnvRef.current.checkoutId;
       try {
@@ -1178,6 +1189,16 @@ export function useUnifiedOrder() {
         // submitOrderService segue como rede pra conta sem identidade.
         const ensuredCustomer = await waitForAccountEnsure();
         const effectiveCustomer = ensuredCustomer ?? selectedCustomer;
+        // Os ids que vão ao servidor: base congelada + código do cliente NAQUELA conta; a OS pela assinatura
+        // ATUAL. `idsPorConta` ilegível BARRA (P0 #4) — nunca cai no checkoutId de todas.
+        const idsDoServidor = await idsFinaisDoEnvio(checkoutEnvRef.current, effectiveCustomer,
+          assinaturaAfiacaoDoCarrinho(serviceItems, getServicePrice, afiacaoPaymentMethod, deliveryOption));
+        if (idsDoServidor.estado === 'corrompido') {
+          toast.error('Não foi possível conferir se este pedido já foi enviado', {
+            description: 'O registro de envio deste navegador está corrompido. Confira no Omie antes de reenviar; se não houver pedido, use "Trocar e limpar" e monte de novo.',
+          });
+          return;
+        }
         const result = await submitOrderService({
           customer: effectiveCustomer,
           customerUserId,
@@ -1204,8 +1225,8 @@ export function useUnifiedOrder() {
           supabase,
           isCustomerMode,
           checkoutId,
-          // Os ids CONGELADOS no envelope (legado sem eles → `checkoutId` em todas, como a main).
-          idsPorConta: idsDoEnvelope(checkoutEnvRef.current),
+          // Legado sem eles → `checkoutId` em todas, como a main.
+          idsPorConta: idsDoServidor.ids,
           // Lê do ENVELOPE congelado (nunca da URL ao vivo). Fallback defensivo p/ envelopes
           // legados (criados antes desta fase, sem os campos da ponte).
           origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
