@@ -32,11 +32,36 @@ import { modoClientes, registrarUsoClientes, type ModoClientes } from '@/lib/nav
 import type { Customer, ClientScore } from './types';
 import { rotuloUltimoContato } from './ultimoContato';
 import { useUltimoContato } from './useUltimoContato';
+import { explicarPrioridade } from '@/lib/scoring/prioridadeValor';
 
 /** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
 const TEXTO_AJUDA_PRIORIDADE =
-  'Nota que ordena quem contatar primeiro: quanto maior, mais cedo. Junta o risco de perder o cliente, '
-  + 'a hora da recompra e a meta. "—" = sem histórico de compra: não entra na fila de recompra.';
+  'Nota que ordena quem contatar primeiro: quanto maior, mais cedo. No topo, quem passou da recompra '
+  + 'habitual — quanto mais compra e mais atrasado, maior. Depois quem está em dia; por último, os '
+  + 'inativos (fila de reativação). Passe o mouse na nota para ver o porquê. '
+  + '"—" = sem histórico de compra: não entra na fila de recompra.';
+
+/** Nota da prioridade com os 2–3 fatores que a decidiram (tooltip). Sem fatores confirmáveis, só a nota. */
+function NotaPrioridade({ valor, fatores }: { valor: number; fatores: string[] | null }) {
+  const nota = <span className="text-xs font-semibold tabular-nums">{fmtPrioridade(valor)}</span>;
+  if (!fatores) return nota;
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" aria-label={`Prioridade ${fmtPrioridade(valor)}: ${fatores.join('; ')}`} className="cursor-help underline decoration-dotted underline-offset-2">
+            {nota}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-72 text-left font-normal">
+          <ul className="space-y-0.5">
+            {fatores.map((f) => <li key={f}>{f}</li>)}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 export function CustomerListView({
   customers,
@@ -542,7 +567,7 @@ export function CustomerListView({
                     </td>
                     <td className="px-3 py-2.5 text-right hidden md:table-cell">
                       {metricas?.prioridade != null ? (
-                        <span className="text-xs font-semibold tabular-nums">{fmtPrioridade(metricas.prioridade)}</span>
+                        <NotaPrioridade valor={metricas.prioridade} fatores={score ? explicarPrioridade(score, fmtGasto) : null} />
                       ) : <span className="text-xs text-muted-foreground">{NAO_APURADO}</span>}
                     </td>
                     <td className="px-2 py-2.5">

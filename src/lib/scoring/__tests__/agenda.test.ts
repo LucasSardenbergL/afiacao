@@ -40,8 +40,12 @@ describe('signalPriorityNudge', () => {
 
   it('{} (default vazio sem breakdown) → 0, não quebra', () => {
     const empty = {} as unknown as ScoreAdjustment;
-    expect(() => signalPriorityNudge(empty)).not.toThrow();
     expect(signalPriorityNudge(empty)).toBe(0);
+    // Marca do RAMO (não "não lançou"): deltas presentes SEM breakdown caem no guard e valem 0 —
+    // a aritmética daria 40*0.5 + 40*0.5 = 40. Sem o guard, este caso falha por valor, não por exceção.
+    const semBreakdown = { churn_delta: 40, expansion_delta: 40 } as unknown as ScoreAdjustment;
+    expect(signalPriorityNudge(semBreakdown)).toBe(0);
+    expect(signalPriorityNudge({ ...semBreakdown, breakdown: {} } as unknown as ScoreAdjustment)).toBe(40);
   });
 
   it('soma ponderada churn*0.5 + expansion*0.5 + eff*0.3', () => {
@@ -150,5 +154,23 @@ describe('agenda: expansão sem insumo (money-path)', () => {
     })]);
     expect(item.agenda_type).toBe('expansao');
     expect(item.insumo_expansao_ausente).toBe(false);
+  });
+});
+
+describe('nota ausente ≠ zero (onda A)', () => {
+  it('effectivePriority(null) → null: o nudge não fabrica nota a partir do 0', () => {
+    expect(effectivePriority(null, mkAdjustment({ churn_delta: 40 }))).toBeNull();
+  });
+
+  it('buildAgendaItems: priority_score null atravessa como null e ordena no FIM do grupo', () => {
+    const items = buildAgendaItems([
+      mkRow({ customer_user_id: 'sem-nota', priority_score: null }),
+      mkRow({ customer_user_id: 'baixa', priority_score: 1 }),
+      mkRow({ customer_user_id: 'alta', priority_score: 80 }),
+    ]);
+    expect(items.map((i) => i.customer_user_id)).toEqual(['alta', 'baixa', 'sem-nota']);
+    const semNota = items.find((i) => i.customer_user_id === 'sem-nota')!;
+    expect(semNota.base_priority_score).toBeNull();
+    expect(semNota.priority_score).toBeNull();
   });
 });

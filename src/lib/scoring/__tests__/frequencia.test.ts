@@ -171,7 +171,9 @@ describe('paridade TS ↔ edge (calculate-scores)', () => {
   it('a edge USA o módulo nos dois scores e persiste o intervalo', () => {
     expect(edge).toContain('../_shared/frequencia-recompra.ts');
     expect(edge).toMatch(/scoreFrequencia\s*\(/);
-    expect(edge).toMatch(/componenteRecompra\s*\(/);
+    // v1.9: componenteRecompra saiu da prioridade (exposição ao atraso, prioridadeValor.test.ts) — a edge
+    // não pode voltar a usá-lo sem o teste de paridade da regra nova reprovar.
+    expect(edge).not.toMatch(/componenteRecompra\s*\(/);
     expect(edge).toMatch(/classeSaude\s*\(/);
     expect(edge).toContain('intervalo_mediano_dias');
     expect(edge).toMatch(/avg_repurchase_interval:\s*client\.avg_repurchase_interval/);
