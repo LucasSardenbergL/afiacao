@@ -4458,6 +4458,12 @@ Deno.serve(async (req) => {
 
         const opItemsTyped: OpItemInput[] = opItems;
         const createdOPs: CreatedOP[] = [];
+        // Data prometida: a do item, senão a do PEDIDO LOCAL (front antigo não manda no item).
+        // Leitura que falha não fabrica prazo — degrada para hoje na OP e prazo nulo, como antes.
+        const { data: opSoRow, error: opSoErr } = await supabaseAdmin
+          .from("sales_orders").select("ready_by_date").eq("id", opSalesId).maybeSingle();
+        if (opSoErr) console.warn(`[Omie Vendas][${account}] OP sem prazo do pedido (leitura falhou): ${opSoErr.message}`);
+        const prazoDoPedido = (opSoRow as { ready_by_date?: unknown } | null)?.ready_by_date;
         for (const opItem of opItemsTyped) {
           // Create production order in Omie
           const opPayload = {
@@ -4469,7 +4475,7 @@ Deno.serve(async (req) => {
             nQtde: opItem.quantidade,
             // Previsão da PRODUÇÃO = a data prometida ao cliente (já gravada em production_orders.ready_by_date
             // logo abaixo); sem ela, hoje. ./o-que-vai-ao-omie.ts.
-            dDtPrevisao: previsaoOrdemProducao(opItem.ready_by_date, hojeSP()),
+            dDtPrevisao: previsaoOrdemProducao(opItem.ready_by_date || prazoDoPedido, hojeSP()),
             cObservacao: `Gerado automaticamente via App - Pedido ${opSalesId.substring(0, 8)}`,
           };
 
@@ -4502,7 +4508,7 @@ Deno.serve(async (req) => {
             omie_ordem_producao_id: omieOrdemId,
             omie_ordem_numero: omieOrdemNumero,
             assigned_to: opItem.assigned_to || null,
-            ready_by_date: opItem.ready_by_date || null,
+            ready_by_date: opItem.ready_by_date || (typeof prazoDoPedido === "string" ? prazoDoPedido : null),
             account,
             created_by: userId,
           }).select('id').single();

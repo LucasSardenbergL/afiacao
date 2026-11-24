@@ -11,7 +11,7 @@ import { montarParcelasOS, parcelasComValor } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
-import { modalidadeDaOs } from "./modalidade-os.ts";
+import { enderecoDaOs, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -496,6 +496,8 @@ type PedidoOS = {
   payment_method?: string;
   /** Modalidade escolhida no Novo Pedido (`DeliveryOption`); o front antigo não envia. */
   delivery_option?: string;
+  /** Turno (id de TIME_SLOTS) quando há coleta/entrega. */
+  time_slot?: string | null;
 };
 
 // Payload do IncluirOS — inalterado, exceto a chave: `cCodIntOS` agora é determinística do pedido
@@ -1147,6 +1149,9 @@ Deno.serve(async (req) => {
             delivery_fee: orderData.delivery_fee || 0,
             total: orderData.total || 0,
             delivery_option: modalidade.valor,
+            // Endereço e turno ESCOLHIDOS: sem eles a parada da rota caía no endereço padrão, sem turno.
+            address: enderecoDaOs(modalidade.valor, addressData),
+            time_slot: turnoDaOs(modalidade.valor, orderData.time_slot),
             notes: orderData.notes || null,
             status: 'pedido_recebido',
           }, { onConflict: "id", ignoreDuplicates: true });

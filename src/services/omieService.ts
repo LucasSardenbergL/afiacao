@@ -13,6 +13,8 @@ interface OrderData {
   notes?: string;
   /** Modalidade escolhida (`DeliveryOption`) — a edge grava em orders.delivery_option. */
   delivery_option?: string;
+  /** Turno escolhido (id de TIME_SLOTS) quando há coleta/entrega. */
+  time_slot?: string | null;
 }
 
 interface ProfileData {

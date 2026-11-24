@@ -25,3 +25,31 @@ Deno.test("valor fora do vocabulário: legado, mas MARCADO inválido (o chamador
   igual(modalidadeDaOs("COLETA_ENTREGA"), { valor: "retirada", invalida: true }, "caixa");
   igual(modalidadeDaOs(3), { valor: "retirada", invalida: true }, "numero");
 });
+
+import { enderecoDaOs, turnoDaOs } from "./modalidade-os.ts";
+
+const FILIAL = { street: "Rua B", number: "10", neighborhood: "Centro", city: "Serra", state: "ES", zip_code: "29160000", complement: "" };
+
+Deno.test("coleta na filial: o endereço ESCOLHIDO vai à OS (sem o vazio), não o padrão do cliente", () => {
+  igual(enderecoDaOs("somente_coleta", FILIAL), { street: "Rua B", number: "10", neighborhood: "Centro", city: "Serra", state: "ES", zip_code: "29160000" }, "filial");
+});
+
+Deno.test("balcão e legado não guardam endereço nem turno", () => {
+  igual(enderecoDaOs("balcao", FILIAL), null, "balcao");
+  igual(enderecoDaOs("retirada", FILIAL), null, "legado");
+  igual(turnoDaOs("balcao", "tarde"), null, "turno-balcao");
+  igual(turnoDaOs("retirada", "tarde"), null, "turno-legado");
+});
+
+Deno.test("endereço ausente/ilegível → null (o roteirizador cai no padrão, como antes)", () => {
+  igual(enderecoDaOs("coleta_entrega", undefined), null, "ausente");
+  igual(enderecoDaOs("coleta_entrega", ["Rua B"]), null, "array");
+  igual(enderecoDaOs("coleta_entrega", { number: "10" }), null, "so-numero");
+  igual(enderecoDaOs("coleta_entrega", { street: 7, city: "Serra" }), { city: "Serra" }, "nao-texto");
+});
+
+Deno.test("turno: o escolhido quando há rota; vazio/não-texto → null", () => {
+  igual(turnoDaOs("somente_entrega", "tarde"), "tarde", "tarde");
+  igual(turnoDaOs("coleta_entrega", ""), null, "vazio");
+  igual(turnoDaOs("coleta_entrega", 2), null, "numero");
+});

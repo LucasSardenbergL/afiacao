@@ -20,3 +20,29 @@ export function modalidadeDaOs(
   const ausente = v === undefined || v === null || v === "";
   return { valor: MODALIDADE_LEGADA, invalida: !ausente };
 }
+
+// Com a modalidade real a OS entra no roteirizador, que lê `orders.address` (jsonb) e `orders.time_slot`.
+// Sem eles a parada caía no endereço PADRÃO do cliente e perdia o turno (Codex, PR 2.3). Só há rota em
+// coleta/entrega: balcão e o legado não guardam endereço nem turno.
+const CAMPOS_ENDERECO = ["street", "number", "complement", "neighborhood", "city", "state", "zip_code"] as const;
+
+function temRota(modalidade: string): boolean {
+  return modalidade !== "balcao" && modalidade !== MODALIDADE_LEGADA;
+}
+
+/** O endereço escolhido no Novo Pedido, só com os campos de texto que o roteirizador lê; null sem rota/sem dado. */
+export function enderecoDaOs(modalidade: string, endereco: unknown): Record<string, string> | null {
+  if (!temRota(modalidade) || !endereco || typeof endereco !== "object" || Array.isArray(endereco)) return null;
+  const out: Record<string, string> = {};
+  for (const c of CAMPOS_ENDERECO) {
+    const v = (endereco as Record<string, unknown>)[c];
+    if (typeof v === "string" && v.trim()) out[c] = v.trim();
+  }
+  return out.street || out.zip_code || out.city ? out : null;
+}
+
+/** O turno (id de TIME_SLOTS do front) quando há rota; null sem rota/sem dado. */
+export function turnoDaOs(modalidade: string, turno: unknown): string | null {
+  if (!temRota(modalidade)) return null;
+  return typeof turno === "string" && turno.trim() ? turno.trim() : null;
+}
