@@ -43,6 +43,32 @@ SELECT count(*) AS enviados,
 Esperado no 1º dia útil: `com_claim = enviados > 0`. `enviados > 0` com `com_claim = 0` ⇒ a edge
 servida não é a v1.43; `enviados = 0` com pedidos criados e travados ⇒ investigar o claim (fail-closed).
 
+## Medição de 2026-11-24 (1º dia útil passou) — a query acima dá FALSO ALARME
+
+A query acima conta também os **importados** do Omie (`hash_payload LIKE 'omie_%'`), que nunca passam
+pelo claim. Em 24/11 ela deu `25 | 1`, o padrão que o texto lê como "a edge servida não é a v1.43",
+mas os 24 sem claim são importados (13 `importado`, 9 `faturado`, 2 `cancelado`). Use a versão só com
+os pedidos que o APP enviou:
+
+```sql
+SELECT count(*) AS enviados_pelo_app,
+       count(*) FILTER (WHERE envio_omie_reivindicado_em IS NOT NULL) AS com_claim
+  FROM public.sales_orders
+ WHERE omie_pedido_id IS NOT NULL AND hash_payload IS NULL
+   AND created_at > '2026-11-21T15:37:00Z';
+```
+
+Resultado em 24/11: **`1 | 1`**. Esse único envio é o pedido de TESTE do checkout (`1a3c47e6`, PV 13693,
+R$ 1,70), depois excluído no Omie e limpo por `db/2026-11-21-limpeza-pedido-teste-pv13693.sql`. Não
+há nenhum pedido criado pelo app sem PV desde o deploy, ou seja, nada travado no claim. **Sinal positivo,
+mas com denominador 1 e de teste.** O sinal de produto continua sendo o 1º envio de uma vendedora.
+
+`deleted_at` preso (o caso ⏸️ da aba fechada no meio do lote, P2 do #4034): 12 linhas em 24/11, todas
+explicadas e todas gravadas por SQL (`deleted_at = updated_at` até o microssegundo; o front grava com
+precisão de milissegundo): 1 é o teste acima e 11 vêm da limpeza "10 PVs da Oben excluídos no Omie"
+(`9cf5f8d44`, 22/11 00:06Z). Assinatura do caso do front: `deleted_at IS NOT NULL AND
+extract(microseconds FROM deleted_at)::int % 1000 = 0`. **0 ocorrências.**
+
 ## Lições
 
 - **Edge que embute versão de OUTRO PR herda as pré-condições de banco dele.** O handoff falava só
