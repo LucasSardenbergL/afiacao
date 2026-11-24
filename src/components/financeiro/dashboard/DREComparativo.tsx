@@ -7,6 +7,7 @@ import { PieChart } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
 import type { FinDRE } from '@/services/financeiroService';
+import { regimeVigente } from '@/lib/financeiro/dre-helpers';
 
 export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; ano: number }) {
   const companies = Object.keys(data);
@@ -61,7 +62,8 @@ export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; 
                     <div className="flex flex-col items-end">
                       <span>{COMPANIES[t.company as Company]?.shortName || t.company}{t.provisorio ? '*' : ''}</span>
                       <Badge variant="outline" className="text-[10px] mt-0.5">
-                        {COMPANIES[t.company as Company]?.regime === 'simples' ? 'SN' : 'LP'}
+                        {/* regime do ANO exibido (trocas caem em janeiro: colacor SN até 2022, LP desde 2023) */}
+                        {regimeVigente(t.company, ano, 1) === 'simples' ? 'SN' : 'LP'}
                       </Badge>
                     </div>
                   </TableHead>

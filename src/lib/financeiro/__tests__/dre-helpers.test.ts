@@ -1,15 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado, novoNaoResultado, acumularNaoResultado } from '../dre-helpers';
+import { classificarLinhaDRE, regimeVigente, regimeAtual, impostoTeoricoTotal, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado, novoNaoResultado, acumularNaoResultado } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
-describe('REGIME_POR_EMPRESA', () => {
-  it('mapeia as 3 empresas', () => {
-    expect(REGIME_POR_EMPRESA.colacor).toBe('presumido');
-    expect(REGIME_POR_EMPRESA.oben).toBe('presumido');
-    expect(REGIME_POR_EMPRESA.colacor_sc).toBe('simples');
+describe('regimeVigente — regime por (empresa, competência)', () => {
+  it('colacor: Simples até dez/2022, Presumido desde jan/2023 (fronteira exata)', () => {
+    expect(regimeVigente('colacor', 2020, 2)).toBe('simples');
+    expect(regimeVigente('colacor', 2022, 12)).toBe('simples');
+    expect(regimeVigente('colacor', 2023, 1)).toBe('presumido');
+    expect(regimeVigente('colacor', 2026, 11)).toBe('presumido');
+  });
+  it('oben sempre presumido; colacor_sc sempre simples', () => {
+    for (const [ano, mes] of [[2020, 1], [2022, 12], [2023, 1], [2026, 11]] as const) {
+      expect(regimeVigente('oben', ano, mes)).toBe('presumido');
+      expect(regimeVigente('colacor_sc', ano, mes)).toBe('simples');
+    }
+  });
+  it('empresa desconhecida → presumido (default histórico do motor)', () => {
+    expect(regimeVigente('xpto', 2022, 12)).toBe('presumido');
+  });
+  it('regimeAtual = regime de hoje (mapa de categorias e badges sem competência)', () => {
+    expect(regimeAtual('colacor')).toBe('presumido');
+    expect(regimeAtual('oben')).toBe('presumido');
+    expect(regimeAtual('colacor_sc')).toBe('simples');
+    expect(regimeAtual('xpto')).toBeUndefined();
   });
 });
 
@@ -264,21 +280,38 @@ describe('impostoTeoricoPresumido', () => {
 
 describe('normalizarConfigTributario', () => {
   it('config ausente → default por empresa (Colacor SC = simples, sem anexo → degrada)', () => {
-    const c = normalizarConfigTributario('colacor_sc', null);
+    const c = normalizarConfigTributario('colacor_sc', null, 2026, 11);
     expect(c.regime).toBe('simples');
     expect(c.anexo).toBeNull();
     expect(c.completa).toBe(false);
   });
   it('config presente: presumido com presunções → completa', () => {
-    const c = normalizarConfigTributario('colacor', { regime: 'presumido', presuncao_irpj: 0.08, presuncao_csll: 0.12 });
+    const c = normalizarConfigTributario('colacor', { regime: 'presumido', presuncao_irpj: 0.08, presuncao_csll: 0.12 }, 2026, 11);
     expect(c.regime).toBe('presumido');
     expect(c.presuncaoIrpj).toBe(0.08);
     expect(c.completa).toBe(true);
   });
   it('simples COM anexo → completa', () => {
-    const c = normalizarConfigTributario('colacor_sc', { regime: 'simples', anexo: 'III' });
+    const c = normalizarConfigTributario('colacor_sc', { regime: 'simples', anexo: 'III' }, 2026, 11);
     expect(c.anexo).toBe('III');
     expect(c.completa).toBe(true);
+  });
+  it('colacor na fronteira: config de hoje (presumido) NÃO vale para dez/2022 (simples) → incompleta', () => {
+    const cfg = { regime: 'presumido', presuncao_irpj: 0.08, presuncao_csll: 0.12 };
+    const dez22 = normalizarConfigTributario('colacor', cfg, 2022, 12);
+    expect(dez22.regime).toBe('simples');
+    expect(dez22.anexo).toBeNull();
+    expect(dez22.completa).toBe(false);
+    const jan23 = normalizarConfigTributario('colacor', cfg, 2023, 1);
+    expect(jan23.regime).toBe('presumido');
+    expect(jan23.completa).toBe(true);
+  });
+  it('colacor com a config real de prod ({} sem regime): presumido completa, simples sem anexo degrada', () => {
+    expect(normalizarConfigTributario('colacor', {}, 2023, 1).completa).toBe(true);
+    expect(normalizarConfigTributario('colacor', {}, 2022, 12).completa).toBe(false);
+  });
+  it('o regime da config não sobrepõe o da competência (config errada não troca a escada)', () => {
+    expect(normalizarConfigTributario('oben', { regime: 'simples', anexo: 'I' }, 2026, 11).regime).toBe('presumido');
   });
 });
 
@@ -493,5 +526,32 @@ describe('v1.13 — a EDGE de fato roteia nao_resultado (gate textual: o helper 
   it('a edge declara nao_resultado como válido e não-herdável (espelho do helper)', () => {
     expect(fonte).toMatch(/'fora_dre', 'nao_resultado',\n\s*\/\/ baldes legados/);
     expect(fonte).toMatch(/LINHAS_NAO_HERDAVEIS = new Set<string>\(\[\n\s*'fora_dre', 'nao_resultado',/);
+  });
+});
+
+describe('regime por competência — a EDGE usa regimeVigente em todo ponto (gate textual)', () => {
+  const fonte = readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-financeiro/index.ts'), 'utf8');
+  it('a edge não tem mais o mapa fixo por empresa', () => {
+    expect(fonte).not.toMatch(/REGIME_POR_EMPRESA/);
+  });
+  it('calcularDRE deriva o regime do (company, ano, mes) e passa a competência à config', () => {
+    expect(fonte).toMatch(/const regimeTrib: RegimeTributario = regimeVigente\(company, ano, mes\);/);
+    expect(fonte).toMatch(/normalizarConfigTributario\(company, [^\n]*, ano, mes\)/);
+  });
+  it('a edge declara a mesma transição da colacor que o helper (jan/2023)', () => {
+    expect(fonte).toMatch(/colacor: \[\{ desde: null, regime: 'simples' \}, \{ desde: 202301, regime: 'presumido' \}\]/);
+  });
+});
+
+describe('impostoTeoricoTotal — total do teórico sem dobrar nem fabricar zero', () => {
+  it('presumido: usa o `total` gravado, não soma parcelas + total', () => {
+    expect(impostoTeoricoTotal({ irpj: 400, csll: 360, pis: 650, cofins: 3000, total: 4410 })).toBe(4410);
+  });
+  it('simples com DAS desconhecido → null (indisponível), nunca 0', () => {
+    expect(impostoTeoricoTotal({ das: null })).toBeNull();
+    expect(impostoTeoricoTotal(null)).toBeNull();
+  });
+  it('simples com DAS → o próprio DAS', () => {
+    expect(impostoTeoricoTotal({ das: 1234.5 })).toBe(1234.5);
   });
 });
