@@ -24,7 +24,7 @@
 //
 // Migração para o servidor (Onda 3): o `nonce` vira o id da linha do rascunho e o envelope comprometido
 // vira o estado "enviado" dela; `idDoEnvio` não muda. `ArmazemEnvelope` é a costura.
-import type { CheckoutEnvelope } from './checkout-envelope';
+import type { CheckoutEnvelope, IdsPorConta } from './checkout-envelope';
 
 /** Subconjunto do `Storage` que o envelope usa — injetável nos testes (duas "abas" num armazém só). */
 export interface ArmazemEnvelope {
@@ -71,6 +71,48 @@ export function mesmoCliente(a: IdentidadeCliente | null | undefined, b: Identid
     || iguais(a.codigo_cliente_colacor, b.codigo_cliente_colacor);
 }
 
+const identifica = (c: IdentidadeCliente | null | undefined): c is IdentidadeCliente =>
+  !!c && (idDe(c.local_user_id) !== null || idDe(c.codigo_cliente) !== null || idDe(c.codigo_cliente_colacor) !== null);
+
+/** Junta as identidades do MESMO cliente sem que um campo vazio de `b` apague o preenchido de `a`. */
+export function mesclarIdentidade(a: IdentidadeCliente | null | undefined, b: IdentidadeCliente | null | undefined): IdentidadeCliente | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const um = <T,>(x: T, y: T): T => (idDe(y) !== null ? y : x);
+  return {
+    local_user_id: um(a.local_user_id, b.local_user_id),
+    codigo_cliente: um(a.codigo_cliente, b.codigo_cliente),
+    codigo_cliente_colacor: um(a.codigo_cliente_colacor, b.codigo_cliente_colacor),
+  };
+}
+
+/**
+ * Restaurar o rascunho: a QUEM o nonce dele fica ligado (null = não adota — o carrinho ganha nonce novo).
+ * P0 do Codex no PR 2.2: o rascunho com código Oben 0 é aplicado ANTES de o cliente carregar e o nonce se
+ * perdia → id novo → 2º PV Colacor. Agora o rascunho grava o DONO do nonce (`doRascunho`), e o nonce é
+ * adotado ligado a ele mesmo sem cliente na tela; o efeito de troca de cliente (`mesmoCliente`) o derruba
+ * se o cliente que chegar for outro. Sem dono gravado e sem cliente na tela → não adota (nunca um nonce
+ * sem dono, que daria "já enviado" com o PV de outro cliente).
+ */
+export function clienteParaAdotarNonce(
+  nonce: unknown,
+  doRascunho: unknown,
+  atual: IdentidadeCliente | null | undefined,
+): IdentidadeCliente | null {
+  if (typeof nonce !== 'string' || nonce.length === 0) return null;
+  // O rascunho vem do disco (JSON sem esquema): só os três campos de identidade, e só se identificam.
+  const r = doRascunho && typeof doRascunho === 'object' ? doRascunho as Record<string, unknown> : null;
+  const lido: IdentidadeCliente | null = r ? {
+    local_user_id: typeof r.local_user_id === 'string' ? r.local_user_id : null,
+    codigo_cliente: typeof r.codigo_cliente === 'number' || typeof r.codigo_cliente === 'string' ? r.codigo_cliente : null,
+    codigo_cliente_colacor: typeof r.codigo_cliente_colacor === 'number' || typeof r.codigo_cliente_colacor === 'string' ? r.codigo_cliente_colacor : null,
+  } : null;
+  const dono = identifica(lido) ? lido : null;
+  if (!identifica(atual)) return dono;
+  if (dono && !mesmoCliente(dono, atual)) return null;
+  return mesclarIdentidade(dono, atual);
+}
+
 async function hashUuid(texto: string): Promise<string> {
   const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto))).slice(0, 16);
   h[6] = (h[6] & 0x0f) | 0x80; // versão 8 (RFC 9562: formato livre)
@@ -86,6 +128,38 @@ async function hashUuid(texto: string): Promise<string> {
 export async function idDoEnvio(nonce: string, fingerprint: string): Promise<string> {
   if (!nonce) throw new Error('idDoEnvio: nonce vazio');
   return hashUuid(`checkout-v1|${nonce}|${assinaturaItens(fingerprint)}`);
+}
+
+/** As linhas de UMA conta de produto na impressão digital (`<conta>:<sku>:...`), em ordem estável. */
+function itensDaConta(fingerprint: string, conta: 'oben' | 'colacor'): string {
+  const sig = assinaturaItens(fingerprint);
+  return sig ? sig.split('|').filter(l => l.startsWith(`${conta}:`)).sort().join('|') : '';
+}
+
+/**
+ * Os ids que vão ao servidor num envelope NOVO, um POR CONTA: SHA(nonce, conta, itens DAQUELA conta) —
+ * Oben e Colacor pela impressão digital, a OS pela `assinaturaServicosAfiacao`. P0 do Codex no PR 2.2:
+ * com um id só sobre o carrinho inteiro, a aba B que mudava só a quantidade Colacor mudava também o id
+ * Oben → 2º PV Oben idêntico. Só o nonce não basta: engoliria um 2º pedido legítimo de outra aba.
+ */
+export async function idsDoEnvio(nonce: string, fingerprint: string, assinaturaAfiacao: string): Promise<IdsPorConta> {
+  if (!nonce) throw new Error('idsDoEnvio: nonce vazio');
+  const [oben, colacor, afiacao] = await Promise.all([
+    hashUuid(`checkout-v2|${nonce}|oben|${itensDaConta(fingerprint, 'oben')}`),
+    hashUuid(`checkout-v2|${nonce}|colacor|${itensDaConta(fingerprint, 'colacor')}`),
+    hashUuid(`checkout-v2|${nonce}|afiacao|${assinaturaAfiacao}`),
+  ]);
+  return { oben, colacor, afiacao };
+}
+
+const ehId = (x: unknown): x is string => typeof x === 'string' && x.length > 0;
+
+/** Os ids por conta CONGELADOS no envelope; legado (sem `idsPorConta`) → o `checkoutId` em todas, como
+ *  a main enviava — o reenvio de um envio parcial antigo acha a MESMA linha/OS. */
+export function idsDoEnvelope(e: CheckoutEnvelope): IdsPorConta {
+  const ids = e.idsPorConta;
+  if (ids && ehId(ids.oben) && ehId(ids.colacor) && ehId(ids.afiacao)) return { oben: ids.oben, colacor: ids.colacor, afiacao: ids.afiacao };
+  return { oben: e.checkoutId, colacor: e.checkoutId, afiacao: e.checkoutId };
 }
 
 function valido(x: unknown): x is CheckoutEnvelope {
@@ -165,6 +239,8 @@ export interface PedidoDeReserva {
   fingerprint: string;
   /** `idDoEnvio(nonce, fingerprint)` — calculado antes da trava (é assíncrono). */
   idCalculado: string;
+  /** `idsDoEnvio(nonce, fingerprint, assinaturaAfiacao)` — o que vai ao servidor num envelope novo. */
+  idsCalculados: IdsPorConta;
 }
 
 /**
@@ -185,7 +261,9 @@ export function reservarEnvio(arm: ArmazemEnvelope, p: PedidoDeReserva, criar: (
     const envelope = { ...l.pendente.envelope, committed: true };
     return { decisao: 'reuse', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
   }
-  const envelope = { ...criar(p.idCalculado), checkoutId: p.idCalculado, fingerprint: p.fingerprint, committed: true };
+  const envelope = {
+    ...criar(p.idCalculado), checkoutId: p.idCalculado, idsPorConta: p.idsCalculados, fingerprint: p.fingerprint, committed: true,
+  };
   return { decisao: 'new', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
 }
 

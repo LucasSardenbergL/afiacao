@@ -30,10 +30,12 @@ import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import {
   CHAVE_ENVELOPE_LEGADA, chaveEnvelope, classificarMudancaOutraAba, comTravaEntreAbas, concluirEnvio, gravarSeAindaFor,
-  idDoEnvio, lerPendente, limparSeIlegivel, mesmoCliente, nomeDaTrava, reservarEnvio,
+  clienteParaAdotarNonce, idDoEnvio, idsDoEnvelope, idsDoEnvio, lerPendente, limparSeIlegivel, mesclarIdentidade, mesmoCliente,
+  nomeDaTrava, reservarEnvio,
   type ArmazemEnvelope, type IdentidadeCliente,
 } from '@/services/orderSubmission/envelope-armazenado';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
+import { assinaturaAfiacaoDoCarrinho } from '@/services/orderSubmission/submitOrder';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
@@ -427,9 +429,15 @@ export function useUnifiedOrder() {
   const nonceRef = useRef<string | null>(null);
   const [nonceRascunho, setNonceRascunho] = useState<string | null>(null);
   const clienteDoNonceRef = useRef<IdentidadeCliente | null>(null);
-  const definirNonce = useCallback((n: string | null, cliente: IdentidadeCliente | null = null) => {
-    nonceRef.current = n; clienteDoNonceRef.current = n ? cliente : null; setNonceRascunho(n);
+  // O DONO do nonce viaja no rascunho com ele (P0 do Codex no PR 2.2): restaurar antes de o cliente
+  // carregar (código Oben 0) adota o nonce ligado a esse dono, sem esperar o cliente na tela.
+  const [clienteDoNonce, setClienteDoNonce] = useState<IdentidadeCliente | null>(null);
+  const ligarDonoDoNonce = useCallback((c: IdentidadeCliente | null) => {
+    clienteDoNonceRef.current = c; setClienteDoNonce(c);
   }, []);
+  const definirNonce = useCallback((n: string | null, cliente: IdentidadeCliente | null = null) => {
+    nonceRef.current = n; ligarDonoDoNonce(n ? cliente : null); setNonceRascunho(n);
+  }, [ligarDonoDoNonce]);
   const identidadeAtual: IdentidadeCliente | null = selectedCustomer ? {
     local_user_id: selectedCustomer.local_user_id ?? null,
     codigo_cliente: selectedCustomer.codigo_cliente ?? null,
@@ -460,9 +468,9 @@ export function useUnifiedOrder() {
     const atual = identidadeAtualRef.current;
     // Cliente TROCADO sem passar pelo "Trocar e limpar": o nonce não atravessa para o outro cliente.
     if (nonceRef.current && atual && !mesmoCliente(clienteDoNonceRef.current, atual)) definirNonce(null);
-    else if (nonceRef.current && atual) clienteDoNonceRef.current = { ...clienteDoNonceRef.current, ...atual };
+    else if (nonceRef.current && atual) ligarDonoDoNonce(mesclarIdentidade(clienteDoNonceRef.current, atual));
     espelharPendente();
-  }, [userIdEnv, prefixoClienteAtual, selectedCustomer?.codigo_cliente_colacor, submitting, definirNonce, espelharPendente]);
+  }, [userIdEnv, prefixoClienteAtual, selectedCustomer?.codigo_cliente_colacor, submitting, definirNonce, ligarDonoDoNonce, espelharPendente]);
   /**
    * Grava SÓ se o guardado ainda é o envelope que esta aba espelha: as marcas da OS e a limpeza não
    * atropelam o commit de outra aba (Codex P0). Sem envelope conhecido só aceita apagar (nada a apagar).
@@ -566,11 +574,14 @@ export function useUnifiedOrder() {
     checkoutEnvRef.current = null; chaveDoEnvelopeRef.current = null; leituraIlegivelRef.current = false;
     definirNonce(null); // o próximo pedido idêntico é OUTRO id
   }, [persistCheckoutEnv, definirNonce]);
-  /** Restaurar o rascunho traz o nonce DAQUELA cópia (mesmo carrinho → mesmo id). Só ao APLICAR o
-   *  carrinho, com o cliente do rascunho já na tela (Codex P1). */
+  /** Restaurar o rascunho traz o nonce DAQUELA cópia (mesmo carrinho → mesmo id), ligado ao DONO gravado
+   *  no rascunho — também antes de o cliente carregar (P0 do Codex no PR 2.2). Cliente na tela que não é
+   *  o dono → não adota (`clienteParaAdotarNonce`). */
   const nonceDoRascunho = useCallback(() => nonceRef.current, []);
-  const adotarNonceDoRascunho = useCallback((n: unknown) => {
-    if (typeof n === 'string' && n.length > 0 && identidadeAtualRef.current) definirNonce(n, identidadeAtualRef.current);
+  const donoDoNonce = useCallback(() => clienteDoNonceRef.current, []);
+  const adotarNonceDoRascunho = useCallback((n: unknown, doRascunho?: unknown) => {
+    const dono = clienteParaAdotarNonce(n, doRascunho, identidadeAtualRef.current);
+    if (dono) definirNonce(n as string, dono);
   }, [definirNonce]);
 
 
@@ -1105,8 +1116,12 @@ export function useUnifiedOrder() {
         return;
       }
       const idCalculado = await idDoEnvio(nonceRef.current as string, fingerprint);
+      // P0 do Codex no PR 2.2: o que vai ao servidor é um id POR CONTA (itens daquela conta) — a aba que
+      // muda só a Colacor não muda o id Oben, e o servidor (`pedido_por_checkout`) não duplica a Oben.
+      const idsCalculados = await idsDoEnvio(nonceRef.current as string, fingerprint,
+        assinaturaAfiacaoDoCarrinho(serviceItems, getServicePrice, afiacaoPaymentMethod, deliveryOption));
       const reserva = await comTravaEntreAbas(nomeDaTrava(userIdTrava), () => reservarEnvio(arm, {
-        chave: chaveDoUsuario, fingerprint, idCalculado,
+        chave: chaveDoUsuario, fingerprint, idCalculado, idsCalculados,
       }, (id) => {
         // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
         // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
@@ -1189,6 +1204,8 @@ export function useUnifiedOrder() {
           supabase,
           isCustomerMode,
           checkoutId,
+          // Os ids CONGELADOS no envelope (legado sem eles → `checkoutId` em todas, como a main).
+          idsPorConta: idsDoEnvelope(checkoutEnvRef.current),
           // Lê do ENVELOPE congelado (nunca da URL ao vivo). Fallback defensivo p/ envelopes
           // legados (criados antes desta fase, sem os campos da ponte).
           origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
@@ -1355,7 +1372,7 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
-    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, adotarNonceDoRascunho, nonceRascunho, nonceDoRascunho, cicloRascunhoRef,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, adotarNonceDoRascunho, nonceRascunho, nonceDoRascunho, clienteDoNonce, donoDoNonce, cicloRascunhoRef,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,

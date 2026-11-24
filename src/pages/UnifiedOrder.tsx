@@ -320,13 +320,16 @@ const UnifiedOrder = () => {
       // PR 2.2 (rodada 3): o nonce desta cópia do pedido — restaurar o rascunho (refresh, outra aba) volta
       // com ELE, e o mesmo carrinho deriva o MESMO checkoutId: o servidor responde "já enviado".
       nonce: h.nonceRascunho,
+      // O DONO do nonce (P0 do Codex no PR 2.2): restaurar antes de o cliente carregar (código Oben 0)
+      // adota o nonce ligado a ele — sem isso o nonce se perdia e nascia um 2º PV Colacor.
+      clienteNonce: h.clienteDoNonce,
       customerName: h.selectedCustomer?.razao_social ?? null,
       notes: h.notes,
       ordemCompra: h.ordemCompra,
       // B7 (rodada 2): só o prazo escolhido À MÃO nesta seleção — o do histórico é reaplicado sozinho.
       parcelasManuais: parcelasManuaisDaSelecao(),
     }),
-    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao, h.nonceRascunho],
+    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao, h.nonceRascunho, h.clienteDoNonce],
   );
   const { draft, clear: clearDraft, dismiss: dismissDraft, gravarAgora: gravarRascunhoAgora } = useOrderDraft({
     scopeKey: draftScope,
@@ -343,10 +346,10 @@ const UnifiedOrder = () => {
   useEffect(() => {
     h.cicloRascunhoRef.current = {
       // O nonce pode ter nascido no próprio clique (antes do re-render): lê o atual, não o do memo.
-      aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),
+      aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho(), clienteNonce: h.donoDoNonce() }),
       aoConfirmarTudo: clearDraft,
     };
-  }, [h.cicloRascunhoRef, h.nonceDoRascunho, gravarRascunhoAgora, draftPayload, clearDraft]);
+  }, [h.cicloRascunhoRef, h.nonceDoRascunho, h.donoDoNonce, gravarRascunhoAgora, draftPayload, clearDraft]);
 
   // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
   // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
@@ -379,12 +382,12 @@ const UnifiedOrder = () => {
   // Restore PENDENTE (follow-up Codex P1 do #4068): rascunho de A restaurado sem cliente na tela
   // punha o carrinho de A na tela e, se a vendedora selecionasse B, os itens (com preço negociado
   // para A) iam no pedido de B. Agora o restore inteiro espera o cliente DO rascunho.
-  type DadosDoRascunho = { cart: unknown; notes: unknown; ordemCompra: unknown; parcelas: ParcelasDoRascunho | null; nonce?: unknown };
+  type DadosDoRascunho = { cart: unknown; notes: unknown; ordemCompra: unknown; parcelas: ParcelasDoRascunho | null; nonce?: unknown; clienteNonce?: unknown };
   const restorePendenteRef = useRef<{ codigoCliente: number; nome: string | null; dados: DadosDoRascunho } | null>(null);
   // Aplica com os setters do render CORRENTE (os que marcam o prazo como "manual" na seleção nova).
   const aplicarDadosDoRascunho = (d: DadosDoRascunho, prazoVolta: boolean) => {
     // PR 2.2: o nonce da cópia ANTES do carrinho — senão o 1º item sortearia um nonce novo (= id novo).
-    h.adotarNonceDoRascunho(d.nonce);
+    h.adotarNonceDoRascunho(d.nonce, d.clienteNonce);
     if (Array.isArray(d.cart)) h.setCart(d.cart);
     if (typeof d.notes === 'string') h.setNotes(d.notes);
     if (typeof d.ordemCompra === 'string') h.setOrdemCompra(d.ordemCompra);
@@ -463,6 +466,7 @@ const UnifiedOrder = () => {
     }
     const dados: DadosDoRascunho = {
       nonce: state.nonce ?? null,
+      clienteNonce: (state as { clienteNonce?: unknown }).clienteNonce ?? null,
       cart: state.cart, notes: state.notes, ordemCompra: state.ordemCompra,
       parcelas: lerParcelasDoRascunho(state.parcelasManuais),
     };

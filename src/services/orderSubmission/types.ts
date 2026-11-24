@@ -11,7 +11,7 @@ import type {
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
 import type { PrazoDecisaoPorConta } from './prazoDecisao';
-import type { MarcaOsAfiacao } from './checkout-envelope';
+import type { IdsPorConta, MarcaOsAfiacao } from './checkout-envelope';
 
 export type SubmitClient = SupabaseClient<Database>;
 
@@ -74,6 +74,9 @@ export interface SubmitOrderParams {
   isCustomerMode?: boolean;
   /** Chave de idempotência por TENTATIVA de envio (estável entre retries; ver useUnifiedOrder). */
   checkoutId: string;
+  /** P0 do Codex no PR 2.2: o id de cada pedido (Oben/Colacor/OS), congelado no envelope. Ausente/null =
+   *  envelope legado: `checkoutId` em todas as contas (como a main). */
+  idsPorConta?: IdsPorConta | null;
   /** ATP fase 2: backorder autorizado pelo VENDEDOR (decisão explícita no painel
    *  de recusa). Vai no payload do edge; o servidor valida (bloqueio prévio +
    *  fingerprint) e audita em atp_decisoes. Nunca setar sem decisão humana. */

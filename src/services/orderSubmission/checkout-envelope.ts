@@ -3,6 +3,9 @@ export interface CheckoutEnvelope {
   /** PR 2.2 (rodada 3): o nonce da cópia que DERIVOU este checkoutId (`idDoEnvio`). Ausente = envelope
    *  legado (id sorteado). Adotá-lo é como outra aba/um refresh retoma ESTE envio sem id novo. */
   nonce?: string | null;
+  /** P0 do Codex no PR 2.2: o id que vai ao servidor é POR CONTA (`idsDoEnvio`) — mudar só os itens de
+   *  uma conta não muda o id da outra. CONGELADO na criação. Ausente = legado: `checkoutId` em todas. */
+  idsPorConta?: IdsPorConta | null;
   // Metadata da ponte CONGELADA na criação (Fase 1): nunca lida ao vivo no submit.
   customerUserId?: string | null; origem?: string | null; atendimentoId?: string | null;
   /** A1 (rodada 2): OS de Afiação já confirmada NESTE envelope. A fp só cobre PRODUTO, então o
@@ -13,6 +16,10 @@ export interface CheckoutEnvelope {
    *  (a OS pode existir no Omie). Limpa quando a marca `afiacaoOs` é gravada. */
   afiacaoPendente?: boolean;
 }
+
+/** O id de idempotência de cada pedido do checkout: `sales_orders.checkout_id` da Oben e da Colacor
+ *  (`pedido_por_checkout`) e o `orderId` da OS de Afiação (edge `omie-sync`). */
+export interface IdsPorConta { oben: string; colacor: string; afiacao: string }
 
 /** O que foi confirmado da OS de Afiação: quais ferramentas/serviços (assinatura) e o nº da OS. */
 export interface MarcaOsAfiacao {

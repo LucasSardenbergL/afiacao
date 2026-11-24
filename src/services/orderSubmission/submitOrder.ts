@@ -114,14 +114,33 @@ function mensagemBloqueioCredito(
  *  3. Sync afiação OS to Omie (non-blocking).
  *  4. Build print data and last-order summary.
  */
+/** A assinatura da OS de Afiação deste carrinho — a MESMA que o envio confere e que deriva o id da OS
+ *  (`idsDoEnvio`, no hook, antes da reserva). */
+export function assinaturaAfiacaoDoCarrinho(
+  serviceItems: ReadonlyArray<ServiceCartItem>,
+  getServicePrice: SubmitOrderParams['getServicePrice'],
+  pagamento: string | null | undefined,
+  entrega: string | null | undefined,
+): string {
+  return assinaturaServicosAfiacao(serviceItems.map(c => ({
+    userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
+    preco: getServicePrice(c) || 0,
+  })), { pagamento, entrega });
+}
+
 export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrderResult> {
   const {
     customer, customerUserId, user, cart, subtotals, volumes,
     payment, delivery, meta, companyProfiles, defaultProductionAssigneeId,
     getServicePrice, supabase, isCustomerMode = false,
-    checkoutId, origem = null, atendimentoId = null, atpBackorder, prazoDecisao,
+    checkoutId, idsPorConta = null, origem = null, atendimentoId = null, atpBackorder, prazoDecisao,
     afiacaoJaEnviada = null, aoConfirmarOsAfiacao, afiacaoPendente = false, aoIniciarOsAfiacao,
   } = params;
+  // P0 do Codex no PR 2.2: um id POR CONTA (mudar só a Colacor não muda o id Oben). Sem `idsPorConta`
+  // (envelope legado) → o `checkoutId` em todas, como a main.
+  const idOben = idsPorConta?.oben ?? checkoutId;
+  const idColacor = idsPorConta?.colacor ?? checkoutId;
+  const idAfiacao = idsPorConta?.afiacao ?? checkoutId;
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
@@ -262,7 +281,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     let pvDivergente = false;
     try {
       const ensured = await ensureSalesOrderRow(supabase, {
-        checkoutId, account: 'oben', origem, atendimentoId,
+        checkoutId: idOben, account: 'oben', origem, atendimentoId,
         fields: {
           customer_user_id: customerUserId || user.id,
           created_by: user.id,
@@ -434,7 +453,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     let pvDivergente = false;
     try {
       const ensured = await ensureSalesOrderRow(supabase, {
-        checkoutId, account: 'colacor', origem, atendimentoId,
+        checkoutId: idColacor, account: 'colacor', origem, atendimentoId,
         fields: {
           customer_user_id: customerUserId || user.id,
           created_by: user.id,
@@ -617,10 +636,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   // backorder, falha parcial) nem chama a edge. Quando a confirmação NÃO chegou (rede/timeout), a
   // edge v1.15 é idempotente pelo orderId = checkoutId: devolve a OS que já existe em vez de criar
   // outra (follow-up Codex do #4042).
-  const assinaturaAfiacao = assinaturaServicosAfiacao(serviceItems.map(c => ({
-    userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
-    preco: getServicePrice(c) || 0,
-  })), { pagamento: payment.afiacaoMethod, entrega: delivery.option });
+  const assinaturaAfiacao = assinaturaAfiacaoDoCarrinho(serviceItems, getServicePrice, payment.afiacaoMethod, delivery.option);
   // O que vai no `cObsOS` (horário da coleta + observação + ferramentas): fora da assinatura.
   const observacaoOsAfiacao = observacoesDaOsAfiacao(serviceItems, delivery, TIME_SLOTS, meta.notes);
   if (serviceItems.length > 0 && afiacaoJaEnviada && afiacaoJaEnviada.assinatura === assinaturaAfiacao) {
@@ -649,7 +665,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   } else if (serviceItems.length > 0) {
     try {
       // Estável entre reenvios do MESMO checkout: a edge deriva o cCodIntOS dele e reserva o pedido.
-      const orderId = checkoutId;
+      const orderId = idAfiacao;
       const orderItems = serviceItems.map((c: ServiceCartItem) => {
         const price = getServicePrice(c);
         return {

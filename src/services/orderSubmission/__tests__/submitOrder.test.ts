@@ -77,7 +77,7 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
     return { data: e ? [{ id: e.id, omie_pedido_id: e.omie_pedido_id, pv_reconciliado: false, pv_consulta: null }] : [], error: null };
   });
   const client = { from, rpc, functions: { invoke } } as unknown as SubmitClient;
-  return { client, from, insert, invoke };
+  return { client, from, insert, invoke, rpc };
 }
 
 const customer = {
@@ -750,6 +750,29 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
     expect(calls.map(c => c[0])).toEqual(['chk-estavel', 'chk-estavel']);
     expect(typeof calls[0][5]).toBe('string');
     expect(calls[0][5]).toContain('#pg=pix');
+  });
+
+  it('P0 Codex 2.2: com idsPorConta, cada conta vai com o SEU id — Oben, Colacor e a OS', async () => {
+    const ids = { oben: 'id-oben', colacor: 'id-colacor', afiacao: 'id-os' };
+    const prod = makeSupabase();
+    await submitOrder(makeParams({
+      supabase: prod.client, checkoutId: 'id-do-envelope', idsPorConta: ids,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+    }));
+    const lookups = prod.rpc.mock.calls.map((c: unknown[]) => c[1] as { p_checkout_id: string; p_account: string });
+    expect(lookups).toEqual(expect.arrayContaining([
+      { p_checkout_id: 'id-oben', p_account: 'oben' },
+      { p_checkout_id: 'id-colacor', p_account: 'colacor' },
+    ]));
+    expect(lookups.some(l => l.p_checkout_id === 'id-do-envelope')).toBe(false);
+    const inseridos = prod.insert.mock.calls.map(c => (c[0] as { account: string; checkout_id: string }));
+    expect(inseridos.map(r => [r.account, r.checkout_id]).sort()).toEqual([['colacor', 'id-colacor'], ['oben', 'id-oben']]);
+    const os = makeSupabase();
+    await submitOrder(makeParams({
+      supabase: os.client, customer: custAfiacao, checkoutId: 'id-do-envelope', idsPorConta: ids,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+    }));
+    expect(vi.mocked(syncOrderToOmie).mock.calls.map(c => c[0])).toEqual(['id-os']);
   });
 
   it('marca o envelope como PENDENTE antes de chamar a edge', async () => {

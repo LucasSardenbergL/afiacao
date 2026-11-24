@@ -154,8 +154,8 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
     expect(corpo).toMatch(/result\.allConfirmed\) \{\n[^\n]*\n\s*checkoutEnvRef\.current = null; chaveDoEnvelopeRef\.current = null; definirNonce\(null\);\n\s*void comTravaEntreAbas\(nomeDaTrava\(userIdTrava\), \(\) => concluirEnvio\(arm, chaveDoUsuario, checkoutId\)\);\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
-    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),');
-    expect(pagina).toContain('h.adotarNonceDoRascunho(d.nonce);');
+    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho(), clienteNonce: h.donoDoNonce() }),');
+    expect(pagina).toContain('h.adotarNonceDoRascunho(d.nonce, d.clienteNonce);');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });
 });
