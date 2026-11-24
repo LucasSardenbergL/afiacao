@@ -20,12 +20,6 @@ const HEALTH_WEIGHTS = [
   { key: 'hs_weight_engagement', label: 'Engajamento Técnico', default: 10 },
 ];
 
-const PRIORITY_WEIGHTS = [
-  { key: 'ps_weight_margin_potential', label: 'Potencial de Margem', default: 35 },
-  { key: 'ps_weight_churn_risk', label: 'Risco de Churn', default: 30 },
-  { key: 'ps_weight_repurchase', label: 'Probabilidade de Recompra', default: 20 },
-  { key: 'ps_weight_goal_proximity', label: 'Proximidade da Meta', default: 15 },
-];
 
 function WeightEditor({ title, description, weights, values, onChange, locked }: {
   title: string;
@@ -100,23 +94,19 @@ export default function GovernanceMathParams() {
   });
 
   const [healthWeights, setHealthWeights] = useState<Record<string, number>>({});
-  const [priorityWeights, setPriorityWeights] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!config) return;
     const hw: Record<string, number> = {};
-    const pw: Record<string, number> = {};
     config.forEach(c => {
       if (c.key.startsWith('hs_')) hw[c.key] = Number(c.value);
-      if (c.key.startsWith('ps_')) pw[c.key] = Number(c.value);
     });
     setHealthWeights(hw);
-    setPriorityWeights(pw);
   }, [config]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const allWeights = { ...healthWeights, ...priorityWeights };
+      const allWeights = { ...healthWeights };
       for (const [key, value] of Object.entries(allWeights)) {
         const existing = config?.find(c => c.key === key);
         if (existing) {
@@ -142,8 +132,7 @@ export default function GovernanceMathParams() {
   });
 
   const hsTotal = HEALTH_WEIGHTS.reduce((a, w) => a + (healthWeights[w.key] ?? w.default), 0);
-  const psTotal = PRIORITY_WEIGHTS.reduce((a, w) => a + (priorityWeights[w.key] ?? w.default), 0);
-  const canSave = hsTotal === 100 && psTotal === 100;
+  const canSave = hsTotal === 100;
 
   if (!isAdmin && !isSuperAdmin) {
     return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">Acesso restrito</p></div>;
@@ -193,14 +182,27 @@ export default function GovernanceMathParams() {
           onChange={(k, v) => setHealthWeights(prev => ({ ...prev, [k]: v }))}
           locked={!canEdit}
         />
-        <WeightEditor
-          title="Priority Score Diário"
-          description="Priorização diária de atendimento"
-          weights={PRIORITY_WEIGHTS}
-          values={priorityWeights}
-          onChange={(k, v) => setPriorityWeights(prev => ({ ...prev, [k]: v }))}
-          locked={!canEdit}
-        />
+        {/* Onda A de Clientes (calculate-scores v1.9): a prioridade deixou de ser média ponderada — os
+            pesos ps_weight_* editados aqui não tinham mais efeito. Regra: src/lib/scoring/prioridadeValor.ts. */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Calculator className="w-4 h-4" />
+              Priority Score Diário
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">Priorização diária de atendimento — sem pesos editáveis</p>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground space-y-1.5">
+            <p>Ordena por exposição ao atraso, em faixas que não se misturam:</p>
+            <ol className="list-decimal pl-4 space-y-0.5">
+              <li>Ativo atrasado na recompra (60–100): gasto mensal × dias além da recompra habitual.</li>
+              <li>Ativo em dia (35–60): gasto × proximidade do vencimento.</li>
+              <li>Ativo com recompra habitual desconhecida (30–35): só o gasto.</li>
+              <li>Inativo — fila de reativação (0–30): mais recente primeiro.</li>
+            </ol>
+            <p>Sem histórico de compra: sem nota.</p>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

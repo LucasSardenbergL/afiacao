@@ -3659,19 +3659,23 @@ describe('guardrail money-path: calculate-scores renormaliza via módulo testáv
     expect(edge, 'calculate-scores parou de importar a renormalização compartilhada').toContain(
       '../_shared/score-ponderado.ts',
     );
-    // Duas chamadas: uma para o health, outra para o priority. Uma só significa que um dos dois
-    // scores voltou a somar direto — meio-conserto na mesma função (money-path.md §7).
+    // Desde a v1.9 (onda A de Clientes) só o HEALTH é média ponderada — a prioridade é a exposição ao
+    // atraso por faixas (_shared/prioridade-valor.ts), sem pesos. O health tem de seguir renormalizando,
+    // e a prioridade tem de usar o módulo novo (não voltar a somar componentes inline).
     const chamadas = (edge.match(/mediaPonderadaRenormalizada\s*\(/g) ?? []).length;
-    expect(chamadas, 'health e priority precisam AMBOS renormalizar').toBeGreaterThanOrEqual(2);
+    expect(chamadas, 'o health precisa renormalizar').toBeGreaterThanOrEqual(1);
+    expect(edge, 'a prioridade precisa usar a regra testável de exposição ao atraso').toMatch(/calcularPrioridade\s*\(/);
     expect(edge, 'o teto do potencial voltou a incluir o não medido').toContain('maximoMedido(');
   });
 
   it('o zero fabricado não volta pelo arredondamento nem pela chave omitida', () => {
     // `Math.round(null)` é 0, e as três colunas de destino são nullable com DEFAULT 0: omitir a
     // chave faz o Postgres refabricar o mesmo zero. Os dois caminhos precisam do null EXPLÍCITO.
+    // v1.9: os quatro *_component do log passaram a NULL literal (a nota nova não é composta por eles);
+    // `campo: null,` também é o null EXPLÍCITO que o teste exige.
     for (const campo of ['x_score', 's_score', 'margin_potential_component']) {
       expect(
-        new RegExp(`${campo}:[^,\\n]*== null \\? null`).test(edge),
+        new RegExp(`${campo}:\\s*null,|${campo}:[^,\\n]*== null \\? null`).test(edge),
         `${campo} perdeu o null explícito — Math.round(null) grava 0 e o histórico volta a mentir`,
       ).toBe(true);
     }

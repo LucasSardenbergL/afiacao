@@ -150,6 +150,15 @@ sinal money-path, então segue no jsonb).
 - **Ordem de deploy:** migration → edge v1.14 → Publish. O front lê `select *`, então pode ir no
   mesmo PR: sem a migration, a coluna chega ausente e a UI mostra "—". A edge antes da migration
   falharia alto no upsert.
+- **Deploy (2026-11-22 a 24):** migration aplicada em 22/11 (tentativa #1328; postcondição lida
+  por psql-ro: 2 colunas sem DEFAULT, 2 CHECKs, gatilho ligado, snapshots antigos todos NULL). A
+  edge levou 4 sondas: a #1330 expirou no `pg_net` antes do passo 2, e a #1331 e a #1332 responderam
+  BUNDLE VELHO v1.13. **Causa:** o pacote do Passo 2 nunca chegou ao chat do Lovable, porque a
+  última mensagem lá era o deploy da v1.13. O workspace já tinha o código v1.14 e só faltava o
+  pedido. O pacote foi enviado pelo conector em 24/11 (hashes 18/18) e a sonda #1337 deu
+  **DEPLOY CONFIRMADO** (`v1.14-dre-cmv-heuristica`, fonte `ec5224b1…`). Lição: antes de
+  repetir uma sonda que deu BUNDLE VELHO, confira no `list_messages` do Lovable se o pedido de
+  deploy chegou. Falta o Publish do front.
 
 ## Em aberto
 
