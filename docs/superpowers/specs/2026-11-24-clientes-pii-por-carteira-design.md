@@ -32,8 +32,8 @@ Status: desenho aprovado em direção (founder: opção 2 "contexto operacional"
 
 ## Fatias
 
-1. **Contrato novo, sem fechar nada** — predicados, `pode_agir_no_cliente` (+ escritor do desfecho + `AcoesDaFicha`), ledger de acesso (RLS, 1 writer, só referência), RPC operacional por objeto, view mascarada, RPC do Cmd-K; front: 360 (`useCustomerCore`), Cmd-K (sem staff, sem doc/e-mail fora do escopo, erro visível, recentes por usuário só id+nome, limpa chave v1).
-2. **Migrar os leitores** para o contrato (lista abaixo), Publish, conferir adoção do build pelos 3 staff.
+1. **Contrato novo, sem fechar nada** — predicados, `pode_agir_no_cliente` (+ escritor do desfecho + `AcoesDaFicha`), view mascarada, RPC do Cmd-K; front: 360 (`useCustomerCore`), Cmd-K (sem staff, sem doc/e-mail fora do escopo, erro visível, recentes por usuário só id+nome, limpa chave v1).
+2. **Ledger de acesso** (RLS, 1 writer, só referência) **+ RPC operacional por objeto** — nascem com os consumidores; **migrar os leitores** para o contrato (lista abaixo), Publish, conferir adoção do build pelos 3 staff.
 3. **Corte** — REVOKE de coluna, policies, RPCs/views/edges que ainda entregam contato. Só aqui o "Pronto" vale. Prova pela API com query real.
 
 ## Superfícies que precisam fechar no corte (Codex P0-1)

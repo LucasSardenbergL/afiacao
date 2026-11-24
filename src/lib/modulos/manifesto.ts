@@ -1077,6 +1077,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",
       "src/hooks/__tests__/useUrlState.composicao.test.tsx",
+      "src/hooks/__tests__/useGlobalSearch.pii.test.tsx",
       "src/components/shell/__tests__/badge-de-contagem.test.tsx",
       "src/components/shell/__tests__/safe-area-paginas.test.ts",
       "src/components/shell/__tests__/useContagensDoShell.badge-leitura.test.tsx",

@@ -144,7 +144,8 @@ export default function Customer360() {
   // Score que não foi lido (falha/sem rede, sem valor em mãos) FALA — `null` legítimo é "sem score".
   const estadoScore = estadoDeLeitura(score);
   const scoreSemLeitura = !s && naoConsegui(estadoScore) ? estadoScore : null;
-  const isPj = ehCnpjDocumento(customer.document);
+  // PJ/PF é identidade: o servidor devolve `ehPj` mesmo com o documento mascarado fora da carteira.
+  const isPj = customer.ehPj ?? ehCnpjDocumento(customer.document);
   const podeCriarTarefaPorVoz = isMaster || isGestorComercial;
 
   return (
