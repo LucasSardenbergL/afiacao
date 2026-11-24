@@ -1,18 +1,17 @@
 // Helpers e constantes do AdminCustomers.
 // Extraídos verbatim de src/pages/AdminCustomers.tsx (god-component split).
 
+import { SAUDE_CLIENTE, TOM_NAO_AVALIADO, tomSaude } from '@/lib/farmer/saude-cliente';
+
 /** Linhas por página da base completa (RPC `listar_clientes_base`); < teto de 1.000 do PostgREST. */
 export const TAMANHO_PAGINA_CLIENTES = 100;
 
 export const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-export const HEALTH_CLASSES: Record<string, { label: string; className: string }> = {
-  saudavel: { label: 'Saudável', className: 'status-success' },
-  estavel: { label: 'Estável', className: 'status-progress' },
-  atencao: { label: 'Atenção', className: 'status-pending' },
-  critico: { label: 'Crítico', className: 'status-danger' },
-  novo: { label: 'Novo', className: 'text-muted-foreground' },
-};
+/** Rótulo + classes de chip por classe de saúde — derivado do dicionário único (lista e 360). */
+export const HEALTH_CLASSES: Record<string, { label: string; className: string }> = Object.fromEntries(
+  Object.entries(SAUDE_CLIENTE).map(([k, t]) => [k, { label: t.label, className: t.chip }]),
+);
 
 /** Valores do filtro "Saúde" (o mesmo vocabulário que a RPC `listar_clientes_base` aceita). */
 const FILTROS_SAUDE = ['saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
@@ -86,8 +85,8 @@ export const fmtPrioridade = (v: number | null) => (v == null ? NAO_APURADO : St
 
 /** Rótulo da classe de saúde; classe ausente ou desconhecida → "Não avaliado" (nunca "Crítico"). */
 export function classeSaudeExibida(healthClass: string | null): { label: string; className: string } {
-  return (healthClass != null ? HEALTH_CLASSES[healthClass] : undefined)
-    ?? { label: 'Não avaliado', className: 'text-muted-foreground' };
+  const t = healthClass != null ? tomSaude(healthClass) : TOM_NAO_AVALIADO;
+  return { label: t.label, className: t.chip };
 }
 
 /**

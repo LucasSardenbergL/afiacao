@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { format, subDays } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 
 /**
  * Alerta de crédito no wizard de venda — FASE 1 do programa "back to basics"
@@ -69,17 +69,62 @@ export interface AlertaCredito {
   titulos: number;
   /** Vencimento mais antigo (yyyy-MM-dd). */
   vencimentoMaisAntigo: string | null;
-  /** Último sync de recebíveis concluído (fin_sync_log status 'complete'). */
+  /** Sync concluído MAIS ANTIGO entre as empresas lidas (null se alguma nunca concluiu). */
   syncAt: string | null;
-  /** true quando o sync está a mais de 24h (ou sem registro) — dado pode estar defasado. */
+  /** true quando alguma empresa lida não está `ok` (defasada, com erro ou nunca sincronizada). */
   dadoDefasado: boolean;
+}
+
+/**
+ * Frescor do contas a receber POR EMPRESA (onda B). Antes era UM `completed_at` global — o sync de
+ * uma empresa "garantia" a outra — e, sem títulos, a data se perdia e o crédito saía verde.
+ * - `ok`: último sync concluído há ≤ 24h e nenhuma falha depois dele.
+ * - `defasado`: último concluído há mais de 24h.
+ * - `erro`: a tentativa mais recente falhou depois do último concluído (ou nunca concluiu).
+ * - `nunca`: nenhum registro de sync da empresa.
+ */
+export type EstadoFrescor = 'ok' | 'defasado' | 'erro' | 'nunca';
+export interface FrescorEmpresa {
+  company: ParCliente['company'];
+  syncAt: string | null;
+  estado: EstadoFrescor;
+}
+
+export interface LogSyncRow {
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+/** Cômputo puro do frescor de UMA empresa. */
+export function classificarFrescor(
+  company: ParCliente['company'],
+  ultimoCompleto: LogSyncRow | null,
+  ultimoErro: LogSyncRow | null,
+  agora: Date,
+): FrescorEmpresa {
+  const syncAt = ultimoCompleto?.completed_at ?? null;
+  const erroDepois = ultimoErro != null && (
+    syncAt == null || new Date(ultimoErro.started_at ?? ultimoErro.completed_at ?? 0).getTime() > new Date(syncAt).getTime()
+  );
+  if (erroDepois) return { company, syncAt, estado: 'erro' };
+  if (syncAt == null) return { company, syncAt: null, estado: 'nunca' };
+  const velho = agora.getTime() - new Date(syncAt).getTime() > ALERTA_CREDITO.defasagemMaxHoras * 3_600_000;
+  return { company, syncAt, estado: velho ? 'defasado' : 'ok' };
+}
+
+/** Resumo do frescor para o contrato antigo do alerta (`syncAt` mais antigo + `dadoDefasado`). */
+function resumoFrescor(frescor: FrescorEmpresa[]): { syncAt: string | null; dadoDefasado: boolean } {
+  const datas = frescor.map((f) => f.syncAt);
+  const syncAt = frescor.length === 0 || datas.some((d) => d == null)
+    ? null
+    : (datas as string[]).reduce((a, b) => (a < b ? a : b));
+  return { syncAt, dadoDefasado: frescor.length === 0 || frescor.some((f) => f.estado !== 'ok') };
 }
 
 /** Cômputo puro (testável sem Supabase). `titulos` já vem filtrado pelo query (aberto + 60d + saldo > 0). */
 export function computeAlertaCredito(
   titulos: TituloVencidoRow[],
-  syncAt: string | null,
-  agora: Date,
+  frescor: FrescorEmpresa[],
 ): AlertaCredito | null {
   if (titulos.length === 0) return null;
 
@@ -93,10 +138,7 @@ export function computeAlertaCredito(
   }
   if (vencido <= 0) return null;
 
-  const dadoDefasado =
-    !syncAt || agora.getTime() - new Date(syncAt).getTime() > ALERTA_CREDITO.defasagemMaxHoras * 3_600_000;
-
-  return { vencido, titulos: titulos.length, vencimentoMaisAntigo, syncAt, dadoDefasado };
+  return { vencido, titulos: titulos.length, vencimentoMaisAntigo, ...resumoFrescor(frescor) };
 }
 
 /**
@@ -122,28 +164,43 @@ function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<Titulo
   );
 }
 
-/** Vencido 60+ dos pares (company, código), com o frescor do sync. Lança em qualquer falha de leitura. */
-async function buscarAlertaCredito(pares: ParCliente[]): Promise<AlertaCredito | null> {
-  if (pares.length === 0) return null;
-  const corte = format(subDays(new Date(), ALERTA_CREDITO.diasVencidoMin), 'yyyy-MM-dd');
+const ACOES_SYNC_RECEBER = ['sync_contas_receber', 'sync_all'];
 
-  const [porPar, syncRes] = await Promise.all([
-    Promise.all(pares.map((p) => fetchTitulosVencidosPar(p, corte))),
+/** Último concluído e última falha da empresa (`companies @> {empresa}`). Falha de leitura LANÇA. */
+async function buscarFrescorEmpresa(company: ParCliente['company'], agora: Date): Promise<FrescorEmpresa> {
+  const ultimo = (status: string) =>
     supabase
       .from('fin_sync_log')
-      .select('completed_at')
-      .in('action', ['sync_contas_receber', 'sync_all'])
-      .eq('status', 'complete')
-      .order('completed_at', { ascending: false })
-      .limit(1),
-  ]);
-  if (syncRes.error) throw new Error(syncRes.error.message);
+      .select('started_at, completed_at')
+      .in('action', ACOES_SYNC_RECEBER)
+      .contains('companies', [company])
+      .eq('status', status)
+      .order('started_at', { ascending: false })
+      .limit(1);
+  const [completo, erro] = await Promise.all([ultimo('complete'), ultimo('error')]);
+  if (completo.error) throw new Error(completo.error.message);
+  if (erro.error) throw new Error(erro.error.message);
+  return classificarFrescor(company, completo.data?.[0] ?? null, erro.data?.[0] ?? null, agora);
+}
 
-  return computeAlertaCredito(
-    porPar.flat(),
-    (syncRes.data?.[0]?.completed_at as string | null) ?? null,
-    new Date(),
-  );
+export interface ResultadoCredito {
+  alerta: AlertaCredito | null;
+  /** Uma entrada por empresa lida — sobrevive ao "sem títulos" (é o que separa verde de cego). */
+  frescor: FrescorEmpresa[];
+}
+
+/** Vencido 60+ dos pares (company, código), com o frescor POR EMPRESA. Lança em qualquer falha de leitura. */
+async function buscarAlertaCredito(pares: ParCliente[]): Promise<ResultadoCredito> {
+  if (pares.length === 0) return { alerta: null, frescor: [] };
+  const corte = addDias(hojeSP(), -ALERTA_CREDITO.diasVencidoMin);
+  const agora = new Date();
+  const empresas = [...new Set(pares.map((p) => p.company))].sort();
+
+  const [porPar, frescor] = await Promise.all([
+    Promise.all(pares.map((p) => fetchTitulosVencidosPar(p, corte))),
+    Promise.all(empresas.map((c) => buscarFrescorEmpresa(c, agora))),
+  ]);
+  return { alerta: computeAlertaCredito(porPar.flat(), frescor), frescor };
 }
 
 export function useAlertaCreditoCliente(cliente: ClienteComCodigos | null | undefined) {
@@ -154,7 +211,8 @@ export function useAlertaCreditoCliente(cliente: ClienteComCodigos | null | unde
     queryKey: ['alerta-credito', chave],
     enabled: pares.length > 0,
     staleTime: 60_000,
-    queryFn: () => buscarAlertaCredito(pares),
+    // O wizard só alerta com evidência positiva de vencido (contrato da Fase 1): usa só `alerta`.
+    queryFn: async () => (await buscarAlertaCredito(pares)).alerta,
   });
 }
 
@@ -197,6 +255,8 @@ export interface CreditoDaFicha {
   conflito: boolean;
   aliasesConferidos: boolean;
   alerta: AlertaCredito | null;
+  /** Frescor por empresa lida; vazio quando não houve leitura de títulos (semConta/conflito). */
+  frescor: FrescorEmpresa[];
 }
 
 export function useCreditoDoCliente(customerId: string | undefined, { lerAliases }: { lerAliases: boolean }) {
@@ -217,7 +277,7 @@ export function useCreditoDoCliente(customerId: string | undefined, { lerAliases
         conflito = (data ?? []).some((a) => a.status === 'conflict');
         usuarios = [id, ...(data ?? []).filter((a) => a.status === 'active').map((a) => a.alias_user_id)];
       }
-      if (conflito) return { semConta: false, conflito: true, aliasesConferidos: lerAliases, alerta: null };
+      if (conflito) return { semConta: false, conflito: true, aliasesConferidos: lerAliases, alerta: null, frescor: [] };
 
       const { data: contas, error } = await supabase
         .from('omie_customer_account_map_fresco')
@@ -225,9 +285,10 @@ export function useCreditoDoCliente(customerId: string | undefined, { lerAliases
         .in('user_id', usuarios);
       if (error) throw new Error(error.message);
       const pares = paresDasContas((contas ?? []) as ContaOmieMapeada[]);
-      if (pares.length === 0) return { semConta: true, conflito: false, aliasesConferidos: lerAliases, alerta: null };
+      if (pares.length === 0) return { semConta: true, conflito: false, aliasesConferidos: lerAliases, alerta: null, frescor: [] };
 
-      return { semConta: false, conflito: false, aliasesConferidos: lerAliases, alerta: await buscarAlertaCredito(pares) };
+      const { alerta, frescor } = await buscarAlertaCredito(pares);
+      return { semConta: false, conflito: false, aliasesConferidos: lerAliases, alerta, frescor };
     },
   });
 }

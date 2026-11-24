@@ -57,7 +57,7 @@ export default function Customer360() {
     useCustomerCore(customerId);
   const address = useCustomerAddress(customerId);
   const metrics = useCustomerMetrics(customerId);
-  const score = useCustomerScore(customerId, user?.id);
+  const score = useCustomerScore(customerId);
   const preferred = useCustomerPreferredItems(customerId);
   const orders = useCustomerOrders(customerId);
   const faturamento12m = useCustomerFaturamento12m(customerId);

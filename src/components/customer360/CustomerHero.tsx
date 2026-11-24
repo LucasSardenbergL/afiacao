@@ -14,7 +14,7 @@ import { DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens, legendaM
 import { coberturaCustoCliente } from '@/lib/scoring/margin';
 import { whatsappLink } from '@/lib/phone';
 import {
-  formatDateOrDash, initials, healthTone, churnTone, formatDocument, margemTone,
+  formatDateOrDash, formatCalculadoEm, initials, healthTone, churnTone, formatDocument, margemTone,
 } from './format';
 import type { Customer, CustomerScore } from './viewTypes';
 import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
@@ -34,6 +34,8 @@ export function CustomerHero({
     ? (scoreSemLeitura === 'sem-rede' ? 'Score: sem rede' : 'Score indisponível')
     : health.label;
   const churn = churnTone(s?.churn_risk ?? null);
+  // Saúde/prioridade são um retrato do último cálculo — a data acompanha (onda B). Sem data, nada.
+  const calculadoEm = scoreSemLeitura ? null : formatCalculadoEm(s?.calculated_at);
   const coberturaItens = legendaCoberturaItens(coberturaCustoCliente(s));
   // Sem margem E sem cobertura: se o motivo é a janela (nenhuma compra em 12m), a tela diz — em vez
   // de sumir com a margem como se nunca tivesse existido, ou de mostrar um número velho.
@@ -125,20 +127,17 @@ export function CustomerHero({
               <span
                 className={cn(
                   'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
-                  s?.sales_history_status === 'sem_historico'
-                    ? 'bg-muted text-muted-foreground border-border'
-                    : s?.health_class === 'critico' || s?.health_class === 'risco'
-                      ? 'bg-status-error-bg text-status-error-bold border-status-error/20'
-                      : s?.health_class === 'atencao'
-                        ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
-                        : s?.health_class === 'saudavel'
-                          ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
-                          : 'bg-muted text-muted-foreground border-border',
+                  scoreSemLeitura ? 'bg-muted text-muted-foreground border-border' : health.chip,
                 )}
               >
                 <span className={cn('inline-block w-1.5 h-1.5 rounded-full', health.dot)} />
                 {rotuloSaude}
               </span>
+              {calculadoEm && (
+                <span className="text-2xs text-muted-foreground" data-testid="c360-score-calculado-em">
+                  {calculadoEm}
+                </span>
+              )}
               {s?.churn_risk != null && (
                 <span
                   className={cn(

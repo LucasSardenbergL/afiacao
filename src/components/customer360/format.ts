@@ -1,5 +1,6 @@
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { tomSaude } from '@/lib/farmer/saude-cliente';
 
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -105,6 +106,17 @@ export function formatDateOrDash(d: string | null | undefined): string {
   }
 }
 
+/**
+ * "calculado em 24/11" a partir de `farmer_client_scores.calculated_at` (onda B). Sem data ou data
+ * ilegível → `null`: a tela não mostra nada, nunca uma data inventada.
+ */
+export function formatCalculadoEm(d: string | null | undefined): string | null {
+  if (!d) return null;
+  const dt = parseISO(d);
+  if (Number.isNaN(dt.getTime())) return null;
+  return `calculado em ${format(dt, 'dd/MM')}`;
+}
+
 export function formatRelative(d: string | null | undefined): string {
   if (!d) return '—';
   try {
@@ -123,26 +135,22 @@ export function initials(name: string): string {
     .join('') || '?';
 }
 
+/**
+ * Tom da saúde na 360 — o MESMO dicionário da lista (`@/lib/farmer/saude-cliente`).
+ * Sem linha de score nenhuma → "Sem score" (é verdade: não há score); classe desconhecida →
+ * "Não avaliado".
+ */
 export function healthTone(healthClass: string | null, salesHistoryStatus?: string | null): {
   label: string;
   className: string;
   dot: string;
+  chip: string;
 } {
-  if (salesHistoryStatus === 'sem_historico') {
-    return { label: 'Sem histórico', className: 'text-muted-foreground', dot: 'bg-muted-foreground' };
+  if (healthClass == null && salesHistoryStatus == null) {
+    return { label: 'Sem score', className: 'text-muted-foreground', dot: 'bg-muted-foreground', chip: 'bg-muted text-muted-foreground border-border' };
   }
-  switch (healthClass) {
-    case 'saudavel':
-      return { label: 'Saudável', className: 'text-status-success-bold', dot: 'bg-status-success' };
-    case 'atencao':
-      return { label: 'Atenção', className: 'text-status-warning-bold', dot: 'bg-status-warning' };
-    case 'risco':
-      return { label: 'Em risco', className: 'text-status-error-bold', dot: 'bg-status-error' };
-    case 'critico':
-      return { label: 'Crítico', className: 'text-status-error-bold', dot: 'bg-status-error' };
-    default:
-      return { label: 'Sem score', className: 'text-muted-foreground', dot: 'bg-muted-foreground' };
-  }
+  const t = tomSaude(healthClass, salesHistoryStatus);
+  return { label: t.label, className: t.texto, dot: t.ponto, chip: t.chip };
 }
 
 /**

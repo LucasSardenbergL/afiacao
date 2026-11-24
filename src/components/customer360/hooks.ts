@@ -38,11 +38,13 @@ export function useCustomerAddress(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('addresses')
         .select('label, street, number, complement, neighborhood, city, state, zip_code, is_default')
         .eq('user_id', customerId!)
         .order('is_default', { ascending: false });
+      // Falha LANÇA (onda B): o erro descartado virava "nenhum endereço" na ficha.
+      if (error) throw error;
       return data ?? [];
     },
   });
@@ -69,12 +71,12 @@ export function useCustomerMetrics(customerId: string | undefined) {
 // Sem `gross_margin_pct`: a coluna é fechada para authenticated (migration 20261014120100) e listá-la
 // derruba a query inteira com 42501. A margem vem de `buscarMargemScore`.
 const COLUNAS_SCORE_C360 =
-  'health_score, health_class, churn_risk, expansion_score, priority_score, itens_com_custo, itens_sem_custo, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status';
+  'health_score, health_class, churn_risk, expansion_score, priority_score, itens_com_custo, itens_sem_custo, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status, calculated_at';
 
-export function useCustomerScore(customerId: string | undefined, farmerId: string | undefined) {
+export function useCustomerScore(customerId: string | undefined) {
   return useQuery({
-    queryKey: ['c360-score', customerId, farmerId],
-    enabled: !!customerId && !!farmerId,
+    queryKey: ['c360-score', customerId],
+    enabled: !!customerId,
     staleTime: 60_000,
     queryFn: async () => {
       // A margem só precisa do cliente, então sai JUNTO com o score (F12, plano v7): a espera é
@@ -89,27 +91,16 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
         captureException(e, { fonte: 'get_scores_margem/c360' });
         return undefined;
       });
-      // Score do farmer atual primeiro; o fallback (qualquer score do cliente) só roda quando a
-      // leitura própria teve SUCESSO sem linha. Falha LANÇA: o erro descartado virava "Sem score"
-      // na tela — ausência afirmada sobre uma leitura que não aconteceu.
-      const own = await supabase
+      // UMA leitura: `farmer_client_scores` é UNIQUE(customer_user_id) — o score é do CLIENTE, não do
+      // par farmer×cliente. O antigo "do farmer atual, senão qualquer um" fazia 2 idas para a mesma
+      // linha (onda B). Falha LANÇA: o erro descartado virava "Sem score" — ausência afirmada sobre
+      // uma leitura que não aconteceu.
+      const { data: linha, error } = await supabase
         .from('farmer_client_scores')
         .select(COLUNAS_SCORE_C360)
         .eq('customer_user_id', customerId!)
-        .eq('farmer_id', farmerId!)
         .maybeSingle();
-      if (own.error) throw own.error;
-      let linha = own.data;
-      if (!linha) {
-        const fallback = await supabase
-          .from('farmer_client_scores')
-          .select(COLUNAS_SCORE_C360)
-          .eq('customer_user_id', customerId!)
-          .limit(1)
-          .maybeSingle();
-        if (fallback.error) throw fallback.error;
-        linha = fallback.data;
-      }
+      if (error) throw error;
       // Sem linha não há onde pendurar a margem: devolve já (a RPC em voo morre sem dono e sem custo).
       if (!linha) return linha;
       const margem = await margemP;

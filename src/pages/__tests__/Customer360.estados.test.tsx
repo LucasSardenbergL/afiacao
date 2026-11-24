@@ -194,8 +194,8 @@ describe('Customer360 — score que não foi lido chega ao hero como FALHA (F12)
   it('ausência legítima (sucesso sem linha) → nenhum aviso', async () => {
     renderPagina();
     await assentou();
-    // Espera o score assentar: própria + fallback sem linha → `null` lido, não falha.
-    await waitFor(() => expect(qc.getQueryState(['c360-score', ID, 'staff-1'])?.status).toBe('success'));
+    // Espera o score assentar: leitura única sem linha → `null` lido, não falha.
+    await waitFor(() => expect(qc.getQueryState(['c360-score', ID])?.status).toBe('success'));
     expect(await marca()).toBe('nenhum');
   });
 });
