@@ -137,3 +137,13 @@ Régua "ativo atrasado acima de inativo": maior nota stale = 29,82 < menor nota 
 
 Pendente: estabilidade do top 10 entre dias consecutivos (régua ≥ 8/10) — só mede depois do cron
 de 2026-11-25 06:00 UTC, com a query acima sobre `priority_score_log`.
+
+## Reserva de reativação no Meu dia (decisão do founder, 2026-11-24)
+
+Com a v1.9, nenhum inativo entrava no top 10 da carteira medida (282 ativos acima de todo stale).
+`buildAgendaItems` agora reserva 1 vaga a cada 5 (2 de 10) para inativos com até 365 dias sem compra
+e `days_since_last_purchase` medido, o mais recente primeiro, nas últimas posições, com o selo
+"Reativação". Vaga sem candidato volta para a fila principal; ativação (`sem_historico`) segue só
+completando o fim. Testes em `agenda.test.ts`, falsificados 5/5 (sem reserva, sem janela, dias NULL
+elegível, reserva no topo, vaga vazia) com controle verde antes e depois. A cota (2/10) é
+arbitrária: ajustar quando houver retorno por contato medido para cada grupo.

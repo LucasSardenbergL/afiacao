@@ -27,6 +27,23 @@ export interface CarteiraRow {
   health_class: string | null;
   signal_modifiers: ScoreAdjustment | null;
   sales_history_status: string | null;
+  /** Dias desde a última compra; null = não medido (nunca entra na reserva de reativação). */
+  days_since_last_purchase?: number | null;
+}
+
+/**
+ * Reserva de reativação (decisão do founder, 2026-11-24, após a onda A): com a prioridade v1.9
+ * todo ativo pontua acima de todo inativo, e na carteira medida (282 ativos) nenhum inativo
+ * entrava no top 10. Uma vaga a cada 5 fica para quem parou há pouco — inativo com até
+ * {@link JANELA_REATIVACAO_DIAS} dias sem compra, o mais recente primeiro. Vaga sem candidato
+ * volta para a fila principal (nunca fica vazia).
+ */
+const JANELA_REATIVACAO_DIAS = 365;
+const VAGAS_POR_RESERVA = 5;
+
+function elegivelReativacao(s: CarteiraRow): boolean {
+  const dias = valorMedido(s.days_since_last_purchase ?? null);
+  return s.sales_history_status === 'stale' && dias != null && dias <= JANELA_REATIVACAO_DIAS;
 }
 
 export interface AgendaItem {
@@ -41,6 +58,8 @@ export interface AgendaItem {
   signalsCount: number;
   /** true = expansão não pôde ser avaliada (coluna sem produtor), ≠ "avaliei e não é expansão". */
   insumo_expansao_ausente: boolean;
+  /** true = entrou por uma vaga reservada à reativação recente, não pela fila principal. */
+  reserva_reativacao: boolean;
 }
 
 /**
@@ -136,8 +155,10 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
       topModifier: pickTopModifier(s.signal_modifiers),
       signalsCount: signalsCount(s.signal_modifiers),
       insumo_expansao_ausente,
+      reserva_reativacao: false,
     };
   });
+  const elegivel = new Set(rows.filter(elegivelReativacao).map((r) => r.customer_user_id));
   // Guard de slot ESTRUTURAL (não só tie-break — achado /codex no diff): clientes COM histórico
   // (risco/expansao/follow_up) preenchem os slots primeiro, por prioridade efetiva; 'ativacao'
   // (sem_historico) só completa as vagas restantes — nunca desloca recuperação/risco real, mesmo
@@ -151,5 +172,15 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
   };
   const comHistorico = items.filter((i) => i.agenda_type !== 'ativacao').sort(byPriority);
   const ativacao = items.filter((i) => i.agenda_type === 'ativacao').sort(byPriority);
-  return [...comHistorico, ...ativacao].slice(0, limit);
+  // Reserva: as k melhores reativações recentes saem da fila e ocupam as últimas k vagas; o
+  // resto da fila (inclusive outros inativos) preenche as demais antes de qualquer ativação.
+  const k = Math.floor(limit / VAGAS_POR_RESERVA);
+  const reservados = comHistorico
+    .filter((i) => elegivel.has(i.customer_user_id))
+    .slice(0, k)
+    .map((i) => ({ ...i, reserva_reativacao: true }));
+  const idsReservados = new Set(reservados.map((i) => i.customer_user_id));
+  const fila = comHistorico.filter((i) => !idsReservados.has(i.customer_user_id));
+  const principal = fila.slice(0, limit - reservados.length);
+  return [...principal, ...reservados, ...fila.slice(principal.length), ...ativacao].slice(0, limit);
 }

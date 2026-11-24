@@ -147,6 +147,9 @@ export function AgendaTodayList() {
               <div className="text-sm font-medium truncate">{info?.name ?? '…'}</div>
               <div className="text-2xs text-muted-foreground flex items-center gap-2 flex-wrap">
                 <Badge variant="outline" className="text-2xs">{meta.label}</Badge>
+                {item.reserva_reativacao && (
+                  <Badge variant="secondary" className="text-2xs">Reativação</Badge>
+                )}
                 {item.health_class && <span>health: {item.health_class}</span>}
                 {item.priority_score != null && <span>priority: {Math.round(item.priority_score)}</span>}
                 {item.topModifier && (
