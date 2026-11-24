@@ -30,6 +30,7 @@ import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } fro
 import { assinaturaServicosAfiacao, avisoOsAfiacaoDesatualizada } from './checkout-envelope';
 // O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
 import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
+import { totalDaLinha } from '@/lib/pricing/centavos';
 
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
@@ -243,7 +244,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       unidade: c.product.unidade,
       quantidade: c.quantity,
       valor_unitario: c.unit_price,
-      valor_total: c.quantity * c.unit_price,
+      valor_total: totalDaLinha(c.quantity, c.unit_price),
       ...(c.tint_cor_id ? {
         tint_cor_id: c.tint_cor_id,
         tint_nome_cor: c.tint_nome_cor,
@@ -426,7 +427,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       unidade: c.product.unidade,
       quantidade: c.quantity,
       valor_unitario: c.unit_price,
-      valor_total: c.quantity * c.unit_price,
+      valor_total: totalDaLinha(c.quantity, c.unit_price),
     }));
 
     let salesOrderId: string;

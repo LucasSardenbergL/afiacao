@@ -6,6 +6,7 @@ import type {
   UserTool,
 } from '@/hooks/unifiedOrder/types';
 import { logger } from '@/lib/logger';
+import { somaPorLinha } from '@/lib/pricing/centavos';
 import type { SubmitClient } from './types';
 
 export const getToolName = (t: UserTool): string =>
@@ -102,10 +103,10 @@ export function subtotalServicosParaExibicao<T extends { quantity: number }>(
   itens: ReadonlyArray<T>,
   precoDe: (item: T) => number | null | undefined,
 ): number {
-  return itens.reduce((s, c) => {
+  return somaPorLinha(itens, c => {
     const preco = precoServicoParaExibicao(precoDe(c));
-    return s + (preco === null ? 0 : preco * c.quantity);
-  }, 0);
+    return preco === null ? 0 : preco * c.quantity;
+  });
 }
 
 /**

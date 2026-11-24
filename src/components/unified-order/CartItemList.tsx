@@ -28,6 +28,7 @@ import { QuantidadeInput } from './QuantidadeInput';
 import { rotuloTotal } from './rotulo-total';
 import { DescontoCoresPedido } from './DescontoCoresPedido';
 import { fmtPct } from './fmt-pct';
+import { totalDaLinha } from '@/lib/pricing/centavos';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -263,7 +264,7 @@ export function CartItemList({
                   </>
                 )}
               </div>
-              <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
+              <span className="text-xs font-semibold shrink-0">{fmt(totalDaLinha(item.quantity, item.unit_price))}</span>
             </div>
             {item.tint_cor_id && (item.tint_discount_pct ?? 0) > 0 && item.tint_preco_sem_desconto != null && (
               <p className="text-[10px] text-muted-foreground">
@@ -342,7 +343,7 @@ export function CartItemList({
                           {item.notes && <p className="text-[10px] text-muted-foreground italic truncate">Obs: {item.notes}</p>}
                         </div>
                         {price !== null && price > 0 ? (
-                          <span className="text-xs font-semibold shrink-0">{fmt(price * item.quantity)}</span>
+                          <span className="text-xs font-semibold shrink-0">{fmt(totalDaLinha(item.quantity, price))}</span>
                         ) : (
                           <span className="text-[10px] text-muted-foreground italic shrink-0">A orçar</span>
                         )}

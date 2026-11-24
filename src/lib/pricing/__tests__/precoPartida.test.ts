@@ -129,3 +129,30 @@ describe('precoPartida — precedência de nascimento do preço', () => {
     expect(denovo).toBe(105);
   });
 });
+
+describe('precoPartida — centavos (PR 2.4, decisão do founder)', () => {
+  it('último praticado de 4 casas (Omie) nasce ao centavo', () => {
+    const p = precoPartida({
+      tabela: 100, ultimoPraticado: 12.3456, ultimoPraticadoEm: diasAtras(30), hoje: HOJE, tier: null, mult: null,
+    });
+    expect(p).toBe(12.35);
+  });
+
+  it('tabela × mult nasce ao centavo (half-up)', () => {
+    const p = precoPartida({
+      tabela: 99.99, ultimoPraticado: null, ultimoPraticadoEm: null, hoje: HOJE, tier: 'B', mult: 1.07,
+    });
+    expect(p).toBe(106.99); // 106,9893
+    const meio = precoPartida({
+      tabela: 10, ultimoPraticado: null, ultimoPraticadoEm: null, hoje: HOJE, tier: 'B', mult: 1.115,
+    });
+    expect(meio).toBe(11.15); // 11,15 em ponto flutuante é 11,1499…: a regra via texto não perde o centavo
+  });
+
+  it('tabela pura com 3 casas nasce ao centavo', () => {
+    const p = precoPartida({
+      tabela: 4.125, ultimoPraticado: null, ultimoPraticadoEm: null, hoje: HOJE, tier: null, mult: null,
+    });
+    expect(p).toBe(4.13);
+  });
+});

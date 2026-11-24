@@ -14,6 +14,7 @@ import type {
 import { fmt, getToolName, PAYMENT_OPTIONS } from '@/hooks/useUnifiedOrder';
 import type { OmieServico } from '@/services/omieService';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
+import { totalDaLinha } from '@/lib/pricing/centavos';
 
 interface ServiceItemFormProps {
   customerUserId: string | null;
@@ -146,7 +147,7 @@ export function ServiceItemForm({
                             <Plus className="w-3 h-3" />
                           </Button>
                           {price !== null && (
-                            <span className="text-xs text-primary font-medium ml-auto">{fmt(price * item.quantity)}</span>
+                            <span className="text-xs text-primary font-medium ml-auto">{fmt(totalDaLinha(item.quantity, price))}</span>
                           )}
                         </div>
                       </div>

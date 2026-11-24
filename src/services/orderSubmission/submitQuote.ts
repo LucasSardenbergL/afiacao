@@ -4,6 +4,7 @@ import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 import { bloqueioTabelaTint } from './tabelaTint';
+import { totalDaLinha } from '@/lib/pricing/centavos';
 
 /**
  * Saves cart as quotes (orcamento) — no Omie sync.
@@ -58,7 +59,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         unidade: c.product.unidade,
         quantidade: c.quantity,
         valor_unitario: c.unit_price,
-        valor_total: c.quantity * c.unit_price,
+        valor_total: totalDaLinha(c.quantity, c.unit_price),
         ...(c.tint_cor_id ? {
           tint_cor_id: c.tint_cor_id,
           tint_nome_cor: c.tint_nome_cor,
@@ -122,7 +123,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         unidade: c.product.unidade,
         quantidade: c.quantity,
         valor_unitario: c.unit_price,
-        valor_total: c.quantity * c.unit_price,
+        valor_total: totalDaLinha(c.quantity, c.unit_price),
       }));
       const { error } = await supabase.from('sales_orders').insert({
         customer_user_id: customerUserId || user.id,

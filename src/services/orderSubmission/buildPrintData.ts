@@ -11,6 +11,7 @@ import type { DeliveryOption } from '@/types';
 import { findParcelaDesc, getToolName, precoServicoParaExibicao } from './helpers';
 // Impressão sai do app: razão de MEI sem o CPF do titular (M1, 2026-11-11). `razao_fiscal` nunca vem aqui.
 import { razaoSemCpf } from '@/lib/omie/razao-exibicao';
+import { totalDaLinha } from '@/lib/pricing/centavos';
 
 interface BuildPrintDataParams {
   customer: OmieCustomer;
@@ -70,7 +71,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
         quantidade: c.quantity,
         unidade: c.product.unidade,
         valorUnitario: c.unit_price,
-        valorTotal: c.quantity * c.unit_price,
+        valorTotal: totalDaLinha(c.quantity, c.unit_price),
         tintCorId: c.tint_cor_id,
         tintNomeCor: c.tint_nome_cor,
       })),
@@ -105,7 +106,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
         quantidade: c.quantity,
         unidade: c.product.unidade,
         valorUnitario: c.unit_price,
-        valorTotal: c.quantity * c.unit_price,
+        valorTotal: totalDaLinha(c.quantity, c.unit_price),
       })),
       subtotal: colacorSubtotal,
       desconto: 0,
@@ -139,7 +140,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
           quantidade: c.quantity,
           unidade: 'SV',
           valorUnitario: price,
-          valorTotal: price === null ? null : price * c.quantity,
+          valorTotal: price === null ? null : totalDaLinha(c.quantity, price),
         };
       }),
       subtotal: serviceSubtotal,

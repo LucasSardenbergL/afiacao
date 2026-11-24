@@ -14,7 +14,13 @@
  *   3. Tabela Omie pura.
  *
  * NÃO cobre tint (selectTintPrice é intocado) nem o piso (cockpit/Fase B).
+ *
+ * Centavos (PR 2.4, decisão do founder): o preço devolvido já sai arredondado ao centavo — inclusive o
+ * último praticado, que o Omie devolve com até 4 casas. Como a reprecificação da fronteira compara
+ * `unit_price === precoNascimento` e os dois nascem daqui, a igualdade continua valendo.
  */
+
+import { emCentavos } from './centavos';
 
 export const JANELA_ULTIMO_PRATICADO_DIAS = 180;
 
@@ -53,16 +59,16 @@ export function precoPartida(input: PrecoPartidaInput): number {
     const idade = ultimoPraticadoEm ? idadeEmDias(ultimoPraticadoEm, hoje) : null;
     // idade === null → sem data confiável → NÃO derruba (comportamento vigente).
     if (idade === null || idade <= JANELA_ULTIMO_PRATICADO_DIAS) {
-      return ultimoPraticado;
+      return emCentavos(ultimoPraticado);
     }
   }
 
   // 2) Partida por tier: tabela × mult (só com tier E mult válido E tabela positiva).
   const multValido = mult != null && Number.isFinite(mult) && mult > 0;
   if (tier != null && multValido && tabela > 0) {
-    return tabela * mult;
+    return emCentavos(tabela * mult);
   }
 
   // 3) Tabela pura (degradação honesta: sem os dados novos, comportamento de hoje).
-  return tabela;
+  return emCentavos(tabela);
 }

@@ -11,6 +11,7 @@ import type {
 } from '@/hooks/useUnifiedOrder';
 import { nascerItemProduto } from './nascimento-item';
 import { subtotalServicosParaExibicao } from '@/services/orderSubmission/helpers';
+import { emCentavos, somaPorLinha } from '@/lib/pricing/centavos';
 import {
   aplicarDescontoNasCores,
   mesmoDesconto,
@@ -87,18 +88,18 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
 
   /* ─── Subtotals ─── */
   const obenSubtotal = useMemo(
-    () => obenProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0),
+    () => somaPorLinha(obenProductItems, c => c.quantity * c.unit_price),
     [obenProductItems],
   );
   const colacorProdSubtotal = useMemo(
-    () => colacorProductItems.reduce((s, c) => s + c.quantity * c.unit_price, 0),
+    () => somaPorLinha(colacorProductItems, c => c.quantity * c.unit_price),
     [colacorProductItems],
   );
   const serviceSubtotal = useMemo(() => {
-    return serviceItems.reduce((s, c) => {
+    return somaPorLinha(serviceItems, c => {
       const price = getServicePrice(c);
-      return s + (price !== null ? price * c.quantity : 0);
-    }, 0);
+      return price !== null ? price * c.quantity : 0;
+    });
   }, [serviceItems, getServicePrice]);
   // Apresentação (resumo/total na tela): só preço > 0, como a linha. `serviceSubtotal` acima segue
   // indo no payload da OS — não muda (follow-up do #4068).
@@ -317,7 +318,8 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     }
     setCart(prev =>
       prev.map((c, i) =>
-        i === index && c.type === 'product' ? ({ ...c, unit_price: price } as ProductCartItem) : c,
+        // Centavos (PR 2.4): edição manual e "aplicar" da Régua chegam aqui com N casas.
+        i === index && c.type === 'product' ? ({ ...c, unit_price: emCentavos(price) } as ProductCartItem) : c,
       ),
     );
     return true;

@@ -58,6 +58,7 @@ import { BarraEnvioPedido } from '@/components/unified-order/BarraEnvioPedido';
 import { motivosEnvioBloqueado, envioBloqueado, type EntradaMotivosEnvio } from '@/components/unified-order/motivos-envio';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
+import { centavosDoRascunho } from '@/hooks/unifiedOrder/centavos-do-rascunho';
 
 function OrderStepper({ step, isCustomerMode }: { step: number; isCustomerMode: boolean }) {
   const steps = isCustomerMode ? ['Itens', 'Revisão'] : ['Cliente', 'Itens', 'Revisão'];
@@ -383,7 +384,7 @@ const UnifiedOrder = () => {
   const restorePendenteRef = useRef<{ codigoCliente: number; nome: string | null; dados: DadosDoRascunho } | null>(null);
   // Aplica com os setters do render CORRENTE (os que marcam o prazo como "manual" na seleção nova).
   const aplicarDadosDoRascunho = (d: DadosDoRascunho, prazoVolta: boolean) => {
-    if (Array.isArray(d.cart)) h.setCart(d.cart);
+    if (Array.isArray(d.cart)) h.setCart(centavosDoRascunho(d.cart));
     if (typeof d.notes === 'string') h.setNotes(d.notes);
     if (typeof d.ordemCompra === 'string') h.setOrdemCompra(d.ordemCompra);
     // B7 (rodada 2): o prazo escolhido à mão volta pelos setters EXPORTADOS, então a `ultima_parcela`
