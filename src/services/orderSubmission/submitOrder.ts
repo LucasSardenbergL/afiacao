@@ -552,7 +552,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             } else {
               try {
                 // 8.4: o invoke NÃO lança — antes `error` e o desfecho eram ignorados e a OP recusada pelo
-                // Omie saía como "criada". A edge v1.48 devolve o desfecho por item; o reenvio é idempotente.
+                // Omie saía como "criada". A edge v1.48 devolve o desfecho por item (./ordemProducao.ts lê também a resposta da v1.47).
                 const { data: opData, error: opError } = await supabase.functions.invoke('omie-vendas-sync', {
                   body: {
                     action: 'criar_ordem_producao', account: 'colacor',

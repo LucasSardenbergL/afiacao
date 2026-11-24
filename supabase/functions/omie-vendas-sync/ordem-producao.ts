@@ -2,15 +2,15 @@
 //
 // Antes: o `catch` do `IncluirOrdemProducao` só logava, a linha local nascia com `omie_ordem_numero = "null"`
 // (`String(null)`) e a resposta era `{ success: true }` incondicional — o vendedor via "OP criada" para uma
-// OP que o Omie recusou. E chamar de novo duplicava a linha local (o Omie recusa o 2º `cCodIntOP`, então
-// a 2ª linha nascia sem OP).
+// OP que o Omie recusou.
 //
-// Agora:
-//   • cada item tem DESFECHO (`criada` · `ja_existia` · `falhou` com o motivo) e `success` só é true sem falha;
-//   • a chamada é IDEMPOTENTE pela linha local do (pedido, conta, produto): com OP no Omie → `ja_existia`
-//     (não chama o Omie); sem OP → reenvia e ATUALIZA a mesma linha (retoma só o que falhou); sem linha → cria;
-//   • o mesmo produto em duas linhas do carrinho vira UMA OP com a soma (o `cCodIntOP` é por produto: a
-//     2ª chamada era recusada e a quantidade dela sumia da produção).
+// Agora (núcleo, sem reaproveitar linha — a 1ª rodada do Codex mostrou que a "idempotência local" criava
+// bordas novas e nenhum caminho do app chama a OP de novo: o reenvio pula o PV já enviado):
+//   • cada produto tem DESFECHO (`criada` · `falhou` com o motivo e a chave `cCodIntOP` para procurar no Omie);
+//     `success` só é true sem falha;
+//   • o mesmo produto em duas linhas vira UMA OP com a soma (o `cCodIntOP` é por produto: a 2ª chamada era
+//     recusada e a quantidade dela sumia da produção). Linha com quantidade inválida derruba o produto inteiro
+//     (nunca soma parcial); a data prometida mais CEDO vale, já resolvida com o prazo do pedido.
 //
 // Testado em ./ordem-producao_test.ts.
 
@@ -25,18 +25,14 @@ export interface ItemOp {
   ready_by_date?: string | null;
 }
 
-export interface LinhaOpLocal {
-  id: string;
-  product_id: string | null;
-  product_codigo: string | null;
-  omie_ordem_producao_id: number | null;
-  omie_ordem_numero: string | null;
+/** Produto a produzir: as linhas do carrinho já juntas; `invalido` = alguma linha não pode ir ao Omie. */
+export interface ProdutoOp extends ItemOp {
+  invalido: string | null;
 }
 
 export type DesfechoOp =
-  | { status: "criada"; omie_ordem_id: number; omie_ordem_numero: string }
-  | { status: "ja_existia"; omie_ordem_id: number; omie_ordem_numero: string | null }
-  | { status: "falhou"; motivo: string };
+  | { status: "criada"; omie_ordem_id: number; omie_ordem_numero: string | null }
+  | { status: "falhou"; motivo: string; chave: string | null };
 
 /** Chave do produto no Omie — a mesma do `cCodIntOP`. Ausente/0 = sem chave (não fabricar). */
 function chaveProduto(item: ItemOp): number | null {
@@ -44,74 +40,60 @@ function chaveProduto(item: ItemOp): number | null {
   return typeof c === "number" && Number.isFinite(c) && c > 0 ? c : null;
 }
 
+function quantidadeValida(q: unknown): q is number {
+  return typeof q === "number" && Number.isFinite(q) && q > 0;
+}
+
+/** Data prometida da linha: a dela, senão a do pedido. Só `YYYY-MM-DD` conta (não fabricar). */
+function prazoDaLinha(item: ItemOp, prazoDoPedido: unknown): string | null {
+  const ok = (d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : null;
+  return ok(item.ready_by_date) ?? ok(prazoDoPedido);
+}
+
 /**
- * Junta as linhas do MESMO produto numa só (soma a quantidade; a data prometida mais CEDO vale para a
- * OP, que é a que a produção precisa cumprir). Itens sem código Omie seguem sozinhos (vão falhar honesto).
+ * Junta as linhas do MESMO produto numa só (soma a quantidade; a data prometida mais CEDO). Validação
+ * por LINHA, antes de somar: uma linha inválida marca o produto inteiro como inválido (5 + (−2) nunca
+ * vira 3). Sem código Omie → produto sozinho, inválido.
  */
-export function agruparItensOp(itens: ItemOp[]): ItemOp[] {
-  const saida: ItemOp[] = [];
-  const porChave = new Map<number, ItemOp>();
+export function agruparItensOp(itens: ItemOp[], prazoDoPedido: unknown): ProdutoOp[] {
+  const saida: ProdutoOp[] = [];
+  const porChave = new Map<number, ProdutoOp>();
   for (const it of itens) {
     const k = chaveProduto(it);
-    if (k === null) { saida.push({ ...it }); continue; }
+    const prazo = prazoDaLinha(it, prazoDoPedido);
+    const invalidoLinha = k === null ? "produto sem código no Omie"
+      : !quantidadeValida(it.quantidade) ? "quantidade inválida" : null;
+    if (k === null) { saida.push({ ...it, ready_by_date: prazo, invalido: invalidoLinha }); continue; }
     const ja = porChave.get(k);
     if (!ja) {
-      const novo = { ...it };
+      const novo: ProdutoOp = { ...it, ready_by_date: prazo, invalido: invalidoLinha };
       porChave.set(k, novo);
       saida.push(novo);
       continue;
     }
-    ja.quantidade = ja.quantidade + it.quantidade;
-    const d = it.ready_by_date || null;
-    if (d && (!ja.ready_by_date || d < ja.ready_by_date)) ja.ready_by_date = d;
+    if (invalidoLinha) ja.invalido = invalidoLinha;
+    else if (!ja.invalido) ja.quantidade = ja.quantidade + it.quantidade;
+    if (prazo && (!ja.ready_by_date || prazo < ja.ready_by_date)) ja.ready_by_date = prazo;
   }
   return saida;
 }
 
 /**
- * A linha local que já representa este item no pedido: pelo `product_id`; pelo código do produto só
- * quando um dos lados não tem `product_id` (nunca casa dois `product_id` diferentes pelo código).
+ * Lê o `nCodOP` da resposta do `IncluirOrdemProducao`. Sem `nCodOP` válido = NÃO confirmou.
+ * O `cNumOP` (número que o operador vê) só se vier — o id interno nunca é apresentado como número.
  */
-export function linhaDoItem(item: ItemOp, linhas: LinhaOpLocal[]): LinhaOpLocal | undefined {
-  if (item.product_id) {
-    const porId = linhas.find((l) => l.product_id === item.product_id);
-    if (porId) return porId;
-  }
-  if (!item.codigo) return undefined;
-  return linhas.find((l) =>
-    l.product_codigo === item.codigo && (!item.product_id || l.product_id == null)
-  );
-}
-
-export type PlanoOp =
-  | { acao: "pular"; linha: LinhaOpLocal }
-  | { acao: "reenviar"; linha: LinhaOpLocal }
-  | { acao: "criar" };
-
-/** O que fazer com o item: já tem OP no Omie → pular; tem linha sem OP → reenviar nela; nada → criar. */
-export function planoDoItem(item: ItemOp, linhas: LinhaOpLocal[]): PlanoOp {
-  const linha = linhaDoItem(item, linhas);
-  if (!linha) return { acao: "criar" };
-  return linha.omie_ordem_producao_id ? { acao: "pular", linha } : { acao: "reenviar", linha };
-}
-
-/** Lê o `nCodOP`/`cNumOP` da resposta do `IncluirOrdemProducao`. Sem `nCodOP` válido = NÃO criou. */
-export function lerRespostaOp(r: unknown): { id: number; numero: string } | null {
+export function lerRespostaOp(r: unknown): { id: number; numero: string | null } | null {
   if (!r || typeof r !== "object") return null;
   const o = r as { nCodOP?: unknown; cNumOP?: unknown };
   const id = typeof o.nCodOP === "number" ? o.nCodOP : typeof o.nCodOP === "string" ? Number(o.nCodOP) : NaN;
   if (!Number.isFinite(id) || id <= 0) return null;
-  const numero = typeof o.cNumOP === "string" && o.cNumOP.trim() ? o.cNumOP.trim() : String(id);
+  const numero = typeof o.cNumOP === "string" && o.cNumOP.trim() ? o.cNumOP.trim() : null;
   return { id, numero };
 }
 
-/** Pré-condição local antes de chamar o Omie; `null` = pode chamar. */
-export function motivoParaNaoChamar(item: ItemOp): string | null {
-  if (chaveProduto(item) === null) return "produto sem código no Omie";
-  if (!(typeof item.quantidade === "number" && Number.isFinite(item.quantidade) && item.quantidade > 0)) {
-    return "quantidade inválida";
-  }
-  return null;
+/** Como o operador acha a OP no Omie: o número se houver, senão o id interno rotulado. */
+export function rotuloOp(id: number, numero: string | null): string {
+  return numero ? `OP ${numero}` : `OP de id ${id} no Omie`;
 }
 
 export function resumoOps(desfechos: DesfechoOp[]): { success: boolean; falhas: number } {
