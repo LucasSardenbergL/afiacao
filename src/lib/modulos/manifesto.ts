@@ -500,6 +500,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/lens-atividade-vendedor.test.tsx",
       "src/hooks/__tests__/lens-engines-ia.test.tsx",
       "src/hooks/__tests__/lens-tactical-plan.test.tsx",
+      "src/hooks/__tests__/useMyCarteiraScores.corte.test.tsx",
       "src/hooks/__tests__/plano-bundle-ausente.test.tsx",
       "src/hooks/__tests__/plano-tatico-margem-rpc.test.tsx",
       "src/hooks/__tests__/tactical-plan-posse-dono.test.tsx",
