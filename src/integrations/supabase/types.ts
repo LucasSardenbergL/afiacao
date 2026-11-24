@@ -24815,18 +24815,6 @@ export type Database = {
         }
         Relationships: []
       }
-      v_perfil_contato: {
-        Row: {
-          cnpj: string | null
-          contato_visivel: boolean | null
-          document: string | null
-          eh_pj: boolean | null
-          email: string | null
-          phone: string | null
-          user_id: string | null
-        }
-        Relationships: []
-      }
       v_pedidos_em_aberto: {
         Row: {
           dias_desde_pedido: number | null
@@ -24869,6 +24857,18 @@ export type Database = {
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
+        }
+        Relationships: []
+      }
+      v_perfil_contato: {
+        Row: {
+          cnpj: string | null
+          contato_visivel: boolean | null
+          document: string | null
+          eh_pj: boolean | null
+          email: string | null
+          phone: string | null
+          user_id: string | null
         }
         Relationships: []
       }
