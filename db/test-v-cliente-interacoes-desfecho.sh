@@ -14,6 +14,7 @@
 # ║   S2 gate do ramo removido + RLS da tabela alargada: A4b VERMELHO.             ║
 # ║   G  guarda: prod sem security_invoker → a migration ABORTA na GUARDA.         ║
 # ║  As sabotagens editam um ESPELHO em tmpdir — supabase/migrations/ é DR.        ║
+# ║  Aplica com `psql -1` = a transação única do `bun run db:aplicar`.             ║
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 set -uo pipefail
 
@@ -190,7 +191,7 @@ passou() { case " $RES " in *" $1=1 "*) return 0 ;; *) return 1 ;; esac; }
 echo "═══ C0 controle: migration REAL ═══"
 novo_banco c0
 ANTES="$(colunas)"
-if P -q -f "$MIG" >"$TMP/c0.log" 2>&1; then ok "C0 migration real aplicou (guarda e pós-condição passaram)"; else bad "C0 migration real FALHOU: $(head -c 400 "$TMP/c0.log")"; fi
+if P -q -1 -f "$MIG" >"$TMP/c0.log" 2>&1; then ok "C0 migration real aplicou (guarda e pós-condição passaram)"; else bad "C0 migration real FALHOU: $(head -c 400 "$TMP/c0.log")"; fi
 asserts "$ANTES"
 C0_OK=1; for a in A1 A2 A3 A4 A5 A6 A7 A8 A4b; do passou "$a" || C0_OK=0; done
 [ "$C0_OK" = 1 ] || { echo "CONTROLE VERMELHO — falsificação abortada (sem linha de base verde não há prova)"; echo "PASS=$PASS FAIL=$FAIL"; exit 1; }
@@ -201,7 +202,7 @@ echo "═══ S1 sabotagem: replace sem WITH (security_invoker) ═══"
 sed -e 's/^WITH (security_invoker = true) AS$/AS/' -e '/^DO \$pos\$/,/^\$pos\$;/d' "$MIG" > "$TMP/s1.sql"
 if grep -q 'security_invoker = true) AS' "$TMP/s1.sql" || grep -q 'POSCONDICAO' "$TMP/s1.sql"; then bad "S1 sabotagem não pegou no espelho"; fi
 novo_banco s1; ANTES="$(colunas)"
-P -q -f "$TMP/s1.sql" >/dev/null 2>&1 || bad "S1 espelho sabotado não aplicou"
+P -q -1 -f "$TMP/s1.sql" >/dev/null 2>&1 || bad "S1 espelho sabotado não aplicou"
 QUIETO=1; asserts "$ANTES"; QUIETO=0
 if passou A5; then bad "S1: A5 seguiu VERDE sem invoker — o assert não tem dente"; else ok "S1: sem invoker, A5 ficou VERMELHO (gestor passou a ver o desfecho alheio)"; fi
 
@@ -210,7 +211,7 @@ echo "═══ S2 sabotagem: ramo venda_contato sem o gate de carteira ══�
 sed -e 's/^  WHERE vc.comprador_id IS NOT NULL AND (private.pode_ver_carteira_completa.*$/  WHERE vc.comprador_id IS NOT NULL;/' "$MIG" > "$TMP/s2.sql"
 grep -q 'vc.comprador_id IS NOT NULL;' "$TMP/s2.sql" || bad "S2 sabotagem não pegou no espelho"
 novo_banco s2; ANTES="$(colunas)"
-P -q -f "$TMP/s2.sql" >/dev/null 2>&1 || bad "S2 espelho sabotado não aplicou"
+P -q -1 -f "$TMP/s2.sql" >/dev/null 2>&1 || bad "S2 espelho sabotado não aplicou"
 QUIETO=1; asserts "$ANTES"; QUIETO=0
 if passou A4b; then bad "S2: A4b seguiu VERDE sem o gate — o assert não tem dente"; else ok "S2: sem o gate, A4b ficou VERMELHO"; fi
 # Com a RLS de PROD, a tabela já barra a vendedora sem carteira: A4 fica verde mesmo sem o gate
@@ -221,7 +222,7 @@ if passou A4; then ok "S2: A4 verde sem o gate = a RLS de prod já barra (defesa
 echo "═══ G guarda: view de prod sem security_invoker ═══"
 novo_banco g
 P -q -c "ALTER VIEW public.v_cliente_interacoes RESET (security_invoker);"
-if P -q -f "$MIG" >"$TMP/g.log" 2>&1; then bad "G: migration aplicou sobre view em drift (guarda sem dente)"
+if P -q -1 -f "$MIG" >"$TMP/g.log" 2>&1; then bad "G: migration aplicou sobre view em drift (guarda sem dente)"
 elif grep -q 'ERROR:  GUARDA v_cliente_interacoes: reloptions' "$TMP/g.log"; then ok "G: migration abortou na GUARDA (drift de reloptions)"
 else bad "G: falhou por OUTRO motivo: $(head -c 300 "$TMP/g.log")"; fi
 DB=g

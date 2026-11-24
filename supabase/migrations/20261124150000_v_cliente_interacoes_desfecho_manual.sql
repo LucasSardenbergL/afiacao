@@ -12,9 +12,8 @@
 -- vale — o efetivo é a interseção (nunca mais largo que a tabela).
 --
 -- Guarda: aborta se a view de prod não estiver no estado do pré-flight (drift repo×prod).
+-- Sem BEGIN/COMMIT: a transação é do `bun run db:aplicar` (guarda, replace e pós-condição são atômicos).
 -- Prova: db/test-v-cliente-interacoes-desfecho.sh (PG17, com falsificação).
-
-BEGIN;
 
 DO $guarda$
 DECLARE
@@ -132,4 +131,3 @@ BEGIN
 END
 $pos$;
 
-COMMIT;
