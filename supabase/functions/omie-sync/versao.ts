@@ -52,7 +52,10 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 //   OS pela chave. OS que já existe com outro carrinho → success:false + conferencia (follow-up Codex do #4042).
 // v1.16 (2026-11-22) — parcelas da OS rateadas em CENTAVOS com o saldo na última (`ratearTotalEmParcelas`): a última
 //   era calculada em reais inteiros e R$ 100 em 3x ia como 33,33 + 33,33 + 34,00 = 100,66 (PR 2.1, rodada 3).
-export const VERSAO = "v1.16-parcelas-centavos";
+// v1.17 (2026-11-24) — a OS grava em `orders.delivery_option` a modalidade escolhida no Novo Pedido (`modalidade-os.ts`):
+//   era 'retirada' fixo e nenhuma OS do app entrava no roteirizador. Grava também o endereço e o turno ESCOLHIDOS
+//   (`orders.address`/`time_slot`). Front antigo (sem os campos) segue 'retirada' sem endereço (PR 2.3).
+export const VERSAO = "v1.17-modalidade-real";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

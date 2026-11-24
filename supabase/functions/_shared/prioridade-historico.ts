@@ -15,7 +15,8 @@
 export type StatusHistorico = "sem_historico" | "stale" | "ativo";
 
 /** Run SAUDÁVEL (a RPC de vendas respondeu): o status foi derivado agora, e decide. */
-export function prioridadePorStatus(status: StatusHistorico, calculada: number): number | null {
+// `calculada` null (v1.9) = insumo obrigatório da exposição ao atraso ausente: NULL atravessa, nunca 0.
+export function prioridadePorStatus(status: StatusHistorico, calculada: number | null): number | null {
   return status === "sem_historico" ? null : calculada;
 }
 
@@ -31,7 +32,7 @@ export function prioridadePorStatus(status: StatusHistorico, calculada: number):
  */
 export function prioridadeNoRefreshFatal(
   statusPersistido: unknown,
-  calculada: number,
+  calculada: number | null,
   persistida: number | null,
 ): number | null {
   if (statusPersistido === "sem_historico") return null;

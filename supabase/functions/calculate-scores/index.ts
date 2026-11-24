@@ -13,7 +13,6 @@ import { fetchAll } from "../_shared/paginate.ts";
 import {
   maximoMedido,
   mediaPonderadaRenormalizada,
-  normalizarPorMaximo,
   valorMedido,
 } from "../_shared/score-ponderado.ts";
 // priority_score NULL para quem nunca comprou (sem_historico) — e o ramo salesRefreshFatal pelo status
@@ -23,15 +22,17 @@ import { prioridadeNoRefreshFatal, prioridadePorStatus } from "../_shared/priori
 import { churnNoRefreshFatal, churnPorStatus } from "../_shared/churn-historico.ts";
 // Base de vendas (v1.8): dias/gasto NULL quando o cliente não tem linha na RPC de vendas — nunca o 999/R$0
 // sentinela. Espelho verbatim de src/lib/scoring/salesBase.ts; testável sob --no-remote.
-import { componenteMeta, deriveSalesBase, finitoOuNulo, tetoGasto } from "../_shared/base-vendas.ts";
+import { deriveSalesBase, finitoOuNulo } from "../_shared/base-vendas.ts";
 // Frequência de recompra (Venda por cliente, 1a): intervalo medido ou NULL, e a classe de saúde.
 // Espelho verbatim de src/lib/scoring/frequencia.ts — paridade em __tests__/frequencia.test.ts.
 import {
   classeSaude,
-  componenteRecompra,
   intervaloRecompraConhecido,
   scoreFrequencia,
 } from "../_shared/frequencia-recompra.ts";
+// Prioridade por exposição ao atraso (v1.9, onda A de Clientes). Espelho verbatim de
+// src/lib/scoring/prioridadeValor.ts — paridade em __tests__/prioridadeValor.test.ts.
+import { calcularPrioridade, referenciaExposicao } from "../_shared/prioridade-valor.ts";
 
 // Origem fixa "*" (igual ao `_shared/auth.ts`; a auth é por Bearer, não cookie): o secret ALLOWED_ORIGIN
 // valia "123456" em prod e o navegador rejeitava todo preflight — 5 edges mudas para o app (2026-10-12).
@@ -546,26 +547,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Priority Score weights
-    const ps_w = {
-      margin_potential: (config['ps_weight_margin_potential'] ?? 35) / 100,
-      churn_risk: (config['ps_weight_churn_risk'] ?? 30) / 100,
-      repurchase: (config['ps_weight_repurchase'] ?? 20) / 100,
-      goal_proximity: (config['ps_weight_goal_proximity'] ?? 15) / 100,
-    };
-
-    // O priority score passou a DIVIDIR pela soma dos pesos disponíveis, pelo mesmo motivo que o
-    // health já dividia: `revenue_potential` não tem produtor e o peso dele (35%, o MAIOR dos
-    // quatro) precisa ser redistribuído em vez de contribuir 0. Com soma 1,0 a divisão é identidade
-    // para quem TEM o componente; com soma diferente, reescala todo mundo — comportamento correto
-    // (um score 0-100 deve usar 100% do peso disponível), mas silencioso demais para não deixar rastro.
-    const somaPesosPs = ps_w.margin_potential + ps_w.churn_risk + ps_w.repurchase + ps_w.goal_proximity;
-    if (Math.abs(somaPesosPs - 1) > 0.001) {
-      console.warn(
-        `[calculate-scores] pesos do priority score somam ${(somaPesosPs * 100).toFixed(1)}, não 100 — ` +
-        `os scores serão normalizados por essa soma. Confira farmer_algorithm_config.ps_weight_*.`,
-      );
-    }
+    // Prioridade (v1.9): os quatro pesos "ps_weight" da config deixaram de existir — a nota é a exposição ao atraso
+    // (_shared/prioridade-valor.ts), não mais a média renormalizada de churn/recompra/meta, que punha os
+    // clientes mais mortos no topo. Só a REFERÊNCIA (R$) da curva logística é configurável, com guarda.
+    const referenciaPrioridade = referenciaExposicao(config['ps_referencia_exposicao']);
 
     // Recência: teto (dias até zerar) configurável, guardrail [30,999] (achado /codex: T>999
     // ressuscitaria o sentinela 999). Default 180. Ajustável sem redeploy via farmer_algorithm_config.
@@ -860,19 +845,10 @@ Deno.serve(async (req) => {
     // Teto da frequência: só intervalos MEDIDOS. O `|| 0` + piso 1 anterior deixava o resíduo 0 do
     // seed participar e, no laço, `interval || maxInterval` dava 0 a quem não tinha intervalo.
     const maxInterval = maximoMedido(clients.map(c => intervaloRecompraConhecido(c.avg_repurchase_interval)));
-    // Só gastos MEDIDOS entram no teto (piso 1) — o não medido (NULL, v1.8) não participa. Idêntico ao
-    // `Math.max(...Number(x || 0), 1)` anterior para todo valor finito.
-    const maxSpend = tetoGasto(clients.map(c => finitoOuNulo(c.avg_monthly_spend_180d)));
     // Só margens CONHECIDAS entram no max: `|| 0` faria o desconhecido participar da normalização
     // como se fosse margem zero, deprimindo o teto e inflando o score relativo de todo mundo.
     const maxMarginPct = Math.max(...clients.map(c => margemConhecida(c.gross_margin_pct) ?? 0), 1);
     const maxCategories = Math.max(...clients.map(c => Number(c.category_count || 0)), 1);
-    // Teto do potencial: só valores MEDIDOS. O `Math.max(...map(Number(x || 0)), 1)` anterior errava
-    // duas vezes — fazia o desconhecido normalizar como zero E, com a coluna inteira NULL (o estado
-    // real: 6.633/6.633), devolvia o piso `1`, um teto FABRICADO contra o qual todo cliente pontuava
-    // 0. Daí `margin_potential_component = 0` em 673.790/673.790 linhas de priority_score_log.
-    // `null` = ninguém tem potencial medido → o componente sai do score de todos (renormalização).
-    const maxRevPotential = maximoMedido(clients.map(c => c.revenue_potential));
 
     const healthHistoryRecords: HealthHistoryRecord[] = [];
     const priorityLogRecords: PriorityLogRecord[] = [];
@@ -940,40 +916,9 @@ Deno.serve(async (req) => {
 
       const healthClass = classeSaude(healthScore);
 
-      // Cálculo cru: é o COMPONENTE da prioridade (ativo/stale idênticos ao v1.6). O valor GRAVADO é
-      // `churnGravado`, abaixo — NULL para quem nunca comprou.
+      // Cálculo cru (desde v1.9 NÃO entra mais na prioridade). O valor GRAVADO é `churnGravado`, abaixo —
+      // NULL para quem nunca comprou.
       const churnRisk = Math.max(0, Math.min(100, 100 - healthScore));
-
-      // --- Priority Score ---
-      // `null` = potencial não medido (deste cliente ou de toda a base). O componente sai do score,
-      // e os 35% de peso — o MAIOR dos quatro — são redistribuídos entre churn, recompra e meta.
-      const marginPotentialComp = normalizarPorMaximo(valorMedido(client.revenue_potential), maxRevPotential);
-      
-      const churnComp = churnRisk;
-      
-      // Dias NÃO medidos (NULL, v1.8) → o componente de recompra sai do priority, como o intervalo ausente.
-      // O `Number(x || 0)` anterior afirmava "comprou hoje". Só acontece sem linha na RPC de vendas, e aí o
-      // intervalo também é null — logo nenhum comprador muda de valor.
-      const daysSince = finitoOuNulo(client.days_since_last_purchase);
-      // Sem intervalo medido o componente sai do priority (renormalizado abaixo) — o `|| 30` anterior
-      // afirmava uma cadência mensal que ninguém apurou.
-      const repurchaseComp = daysSince == null ? null : componenteRecompra(daysSince, intervalo);
-      
-      // Gasto NÃO medido → null (sai do priority); 0 medido → 0. Ver _shared/base-vendas.ts.
-      const goalComp = componenteMeta(finitoOuNulo(client.avg_monthly_spend_180d), maxSpend);
-
-      // Mesma renormalização do health. Antes o `marginPotentialComp` entrava como 0 para 100% da
-      // base e comia 35 dos 100 pontos possíveis: o priority_score tinha teto REAL de 65 (medido:
-      // max 43, média 29,13 em 6.633 linhas) enquanto a tela o apresenta como 0-100.
-      // O `?? 0` cobre só "todos os quatro pesos zerados na config" — churn, recompra e meta são
-      // sempre número —, preservando o comportamento anterior nesse caso.
-      const priorityMedia = mediaPonderadaRenormalizada([
-        { valor: marginPotentialComp, peso: ps_w.margin_potential },
-        { valor: churnComp, peso: ps_w.churn_risk },
-        { valor: repurchaseComp, peso: ps_w.repurchase },
-        { valor: goalComp, peso: ps_w.goal_proximity },
-      ]);
-      const priorityCalculada = Math.round(priorityMedia ?? 0);
 
       // Status de histórico DESTE run (null = RPC de vendas falhou; a RPC preserva o do banco por COALESCE).
       const statusDoRun = salesRefreshFatal
@@ -982,6 +927,21 @@ Deno.serve(async (req) => {
       // Quem NUNCA comprou não tem prioridade de recompra: NULL, não o 67 que o churn=100 fabricava (acima do
       // máximo dos ativos). No ramo fatal decide o status PERSISTIDO; status desconhecido preserva o anterior.
       // Regra pura e testada em _shared/prioridade-historico.ts (este arquivo fica fora do --no-remote).
+      // --- Priority Score (v1.9) --- exposição ao atraso por faixas (_shared/prioridade-valor.ts). O status
+      // que decide a faixa é o DESTE run; no ramo fatal, o PERSISTIDO (mesma regra do NULL abaixo) — os
+      // insumos (dias/intervalo/gasto) nesse ramo são os lidos do banco, então a nota é a dos dados congelados.
+      // Insumo obrigatório ausente → null (ausente ≠ zero), nunca o `?? 0` da média antiga.
+      const prioridade = calcularPrioridade(
+        {
+          status: statusDoRun ?? client.sales_history_status,
+          dias: finitoOuNulo(client.days_since_last_purchase),
+          intervalo,
+          gastoMensal: finitoOuNulo(client.avg_monthly_spend_180d),
+        },
+        referenciaPrioridade,
+        salesActiveDays,
+      );
+      const priorityCalculada = prioridade?.nota ?? null;
       const priorityScore = statusDoRun != null
         ? prioridadePorStatus(statusDoRun, priorityCalculada)
         : prioridadeNoRefreshFatal(client.sales_history_status, priorityCalculada, valorMedido(client.priority_score));
@@ -1060,15 +1020,13 @@ Deno.serve(async (req) => {
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
         priority_score: priorityScore,
-        // idem: null = componente ausente do score, não "apurei e deu zero".
-        margin_potential_component: marginPotentialComp == null ? null : Math.round(marginPotentialComp),
-        // O componente LOGADO segue o churn GRAVADO: NULL quando não se aplica (sem_historico, ou status
-        // desconhecido com churn anterior nulo). Para ativo/stale é o mesmo número do v1.6.
-        churn_risk_component: churnGravado == null ? null : Math.round(churnComp),
-        // idem: null = sem intervalo medido (Math.round(null) refabricaria 0).
-        repurchase_component: repurchaseComp == null ? null : Math.round(repurchaseComp),
-        // idem: null = gasto não medido (Math.round(null) refabricaria 0). Coluna nullable, DEFAULT 0.
-        goal_proximity_component: goalComp == null ? null : Math.round(goalComp),
+        // v1.9: a nota não é mais composta por estes quatro componentes — gravá-los afirmaria uma
+        // decomposição que não existe. NULL explícito (colunas nullable com DEFAULT 0: omitir refabrica 0).
+        // A explicação da nota nova sai das colunas persistidas (dias/intervalo/gasto), não do log.
+        margin_potential_component: null,
+        churn_risk_component: null,
+        repurchase_component: null,
+        goal_proximity_component: null,
       });
     }
 
@@ -1170,7 +1128,7 @@ Deno.serve(async (req) => {
     if (rel === 'ownership') return respostaOwnershipPerdida();
     return new Response(JSON.stringify({
       message: `Scores calculated for ${updates.length} clients`,
-      weights: { health: hs_w, priority: ps_w },
+      weights: { health: hs_w, priority: { referencia_exposicao: referenciaPrioridade } },
       lease: leaseAviso,
       fencing: fencingAviso,
       // 'transport': a escrita está boa, só o selo do lease ficou incerto (auto-expira em 15min).

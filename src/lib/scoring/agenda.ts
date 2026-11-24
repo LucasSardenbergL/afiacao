@@ -31,10 +31,10 @@ export interface CarteiraRow {
 
 export interface AgendaItem {
   customer_user_id: string;
-  /** prioridade efetiva = base + nudge dos sinais (0..100) */
-  priority_score: number;
-  /** prioridade base do calculate-scores, sem sinais */
-  base_priority_score: number;
+  /** prioridade efetiva = base + nudge dos sinais (0..100); null = sem nota base (não medida). */
+  priority_score: number | null;
+  /** prioridade base do calculate-scores, sem sinais; null = não se aplica/não medida, nunca 0. */
+  base_priority_score: number | null;
   health_class: string | null;
   agenda_type: 'risco' | 'expansao' | 'ativacao' | 'follow_up';
   topModifier: SignalModifier | null;
@@ -61,7 +61,11 @@ export function signalPriorityNudge(mods: ScoreAdjustment | null | undefined): n
   return churn * 0.5 + expansion * 0.5 + eff * 0.3;
 }
 
-export function effectivePriority(base: number, mods: ScoreAdjustment | null | undefined): number {
+export function effectivePriority(base: number, mods: ScoreAdjustment | null | undefined): number;
+export function effectivePriority(base: number | null, mods: ScoreAdjustment | null | undefined): number | null;
+/** Sem nota base não há prioridade efetiva: o nudge dos sinais não fabrica uma nota a partir do 0. */
+export function effectivePriority(base: number | null, mods: ScoreAdjustment | null | undefined): number | null {
+  if (base == null) return null;
   const eff = base + signalPriorityNudge(mods);
   return Math.max(0, Math.min(100, eff));
 }
@@ -106,7 +110,9 @@ function signalsCount(mods: ScoreAdjustment | null | undefined): number {
  */
 export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] {
   const items = rows.map((s): AgendaItem => {
-    const base = s.priority_score ?? 0;
+    // Sem `?? 0`: nota ausente (sem_historico, ou insumo não medido) NÃO é a prioridade mais baixa
+    // medida — atravessa como null e ordena no FIM do seu grupo (NULLS LAST), como na lista.
+    const base = valorMedido(s.priority_score);
     const churn = s.churn_risk ?? 0;
     // ⚠️ Guard explícito: `(s.expansion_score ?? 0) > 50` é SEMPRE false quando a coluna é null —
     // e ela é null em 6.633/6.633 linhas, o que fez o tipo 'expansao' virar código morto em
@@ -137,7 +143,12 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
   // (sem_historico) só completa as vagas restantes — nunca desloca recuperação/risco real, mesmo
   // com prioridade efetiva maior. Itens com status NULL contam como "com histórico" (= comportam-se
   // como hoje). Carteira só-prospect → top-N de ativação (não há recuperação a fazer).
-  const byPriority = (a: AgendaItem, b: AgendaItem) => b.priority_score - a.priority_score;
+  // NULLS LAST; empate (inclusive null × null) mantém a ordem de entrada (sort estável).
+  const byPriority = (a: AgendaItem, b: AgendaItem) => {
+    if (a.priority_score == null) return b.priority_score == null ? 0 : 1;
+    if (b.priority_score == null) return -1;
+    return b.priority_score - a.priority_score;
+  };
   const comHistorico = items.filter((i) => i.agenda_type !== 'ativacao').sort(byPriority);
   const ativacao = items.filter((i) => i.agenda_type === 'ativacao').sort(byPriority);
   return [...comHistorico, ...ativacao].slice(0, limit);

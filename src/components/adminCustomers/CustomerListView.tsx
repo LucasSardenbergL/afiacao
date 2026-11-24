@@ -32,11 +32,36 @@ import { modoClientes, registrarUsoClientes, type ModoClientes } from '@/lib/nav
 import type { Customer, ClientScore } from './types';
 import { rotuloUltimoContato } from './ultimoContato';
 import { useUltimoContato } from './useUltimoContato';
+import { explicarPrioridade } from '@/lib/scoring/prioridadeValor';
 
 /** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
 const TEXTO_AJUDA_PRIORIDADE =
-  'Nota que ordena quem contatar primeiro: quanto maior, mais cedo. Junta o risco de perder o cliente, '
-  + 'a hora da recompra e a meta. "—" = sem histórico de compra: não entra na fila de recompra.';
+  'Nota que ordena quem contatar primeiro: quanto maior, mais cedo. No topo, quem passou da recompra '
+  + 'habitual — quanto mais compra e mais atrasado, maior. Depois quem está em dia; por último, os '
+  + 'inativos (fila de reativação). Passe o mouse na nota para ver o porquê. '
+  + '"—" = sem histórico de compra: não entra na fila de recompra.';
+
+/** Nota da prioridade com os 2–3 fatores que a decidiram (tooltip). Sem fatores confirmáveis, só a nota. */
+function NotaPrioridade({ valor, fatores }: { valor: number; fatores: string[] | null }) {
+  const nota = <span className="text-xs font-semibold tabular-nums">{fmtPrioridade(valor)}</span>;
+  if (!fatores) return nota;
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" aria-label={`Prioridade ${fmtPrioridade(valor)}: ${fatores.join('; ')}`} className="cursor-help underline decoration-dotted underline-offset-2">
+            {nota}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-72 text-left font-normal">
+          <ul className="space-y-0.5">
+            {fatores.map((f) => <li key={f}>{f}</li>)}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 export function CustomerListView({
   customers,
@@ -57,6 +82,7 @@ export function CustomerListView({
   totalRecorte = null,
   scoresEstado = 'ok',
   onRetryScores,
+  lotesIds: lotesIdsProp,
 }: {
   customers: Customer[];
   scores: Map<string, ClientScore>;
@@ -85,6 +111,8 @@ export function CustomerListView({
   scoresEstado?: EstadoScores;
   /** Retry só dos scores. */
   onRetryScores?: () => void;
+  /** Lotes estáveis do escopo (`useClientesScope.lotesIds`) p/ o último contato. Ausente = a lista inteira, um lote. */
+  lotesIds?: string[][];
 }) {
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
   const [urlState, setUrlState] = useUrlState({ search: '', health: 'all', ordem: 'prioridade' });
@@ -181,8 +209,9 @@ export function CustomerListView({
   }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor, estadoSaude]);
 
   // Último contato (onda 3): UMA leitura em lote dos clientes desta tela — nunca uma por linha.
-  const idsVisiveis = useMemo(() => filtered.map((c) => c.user_id), [filtered]);
-  const ultimoContato = useUltimoContato(idsVisiveis);
+  // Onda E: pelos lotes ESTÁVEIS do escopo, não pela lista filtrada — busca e filtro não releem nada.
+  const lotesFallback = useMemo(() => (customers.length ? [customers.map((c) => c.user_id)] : []), [customers]);
+  const ultimoContato = useUltimoContato(lotesIdsProp ?? lotesFallback);
   const hoje = useMemo(() => new Date(), []);
 
   // Voltar da ficha: a lista volta na mesma posição (a rolagem viaja no `location.state`).
@@ -473,7 +502,7 @@ export function CustomerListView({
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
                 const motivo = motivoContato(score);
-                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estado, hoje);
+                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estadoDe(customer.user_id), hoje);
 
                 return (
                   <tr
@@ -542,7 +571,7 @@ export function CustomerListView({
                     </td>
                     <td className="px-3 py-2.5 text-right hidden md:table-cell">
                       {metricas?.prioridade != null ? (
-                        <span className="text-xs font-semibold tabular-nums">{fmtPrioridade(metricas.prioridade)}</span>
+                        <NotaPrioridade valor={metricas.prioridade} fatores={score ? explicarPrioridade(score, fmtGasto) : null} />
                       ) : <span className="text-xs text-muted-foreground">{NAO_APURADO}</span>}
                     </td>
                     <td className="px-2 py-2.5">

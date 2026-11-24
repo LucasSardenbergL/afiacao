@@ -145,3 +145,6 @@ export function motivoContato(score: {
   const { dias } = metricasExibiveis(score);
   return dias != null ? `${label} · ${dias}d sem compra` : label;
 }
+
+/** Legenda de quando a LEITURA da margem falhou (onda E): não afirma nada do cliente (nem "sem custo", nem "sem compra"). */
+export const MARGEM_INDISPONIVEL = 'margem indisponível agora — falha ao ler';

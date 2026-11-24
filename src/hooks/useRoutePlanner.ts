@@ -73,6 +73,19 @@ type RawAddress = {
  * o cast antigo aceitava qualquer forma e um valor não-objeto passava como endereço "verdadeiro",
  * bloqueando o fallback para o endereço padrão do cliente.
  */
+/**
+ * O tipo de parada de uma OS de afiação pela MODALIDADE e pelo status. Antes só o status decidia — e toda
+ * OS em `pedido_recebido` virava coleta, inclusive a de "somente entrega" (o cliente leva as ferramentas
+ * ao balcão). Não aparecia porque a OS do app gravava 'retirada' e ficava fora da rota (PR 2.3).
+ * null = não há parada agora: somente entrega ainda na ida, somente coleta já na volta.
+ */
+export function tipoDeParadaDaOs(deliveryOption: string, status: string): 'pickup_tools' | 'deliver_tools' | null {
+  const naVolta = status === 'pronto_entrega' || status === 'em_rota';
+  if (deliveryOption === 'somente_entrega' && !naVolta) return null;
+  if (deliveryOption === 'somente_coleta' && naVolta) return null;
+  return naVolta ? 'deliver_tools' : 'pickup_tools';
+}
+
 function lerEnderecoPedido(v: Json | null): RawAddress | null {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
   const texto = (chave: keyof RawAddress): string | undefined => {
@@ -301,17 +314,19 @@ export function useRoutePlanner() {
         supabase.from('addresses').select('*').in('user_id', userIds),
       ]);
 
-      const stops: RouteStop[] = orders.map(order => {
+      const stops: RouteStop[] = orders.flatMap(order => {
+        const tipo = tipoDeParadaDaOs(order.delivery_option, order.status);
+        if (!tipo) return [];
         const profile = profiles?.find(p => p.user_id === order.user_id);
         const orderAddress = lerEnderecoPedido(order.address);
         const defaultAddr = addresses?.find(a => a.user_id === order.user_id && a.is_default) || addresses?.find(a => a.user_id === order.user_id);
         const addr = orderAddress || defaultAddr;
 
-        const isDelivery = order.status === 'pronto_entrega' || order.status === 'em_rota';
+        const isDelivery = tipo === 'deliver_tools';
 
-        return enrichWithPriority({
+        return [enrichWithPriority({
           id: order.id,
-          stopType: isDelivery ? 'deliver_tools' as StopType : 'pickup_tools' as StopType,
+          stopType: tipo as StopType,
           customerUserId: order.user_id,
           customerName: profile?.name || 'Cliente',
           phone: profile?.phone || null,
@@ -327,7 +342,7 @@ export function useRoutePlanner() {
           visitReason: isDelivery ? 'Entrega de ferramentas' : 'Coleta de ferramentas',
           orderId: order.id,
           total: order.total,
-        });
+        })];
       });
 
       setLogisticStops(stops);

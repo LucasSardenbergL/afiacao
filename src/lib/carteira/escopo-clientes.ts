@@ -3,10 +3,11 @@
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
 import { coberturaCustoCliente, valorMedido } from '@/lib/scoring/margin';
-import { buscarMargensScores } from '@/lib/scoring/margemScores';
+import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
 import { churnConhecido } from '@/lib/scoring/churn';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
+import { coletarEmLotesConcorrente, CONCORRENCIA_LOTES } from '@/lib/lotes';
 
 export interface DisplayFlags {
   displayIsMaster: boolean;
@@ -18,13 +19,6 @@ export interface DisplayFlags {
 export function resolveModoEscopo(f: DisplayFlags): 'carteira' | 'completa' {
   if (f.displayIsSalesOnly) return 'carteira';
   return f.displayIsMaster || f.displayIsGestorComercial ? 'completa' : 'carteira';
-}
-
-export function chunk<T>(arr: T[], size: number): T[][] {
-  if (size <= 0) throw new Error('chunk: size deve ser > 0');
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
 }
 
 export function marcarCobertura<T extends { user_id: string }>(
@@ -115,32 +109,6 @@ export function ordenarCarteira<T extends { name: string; user_id: string }>(
   return indexado.map((x) => x.item);
 }
 
-/** Quebra ids em lotes e concatena os resultados, em ordem. Propaga erro de qualquer lote. */
-export async function coletarEmLotes<I, O>(
-  ids: I[],
-  size: number,
-  fetchLote: (lote: I[]) => Promise<O[]>,
-): Promise<O[]> {
-  const out: O[] = [];
-  for (const lote of chunk(ids, size)) {
-    out.push(...(await fetchLote(lote)));
-  }
-  return out;
-}
-
-/** Hash estável e barato dos IDs visíveis. A contagem sozinha não pega reatribuição
- *  que mantém o tamanho (cliente sai/entra, length igual); o hash muda se qualquer id
- *  mudar. Usado na queryKey dos scores p/ não reusar o map do conjunto anterior. */
-export function hashIds(ids: string[]): string {
-  let h = 0;
-  for (const id of ids) {
-    for (let i = 0; i < id.length; i++) {
-      h = (Math.imul(h, 31) + id.charCodeAt(i)) | 0;
-    }
-  }
-  return `${ids.length}:${h}`;
-}
-
 /** Owners do escopo do ALVO na lente: posse direta + carteiras que ele cobre (ativas e
  *  dentro da validade). `coverageRows` vêm de carteira_coverage já filtradas por active.
  *  Reproduz, com a sessão do master, o que a RLS carteira_visivel_para daria ao alvo. */
@@ -155,7 +123,44 @@ export function ownersAtivosDoAlvo(
   return [alvoId, ...cobertos];
 }
 
-const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+export const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+/** Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
+ *  posse direta + carteiras que o alvo cobre (ativas e dentro da validade). */
+export async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
+  const { data: cov, error: covErr } = await supabase
+    .from('carteira_coverage')
+    .select('covered_user_id, valid_until')
+    .eq('covering_user_id', alvoId)
+    .eq('active', true);
+  if (covErr) throw covErr;
+  return ownersAtivosDoAlvo(cov ?? [], alvoId, new Date().toISOString());
+}
+
+/**
+ * Fonte ÚNICA do escopo de carteira (lista de clientes E "Meu dia"): `carteira_assignments` com
+ * `eligible = true`, paginado com `.range()` + ordem TOTAL (`customer_user_id` é UNIQUE) — o select
+ * puro capa em 1000. `ownerFilter` null = confia na RLS (`carteira_visivel_para`: carteira própria +
+ * cobertura); com lista, recorta pelos donos. Página com erro LANÇA (carteira parcial trocaria o escopo).
+ */
+export async function fetchAssignmentsElegiveis(
+  ownerFilter: string[] | null,
+  rotulo: string,
+): Promise<{ customer_user_id: string; owner_user_id: string }[]> {
+  return fetchAllPagesComMensagem<{ customer_user_id: string; owner_user_id: string }>(
+    (de, ate) => {
+      let q = supabase
+        .from('carteira_assignments')
+        .select('customer_user_id, owner_user_id')
+        .eq('eligible', true);
+      if (ownerFilter) {
+        q = q.in('owner_user_id', ownerFilter);
+      }
+      return q.order('customer_user_id').range(de, ate);
+    },
+    rotulo,
+    'carteira_assignments',
+  );
+}
 
 /**
  * Clientes da carteira. Fonte = carteira_assignments (eligible=true), paginado
@@ -167,36 +172,14 @@ export async function fetchCarteiraClientes(opts: {
   effectiveUserId: string | null;
   baseId: string | null;
 }): Promise<{ customers: Customer[]; ids: string[] }> {
-  // Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
-  // posse direta + carteiras que o alvo cobre. Fora da lente, a RLS carteira_visivel_para
-  // já entrega carteira própria + cobertura — sem filtro de owner aqui.
-  let ownerFilter: string[] | null = null;
-  if (opts.isImpersonating && opts.effectiveUserId) {
-    const { data: cov, error: covErr } = await supabase
-      .from('carteira_coverage')
-      .select('covered_user_id, valid_until')
-      .eq('covering_user_id', opts.effectiveUserId)
-      .eq('active', true);
-    if (covErr) throw covErr;
-    ownerFilter = ownersAtivosDoAlvo(cov ?? [], opts.effectiveUserId, new Date().toISOString());
-  }
+  // Fora da lente, a RLS carteira_visivel_para já entrega carteira própria + cobertura — sem filtro.
+  const ownerFilter = opts.isImpersonating && opts.effectiveUserId
+    ? await ownersDoAlvoNaLente(opts.effectiveUserId)
+    : null;
 
   // Pelo canônico: página com error ou `data: null` sem error LANÇA (a carteira PARCIAL trocaria o
   // escopo do cálculo) e a página perdida é medida pela fonte. `customer_user_id` é a chave.
-  const assignments = await fetchAllPagesComMensagem<{ customer_user_id: string; owner_user_id: string }>(
-    (de, ate) => {
-      let q = supabase
-        .from('carteira_assignments')
-        .select('customer_user_id, owner_user_id')
-        .eq('eligible', true);
-      if (ownerFilter) {
-        q = q.in('owner_user_id', ownerFilter);
-      }
-      return q.order('customer_user_id').range(de, ate);
-    },
-    'carteira_assignments/escopo-clientes',
-    'carteira_assignments',
-  );
+  const assignments = await fetchAssignmentsElegiveis(ownerFilter, 'carteira_assignments/escopo-clientes');
 
   const ownerById = new Map(
     assignments.map((a) => [a.customer_user_id, a.owner_user_id] as [string, string]),
@@ -204,7 +187,7 @@ export async function fetchCarteiraClientes(opts: {
   const ids = [...ownerById.keys()];
   if (ids.length === 0) return { customers: [], ids };
 
-  const profiles = await coletarEmLotes(ids, LOTE_IN, async (lote) => {
+  const profiles = await coletarEmLotesConcorrente(ids, LOTE_IN, CONCORRENCIA_LOTES, async (lote) => {
     const { data, error } = await supabase
       .from('profiles')
       .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
@@ -223,22 +206,40 @@ export async function fetchCarteiraClientes(opts: {
  * 1 linha/cliente, conserta scores stale pós-reatribuição e vazios pro gestor/master.
  * A RLS de farmer_client_scores reforça (pode_ver_carteira_completa OR carteira_visivel_para).
  */
+/**
+ * A margem NÃO vem da tabela (coluna fechada para authenticated, FU4-F): sai pela RPC com gate de
+ * projeção. A falha dela é ISOLADA (onda E): antes ela lançava e derrubava os scores e a prioridade
+ * da lista inteira junto. Agora degrada só a margem — `ok: false` vira `margem_indisponivel` em
+ * cada score, e a tela diz "indisponível". Nunca vira "margem não apurada" (null com ok: true).
+ */
+async function lerMargensIsolada(
+  ids: string[],
+): Promise<{ ok: true; margens: Map<string, MargemScore> } | { ok: false; erro: unknown }> {
+  try {
+    return { ok: true, margens: await buscarMargensScores({ customerIds: ids }) };
+  } catch (erro) {
+    console.error('[escopo-clientes] get_scores_margem falhou — margem indisponível, scores seguem:', erro);
+    return { ok: false, erro };
+  }
+}
+
 export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string, ClientScore>> {
   const map = new Map<string, ClientScore>();
   if (ids.length === 0) return map;
-  const rows = await coletarEmLotes(ids, LOTE_IN, async (lote) => {
-    const { data, error } = await supabase
-      .from('farmer_client_scores')
-      .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, itens_com_custo, itens_sem_custo, avg_repurchase_interval, sales_history_status')
-      .in('customer_user_id', lote);
-    if (error) throw error;
-    return data ?? [];
-  });
-  // A margem NÃO vem da tabela (coluna fechada para authenticated, FU4-F): sai pela RPC com gate de
-  // projeção. Falha da RPC LANÇA — "não consegui ler" não pode virar "margem não apurada".
-  const margens = await buscarMargensScores({ customerIds: ids });
+  // Scores e margem correm JUNTOS (antes: margem só depois do último lote de score).
+  const [rows, leituraMargem] = await Promise.all([
+    coletarEmLotesConcorrente(ids, LOTE_IN, CONCORRENCIA_LOTES, async (lote) => {
+      const { data, error } = await supabase
+        .from('farmer_client_scores')
+        .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, itens_com_custo, itens_sem_custo, avg_repurchase_interval, sales_history_status')
+        .in('customer_user_id', lote);
+      if (error) throw error;
+      return data ?? [];
+    }),
+    lerMargensIsolada(ids),
+  ]);
   for (const s of rows) {
-    const margem = margens.get(s.customer_user_id);
+    const margem = leituraMargem.ok ? leituraMargem.margens.get(s.customer_user_id) : undefined;
     const cobertura = coberturaCustoCliente(s);
     map.set(s.customer_user_id, {
       customer_user_id: s.customer_user_id,
@@ -262,7 +263,9 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       // inertes os guards de quem lê este mapa (a armadilha da "correção só no consumidor").
       gross_margin_pct: margem?.margem ?? null,
       // Sem cap_custo_ler (ou sem linha na RPC) o número não foi concedido — a tela não fala de margem.
-      margem_oculta: margem ? !margem.visivel : true,
+      // RPC que FALHOU não é "não concedido": a tela mostra "—" com "indisponível" (margem_indisponivel).
+      margem_oculta: leituraMargem.ok ? (margem ? !margem.visivel : true) : false,
+      margem_indisponivel: !leituraMargem.ok,
       // Cobertura de custo (#1567): mesma disciplina — contagem não computada chega como null.
       itens_com_custo: cobertura.itensComCusto,
       itens_sem_custo: cobertura.itensSemCusto,

@@ -24860,6 +24860,18 @@ export type Database = {
         }
         Relationships: []
       }
+      v_perfil_contato: {
+        Row: {
+          cnpj: string | null
+          contato_visivel: boolean | null
+          document: string | null
+          eh_pj: boolean | null
+          email: string | null
+          phone: string | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
       v_prime_extrato_mensal: {
         Row: {
           assinatura_id: string | null
@@ -26464,6 +26476,17 @@ export type Database = {
           fonte: string
           fonte_id: string
           saldo_centavos: number
+        }[]
+      }
+      buscar_clientes_global: {
+        Args: { p_limite?: number; p_termo: string }
+        Returns: {
+          contato_visivel: boolean
+          documento: string
+          email: string
+          name: string
+          razao_social: string
+          user_id: string
         }[]
       }
       buscar_skus_candidatos: {
@@ -28320,6 +28343,10 @@ export type Database = {
       picking_v2_separada: {
         Args: { p_linha_id: string; p_revisao: number }
         Returns: number
+      }
+      pode_agir_no_cliente: {
+        Args: { p_customer_user_id: string }
+        Returns: boolean
       }
       pode_ler_custo: { Args: never; Returns: boolean }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
