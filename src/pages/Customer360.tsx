@@ -149,7 +149,8 @@ export default function Customer360() {
   // Score que não foi lido (falha/sem rede, sem valor em mãos) FALA — `null` legítimo é "sem score".
   const estadoScore = estadoDeLeitura(score);
   const scoreSemLeitura = !s && naoConsegui(estadoScore) ? estadoScore : null;
-  const isPj = ehCnpjDocumento(customer.document);
+  // PJ/PF é identidade: o servidor devolve `ehPj` mesmo com o documento mascarado fora da carteira.
+  const isPj = customer.ehPj ?? ehCnpjDocumento(customer.document);
   // Criar tarefa é ESCRITA: decide o usuário real. A lente mostra o botão só se a persona também o veria.
   const podeCriarTarefaPorVoz = (isMaster || isGestorComercial) && (displayIsMaster || displayIsGestorComercial);
 

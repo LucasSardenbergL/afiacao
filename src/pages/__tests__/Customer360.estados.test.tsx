@@ -38,7 +38,8 @@ function consulta(tabela: string): unknown {
   const proxy: unknown = new Proxy({}, {
     get(_alvo, prop) {
       if (prop === 'then') {
-        const resposta = tabela === 'profiles' && umaLinha
+        // onda D: o contato do core vem de `v_perfil_contato`; o mock serve a MESMA linha (contato visível)
+        const resposta = (tabela === 'profiles' || tabela === 'v_perfil_contato') && umaLinha
           ? respostaCore()
           : tabela === 'farmer_client_scores' && umaLinha ? respostaScore() : ok(umaLinha ? null : []);
         return (sim: (v: Resposta) => unknown, nao?: (e: unknown) => unknown) => resposta.then(sim, nao);

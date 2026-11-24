@@ -6,6 +6,7 @@ import { BarChart3 } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import type { FinDRE } from '@/services/financeiroService';
 import { fmt, fmtCompact, IMPOSTO_LABEL } from './format';
+import { impostoTeoricoTotal } from '@/lib/financeiro/dre-helpers';
 import type { FinConfiabilidadeRow } from './types';
 
 interface ResultadoPorEmpresaProps {
@@ -100,10 +101,10 @@ export function ResultadoPorEmpresa({ dreConsolidado, confiabilidade }: Resultad
                   )}
                   {d.detalhamento?.imposto_teorico && (
                     <div className="text-xs text-muted-foreground mt-1">
-                      Imposto teórico esperado: {fmt(Object.values(d.detalhamento.imposto_teorico).reduce((s: number, v) => s + (v ?? 0), 0))}
+                      Imposto teórico esperado: {(() => { const t = impostoTeoricoTotal(d.detalhamento.imposto_teorico); return t == null ? 'indisponível' : fmt(t); })()}
                       {d.detalhamento.delta_imposto_pct != null && (
                         <span className={Math.abs(d.detalhamento.delta_imposto_pct) > 0.25 ? 'text-status-warning ml-1' : 'ml-1'}>
-                          (Δ {(d.detalhamento.delta_imposto_pct * 100).toFixed(0)}% vs realizado)
+                          (Δ {d.detalhamento.regime_tributario === 'simples' ? 'DAS' : 'IRPJ+CSLL'} {(d.detalhamento.delta_imposto_pct * 100).toFixed(0)}% vs realizado)
                         </span>
                       )}
                     </div>

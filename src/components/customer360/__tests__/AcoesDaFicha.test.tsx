@@ -4,19 +4,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Onda 3: o que a 360 afirma em cada bloco, e quando os botões de desfecho aparecem.
 const h = vi.hoisted(() => ({
-  naCarteira: { data: [{ customer_user_id: 'cli-1' }] as unknown[] | null, error: null as unknown },
-  carteiraQuery: [] as [string, unknown[]][],
+  // onda D: a ficha pergunta ao MESMO predicado do escritor (`pode_agir_no_cliente`)
+  podeAgir: { data: true as boolean | null, error: null as unknown },
+  rpcCalls: [] as [string, unknown][],
   uso: vi.fn(),
 }));
 
-function chain() {
-  const c: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'limit']) c[m] = (...a: unknown[]) => { h.carteiraQuery.push([m, a]); return c; };
-  c.then = (r: (v: unknown) => void) => r(h.naCarteira);
-  return c;
-}
-
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => chain() } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    rpc: (fn: string, args: unknown) => { h.rpcCalls.push([fn, args]); return Promise.resolve(h.podeAgir); },
+    from: () => { throw new Error('AcoesDaFicha não deve ler tabela direto (carteira_assignments divergia do escritor)'); },
+  },
+}));
 vi.mock('@/contexts/AuthContext', () => {
   const user = { id: 'vendedora-1' };
   return { useAuth: () => ({ user }) };
@@ -41,8 +40,8 @@ const renderiza = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.carteiraQuery.length = 0;
-  h.naCarteira = { data: [{ customer_user_id: 'cli-1' }], error: null };
+  h.rpcCalls.length = 0;
+  h.podeAgir = { data: true, error: null };
   props = {
     tarefas: { data: [], isError: false },
     credito: { data: { semConta: false, conflito: false, aliasesConferidos: false, alerta: null }, isError: false },
@@ -58,15 +57,21 @@ describe('AcoesDaFicha', () => {
     expect(botao.getAttribute('data-superficie')).toBe('360');
     fireEvent.click(botao);
     expect(h.uso).not.toHaveBeenCalledWith(expect.objectContaining({ tipo: 'registrar_desfecho' }));
-    expect(h.carteiraQuery).toContainEqual(['eq', ['owner_user_id', 'vendedora-1']]);
-    expect(h.carteiraQuery).toContainEqual(['eq', ['eligible', true]]);
+    expect(h.rpcCalls).toEqual([['pode_agir_no_cliente', { p_customer_user_id: 'cli-1' }]]);
   });
 
   it('fora da carteira: sem botões, com o motivo', async () => {
-    h.naCarteira = { data: [], error: null };
+    h.podeAgir = { data: false, error: null };
     renderiza();
     expect(await screen.findByText(/registrado por quem tem este cliente na carteira/)).toBeTruthy();
     expect(screen.queryByText(/desfecho de/)).toBeNull();
+  });
+
+  it('falha da RPC não vira "fora da carteira"', async () => {
+    h.podeAgir = { data: null, error: { message: 'boom' } };
+    renderiza();
+    expect(await screen.findByText(/Não consegui conferir a sua carteira agora/)).toBeTruthy();
+    expect(screen.queryByText(/registrado por quem tem este cliente/)).toBeNull();
   });
 
   it('próxima ação vazia diz "visível para você"; falha diz indisponível', () => {

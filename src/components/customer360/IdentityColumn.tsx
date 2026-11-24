@@ -56,6 +56,13 @@ export function IdentityColumn({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2.5 text-sm">
+          {/* Onda D: fora da carteira/cobertura o servidor MASCARA o contato — dizer isso, nunca "—"
+              (que afirmaria "cliente sem telefone"). `null` (desconhecido) cai no ramo normal. */}
+          {customer.contatoVisivel === false ? (
+            <p className="text-xs text-muted-foreground" data-testid="c360-contato-restrito">
+              Contato visível só para a carteira deste cliente.
+            </p>
+          ) : (<>
           {/* F1: profile.email frequentemente vem concatenado por vírgula vindo do Omie.
               Split + render como lista. Cada email vira `mailto:` clicável. */}
           {(() => {
@@ -101,6 +108,7 @@ export function IdentityColumn({
             label="Telefone"
             value={customer.phone ? formatPhone(customer.phone) : null}
           />
+          </>)}
           {/* F9: icon contextual ao tipo (PJ vs PF) em vez de Sparkles decorativo.
               F3: customer_type traduzido pra rótulo humano. */}
           <DataRow
