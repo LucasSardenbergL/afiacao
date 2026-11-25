@@ -87,3 +87,13 @@ de `origin/main` a cada tick — nunca um worktree de sessão); estado/log em
   migration → 1 aviso em 2 ticks, sem publicar; `claude` falso com erro → `1/3` e o tick seguinte
   não re-chama; ar em dia → NADA_A_PUBLICAR.
 - **Fora do alcance:** Mac desligado/dormindo = sem Publish (o workflow do GitHub segue sem chave).
+
+## 1ª medição em produção (2026-11-22 → 25)
+
+407 ticks, **8 `PUBLICADO` provados pelo ar** (40–80 s após o disparo; 1º: `ecefeb53`), nenhum SHA
+desistido (3x). Retenções por migration avisaram 1x/SHA e foram publicadas à mão depois da DDL —
+o comportamento desenhado. Mas **11 de 19 chamadas ao `claude -p` falharam na 1ª**: o MCP `lovable`
+ainda não estava conectado quando o modelo começou ("ferramentas_mcp_nao_disponiveis", "session
+tools unavailable", timeout 124). O backoff segurou o custo, mas cada uma atrasava o Publish 5 min.
+Correção: `MCP_TIMEOUT=60000` + 2ª chamada no MESMO tick (publicar 2x o mesmo commit é idempotente).
+Ensaio: `claude` falso que falha na 1ª e dispara na 2ª → 2 chamadas, `DISPARADO`.
