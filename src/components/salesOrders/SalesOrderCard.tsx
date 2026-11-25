@@ -14,7 +14,7 @@ import { formatPrecoOuAusente } from '@/lib/format';
 import { formatarDataPedido, horaDoPedido } from '@/lib/pedido/data-pedido';
 import { ORDER_STATUS, type OrderStatus } from '@/types';
 import { track } from '@/lib/analytics';
-import { chaveDaLinha, podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
+import { chaveDaLinha, podeEditarPedido, podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
 
 type AcaoPedido = 'compartilhar' | 'imprimir' | 'editar' | 'excluir';
 
@@ -40,8 +40,6 @@ const COR_DO_TOM: Record<TomStatus, { ponto: string; texto: string }> = {
   neutral: { ponto: 'bg-muted-foreground/40', texto: 'text-muted-foreground' },
 };
 
-/** Pedido de venda que ainda pode ser editado (mesma regra de antes — mudar é decisão de negócio). */
-const STATUS_NAO_EDITAVEIS = ['cancelado', 'entregue', 'faturado'];
 
 function rotuloItens(quantidade: number): string {
   return `${quantidade.toLocaleString('pt-BR')} ${quantidade === 1 ? 'item' : 'itens'}`;
@@ -150,7 +148,7 @@ export const SalesOrderCard = memo(function SalesOrderCard({
   // A seleção só serve à exclusão em lote: só entra quem a edge pode excluir.
   const exclusao = podeExcluirPedido(order);
   const isSelectable = exclusao.ok;
-  const podeEditar = !isAfiacao && !STATUS_NAO_EDITAVEIS.includes(order.status);
+  const podeEditar = podeEditarPedido(order);
   // Afiação usa o vocabulário de ORDER_STATUS; o tom (cor só no que pede atenção) é o mesmo da venda.
   const status = isAfiacao && order.status in ORDER_STATUS
     ? { label: ORDER_STATUS[order.status as OrderStatus].label }

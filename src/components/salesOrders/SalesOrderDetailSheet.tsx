@@ -14,7 +14,7 @@ import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoD
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { resolverDescontoCupom } from '@/components/sales/print/descontoCupom';
 import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
-import { rotuloEmpresa, statusDoPedido, type SalesOrder } from './types';
+import { podeEditarPedido, rotuloEmpresa, statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
 import { descontosDoPainel, type FatiaDescontosItens } from './descontosDoPainel';
 import { formatPrecoOuAusente } from '@/lib/format';
@@ -66,8 +66,6 @@ interface ResumoDoPedido {
 // afirmando "de graca" onde o Omie apenas nao informou. Ausente agora aparece como "-".
 const fmt = formatPrecoOuAusente;
 
-// Pedido cancelado/entregue/faturado não é editável (mesma regra do card).
-const canEditStatus = (status: string) => !['cancelado', 'entregue', 'faturado'].includes(status);
 
 // ── Desconto de item: a régua do cupom impresso (`resolverDescontoCupom`, #2502) na tela ─────────────
 // O jsonb `items` é BRUTO e o cabeçalho (`subtotal`/`total`) é LÍQUIDO desde o #2469. A quebra — desconto
@@ -285,7 +283,7 @@ export function SalesOrderDetailSheet({
                   <ShieldAlert className="w-4 h-4" />
                 </Button>
               )}
-              {canEditStatus(order.status) && (
+              {podeEditarPedido(order) && (
                 <Button variant="outline" onClick={onEdit} className="gap-2" title="Editar pedido">
                   <Pencil className="w-4 h-4" />
                 </Button>

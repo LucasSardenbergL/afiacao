@@ -780,7 +780,7 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" aria-label="Menu da conta">
               <User className="w-4 h-4" />
             </Button>
           </DropdownMenuTrigger>

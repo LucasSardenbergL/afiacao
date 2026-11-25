@@ -11,7 +11,7 @@ export type ClasseSaude = (typeof CLASSES_SAUDE)[number];
 
 export interface TomSaude {
   label: string;
-  /** Cor do texto solto (token `text-status-*`). */
+  /** Cor do texto solto (token `text-status-*-foreground`: o `-bold` dava 2,2–3,3:1 sobre o fundo claro). */
   texto: string;
   /** Bolinha indicadora. */
   ponto: string;
@@ -22,27 +22,27 @@ export interface TomSaude {
 export const SAUDE_CLIENTE: Record<ClasseSaude, TomSaude> = {
   saudavel: {
     label: 'Saudável',
-    texto: 'text-status-success-bold',
+    texto: 'text-status-success-foreground',
     ponto: 'bg-status-success',
-    chip: 'bg-status-success-bg text-status-success-bold border-status-success/20',
+    chip: 'bg-status-success-bg text-status-success-foreground border-status-success/20',
   },
   estavel: {
     label: 'Estável',
-    texto: 'text-status-info-bold',
+    texto: 'text-status-info-foreground',
     ponto: 'bg-status-info',
-    chip: 'bg-status-info-bg text-status-info-bold border-status-info/20',
+    chip: 'bg-status-info-bg text-status-info-foreground border-status-info/20',
   },
   atencao: {
     label: 'Atenção',
-    texto: 'text-status-warning-bold',
+    texto: 'text-status-warning-foreground',
     ponto: 'bg-status-warning',
-    chip: 'bg-status-warning-bg text-status-warning-bold border-status-warning/20',
+    chip: 'bg-status-warning-bg text-status-warning-foreground border-status-warning/20',
   },
   critico: {
     label: 'Crítico',
-    texto: 'text-status-error-bold',
+    texto: 'text-status-error-foreground',
     ponto: 'bg-status-error',
-    chip: 'bg-status-error-bg text-status-error-bold border-status-error/20',
+    chip: 'bg-status-error-bg text-status-error-foreground border-status-error/20',
   },
 };
 

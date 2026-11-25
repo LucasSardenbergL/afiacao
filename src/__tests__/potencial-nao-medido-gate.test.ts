@@ -77,7 +77,6 @@ function coercoes(codigo: string): string[] {
 
 const VIGIADOS = [
   'src/hooks/useTacticalPlan.ts',
-  'src/lib/scoring/agenda.ts',
   'src/lib/carteira/escopo-clientes.ts',
   'src/lib/positivacao/ranking.ts',
   'src/hooks/useMyVisitSuggestions.ts',

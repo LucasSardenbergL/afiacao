@@ -10490,6 +10490,294 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_pv_baixa_reserva: {
+        Row: {
+          account: string
+          aplicado_em: string
+          id: number
+          omie_pedido_id: number
+          pool: string
+          quantidade: number
+          reserva_id: string
+          sku: number
+        }
+        Insert: {
+          account: string
+          aplicado_em?: string
+          id?: never
+          omie_pedido_id: number
+          pool: string
+          quantidade: number
+          reserva_id: string
+          sku: number
+        }
+        Update: {
+          account?: string
+          aplicado_em?: string
+          id?: never
+          omie_pedido_id?: number
+          pool?: string
+          quantidade?: number
+          reserva_id?: string
+          sku?: number
+        }
+        Relationships: []
+      }
+      omie_pv_conferencia: {
+        Row: {
+          account: string
+          adiado_motivo: string | null
+          aplicado_em: string | null
+          atualizado_em: string
+          ausencias_afirmadas: number
+          contradicao: string | null
+          contradicao_em: string | null
+          criado_em: string
+          omie_pedido_id: number
+          primeira_ausencia_afirmada_em: string | null
+          primeira_ausencia_log_id: number | null
+          prova: Json | null
+          resolvido_em: string | null
+          status_local: string | null
+          suspeito_desde: string | null
+          ultima_ausencia_afirmada_em: string | null
+          ultima_ausencia_registrada_em: string | null
+          ultima_consulta_em: string | null
+          ultima_presenca_em: string | null
+          ultima_suspeita_em: string | null
+          ultimo_resultado: string | null
+          valor_baixado: number | null
+        }
+        Insert: {
+          account: string
+          adiado_motivo?: string | null
+          aplicado_em?: string | null
+          atualizado_em?: string
+          ausencias_afirmadas?: number
+          contradicao?: string | null
+          contradicao_em?: string | null
+          criado_em?: string
+          omie_pedido_id: number
+          primeira_ausencia_afirmada_em?: string | null
+          primeira_ausencia_log_id?: number | null
+          prova?: Json | null
+          resolvido_em?: string | null
+          status_local?: string | null
+          suspeito_desde?: string | null
+          ultima_ausencia_afirmada_em?: string | null
+          ultima_ausencia_registrada_em?: string | null
+          ultima_consulta_em?: string | null
+          ultima_presenca_em?: string | null
+          ultima_suspeita_em?: string | null
+          ultimo_resultado?: string | null
+          valor_baixado?: number | null
+        }
+        Update: {
+          account?: string
+          adiado_motivo?: string | null
+          aplicado_em?: string | null
+          atualizado_em?: string
+          ausencias_afirmadas?: number
+          contradicao?: string | null
+          contradicao_em?: string | null
+          criado_em?: string
+          omie_pedido_id?: number
+          primeira_ausencia_afirmada_em?: string | null
+          primeira_ausencia_log_id?: number | null
+          prova?: Json | null
+          resolvido_em?: string | null
+          status_local?: string | null
+          suspeito_desde?: string | null
+          ultima_ausencia_afirmada_em?: string | null
+          ultima_ausencia_registrada_em?: string | null
+          ultima_consulta_em?: string | null
+          ultima_presenca_em?: string | null
+          ultima_suspeita_em?: string | null
+          ultimo_resultado?: string | null
+          valor_baixado?: number | null
+        }
+        Relationships: []
+      }
+      omie_pv_consulta_log: {
+        Row: {
+          account: string
+          detalhe: Json | null
+          efeito: string | null
+          execucao_id: number
+          id: number
+          omie_pedido_id: number
+          registrada_em: string | null
+          reservada_em: string
+          resultado: string | null
+        }
+        Insert: {
+          account: string
+          detalhe?: Json | null
+          efeito?: string | null
+          execucao_id: number
+          id?: never
+          omie_pedido_id: number
+          registrada_em?: string | null
+          reservada_em?: string
+          resultado?: string | null
+        }
+        Update: {
+          account?: string
+          detalhe?: Json | null
+          efeito?: string | null
+          execucao_id?: number
+          id?: never
+          omie_pedido_id?: number
+          registrada_em?: string | null
+          reservada_em?: string
+          resultado?: string | null
+        }
+        Relationships: []
+      }
+      omie_pv_execucao: {
+        Row: {
+          account: string
+          app_hash: string
+          chamadas_listar: number
+          encerrada_em: string | null
+          id: number
+          identidade_confirmada: boolean
+          iniciada_em: string
+          listar_em: string[]
+          resumo: Json | null
+          triagem_ok: boolean | null
+        }
+        Insert: {
+          account: string
+          app_hash: string
+          chamadas_listar?: number
+          encerrada_em?: string | null
+          id?: never
+          identidade_confirmada?: boolean
+          iniciada_em?: string
+          listar_em?: string[]
+          resumo?: Json | null
+          triagem_ok?: boolean | null
+        }
+        Update: {
+          account?: string
+          app_hash?: string
+          chamadas_listar?: number
+          encerrada_em?: string | null
+          id?: never
+          identidade_confirmada?: boolean
+          iniciada_em?: string
+          listar_em?: string[]
+          resumo?: Json | null
+          triagem_ok?: boolean | null
+        }
+        Relationships: []
+      }
+      omie_pv_identidade: {
+        Row: {
+          account: string
+          app_hash: string
+          fixado_em: string
+        }
+        Insert: {
+          account: string
+          app_hash: string
+          fixado_em?: string
+        }
+        Update: {
+          account?: string
+          app_hash?: string
+          fixado_em?: string
+        }
+        Relationships: []
+      }
+      omie_pv_linha_isenta: {
+        Row: {
+          account: string
+          criado_em: string
+          omie_pedido_id: number
+          sales_order_id: string
+        }
+        Insert: {
+          account: string
+          criado_em?: string
+          omie_pedido_id: number
+          sales_order_id: string
+        }
+        Update: {
+          account?: string
+          criado_em?: string
+          omie_pedido_id?: number
+          sales_order_id?: string
+        }
+        Relationships: []
+      }
+      omie_pv_triagem_cursor: {
+        Row: {
+          account: string
+          atualizado_em: string
+          semana_cursor: string
+        }
+        Insert: {
+          account: string
+          atualizado_em?: string
+          semana_cursor: string
+        }
+        Update: {
+          account?: string
+          atualizado_em?: string
+          semana_cursor?: string
+        }
+        Relationships: []
+      }
+      omie_pv_triagem_log: {
+        Row: {
+          account: string
+          execucao_id: number
+          id: number
+          janela_ate: string
+          janela_de: string
+          n_banco: number
+          n_contradicoes: number
+          n_omie: number
+          n_presentes: number
+          n_suspeitos: number
+          recusa: string | null
+          registrado_em: string
+          tipo: string
+        }
+        Insert: {
+          account: string
+          execucao_id: number
+          id?: never
+          janela_ate: string
+          janela_de: string
+          n_banco: number
+          n_contradicoes: number
+          n_omie: number
+          n_presentes: number
+          n_suspeitos: number
+          recusa?: string | null
+          registrado_em?: string
+          tipo: string
+        }
+        Update: {
+          account?: string
+          execucao_id?: number
+          id?: never
+          janela_ate?: string
+          janela_de?: string
+          n_banco?: number
+          n_contradicoes?: number
+          n_omie?: number
+          n_presentes?: number
+          n_suspeitos?: number
+          recusa?: string | null
+          registrado_em?: string
+          tipo?: string
+        }
+        Relationships: []
+      }
       omie_servicos: {
         Row: {
           app_service_type: string
@@ -26482,10 +26770,10 @@ export type Database = {
         Args: { p_limite?: number; p_termo: string }
         Returns: {
           contato_visivel: boolean
-          documento: string | null
-          email: string | null
-          name: string | null
-          razao_social: string | null
+          documento: string
+          email: string
+          name: string
+          razao_social: string
           user_id: string
         }[]
       }
@@ -28144,6 +28432,52 @@ export type Database = {
           omie_codigo_produto: string
         }[]
       }
+      omie_pv_consulta_registrar: {
+        Args: { p_detalhe: Json; p_log_id: number; p_resultado: string }
+        Returns: Json
+      }
+      omie_pv_execucao_encerrar: {
+        Args: { p_execucao_id: number; p_resumo: Json }
+        Returns: undefined
+      }
+      omie_pv_execucao_iniciar: {
+        Args: { p_account: string; p_app_hash: string }
+        Returns: {
+          execucao_id: number
+          motivo: string
+        }[]
+      }
+      omie_pv_listar_vez: { Args: { p_execucao_id: number }; Returns: boolean }
+      omie_pv_presenca_registrar: {
+        Args: { p_execucao_id: number; p_pids: number[] }
+        Returns: Json
+      }
+      omie_pv_proxima_consulta: {
+        Args: { p_execucao_id: number }
+        Returns: {
+          log_id: number
+          motivo: string
+          omie_pedido_id: number
+        }[]
+      }
+      omie_pv_triagem_janelas: {
+        Args: { p_account: string }
+        Returns: {
+          ate: string
+          de: string
+          tipo: string
+        }[]
+      }
+      omie_pv_triagem_registrar: {
+        Args: {
+          p_ate: string
+          p_de: string
+          p_execucao_id: number
+          p_pids: number[]
+          p_tipo: string
+        }
+        Returns: Json
+      }
       omie_sync_identity_snapshot: {
         Args: { p_account: string }
         Returns: Json
@@ -28175,13 +28509,13 @@ export type Database = {
       }
       order_feed_total: {
         Args: {
-          p_account?: string | null
-          p_busca?: string | null
-          p_customer?: string | null
-          p_desde?: string | null
-          p_puros?: string[] | null
-          p_status?: string[] | null
-          p_vendedor?: string | null
+          p_account?: string
+          p_busca?: string
+          p_customer?: string
+          p_desde?: string
+          p_puros?: string[]
+          p_status?: string[]
+          p_vendedor?: string
         }
         Returns: {
           pedidos: number

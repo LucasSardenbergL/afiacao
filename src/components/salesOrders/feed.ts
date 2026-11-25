@@ -164,15 +164,19 @@ export function filtrosDoRecorte(r: RecorteFeed): FiltroRecorte[] {
  * listagem (migration 20261123120000; a paridade SQL é provada em db/test-order-feed-vendedor-total.sh).
  * "Todos" vai como `null` — `= ANY('{}')` não acharia linha nenhuma.
  */
+// Filtro ausente vai OMITIDO (undefined some do JSON), não `null`: os 7 parâmetros de
+// `order_feed_total` são `DEFAULT NULL` em prod, então omitir ≡ null no SQL. E o `types.ts` que o
+// Lovable regenera a cada deploy de edge declara `p_x?: string` (sem `| null`) — passar `null`
+// quebrava o typecheck da main a cada regeneração (#4144, #4151, #4158).
 export function paramsTotalDoRecorte(r: RecorteFeed) {
   return {
-    p_account: r.empresa === 'all' ? null : r.empresa,
-    p_status: r.status === 'todos' ? null : [...STATUS_DO_FILTRO[r.status]],
-    p_desde: r.corte?.desde ?? null,
-    p_puros: r.corte ? [...r.corte.puros] : null,
-    p_customer: r.cliente,
-    p_busca: r.busca,
-    p_vendedor: r.vendedor,
+    p_account: r.empresa === 'all' ? undefined : r.empresa,
+    p_status: r.status === 'todos' ? undefined : [...STATUS_DO_FILTRO[r.status]],
+    p_desde: r.corte?.desde ?? undefined,
+    p_puros: r.corte ? [...r.corte.puros] : undefined,
+    p_customer: r.cliente ?? undefined,
+    p_busca: r.busca ?? undefined,
+    p_vendedor: r.vendedor ?? undefined,
   };
 }
 
@@ -367,8 +371,11 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
       valor_unitario: precoUtilizavel(i.unitPrice),
       valor_total: totalLinhaOuAusente(i.quantity ?? 1, precoUtilizavel(i.unitPrice)),
     })),
-    subtotal: row.subtotal || row.total || 0,
-    total: row.total || 0,
+    // Sem o `|| 0` final: `orders.subtotal/total` são NOT NULL DEFAULT 0 (conferido em prod), então
+    // ele nunca disparava, e um null futuro sairia R$ 0,00 em vez de "—". O `subtotal || total` fica:
+    // subtotal 0 é o DEFAULT não preenchido (0 linhas hoje com subtotal 0 e total > 0), não "zero".
+    subtotal: row.subtotal || row.total,
+    total: row.total,
     status: row.status,
     omie_numero_pedido: null,
     omie_pedido_id: null,
