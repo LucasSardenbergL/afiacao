@@ -47,4 +47,14 @@ describe('useCart — centavos', () => {
     // cada linha 0,005 → 0,01; a soma crua daria 0,01
     expect(result.current.obenSubtotal).toBe(0.02);
   });
+
+  it('somar o mesmo SKU (1,2 + 1,9) dá quantidade 3,1 exata — o gate de crédito fecha com a tela (Codex #4164)', () => {
+    const { result } = montar(() => 1.05);
+    act(() => { result.current.addProductToCart(produto('a', 1, 1.05), 1.2); });
+    act(() => { result.current.addProductToCart(produto('a', 1, 1.05), 1.9); });
+    const item = result.current.cart[0] as ProductCartItem;
+    expect(item.quantity).toBe(3.1);
+    expect(result.current.obenSubtotal).toBe(3.26);
+  });
 });
+

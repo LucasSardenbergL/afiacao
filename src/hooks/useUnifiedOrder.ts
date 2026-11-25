@@ -16,6 +16,7 @@ import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection'
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
+import { somarQuantidade } from '@/lib/pricing/centavos';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
@@ -733,7 +734,7 @@ export function useUnifiedOrder() {
       if (existing) {
         setCart(prev => prev.map(c =>
           c.type === 'product' && (c as ProductCartItem).product.id === product.id
-            ? { ...c, quantity: c.quantity + aiProd.quantity } as ProductCartItem : c
+            ? { ...c, quantity: somarQuantidade(c.quantity, aiProd.quantity) } as ProductCartItem : c
         ));
       } else {
         // A IA NÃO precifica: o item nasce pela MESMA função da lista do catálogo (getProductPrice =

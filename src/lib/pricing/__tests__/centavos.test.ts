@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { centavos, emCentavos, somaPorLinha, totalDaLinha } from '../centavos';
+import { centavoAcima, centavos, emCentavos, somaPorLinha, somarQuantidade, totalDaLinha } from '../centavos';
 
 describe('centavos — mesma regra do centavos() da edge (half-up na 2ª casa)', () => {
   it.each([
@@ -52,5 +52,29 @@ describe('total por linha (decisão do founder: como o Omie e o crédito)', () =
 
   it('linha NaN contamina o total (o priceGuard barra; nunca vira 0)', () => {
     expect(somaPorLinha([1, Number.NaN], (x) => x)).toBeNaN();
+  });
+});
+
+describe('centavoAcima — piso nunca fica abaixo (Codex #4164)', () => {
+  it('11,2148 vira 11,22 (half-up daria 11,21, abaixo do piso)', () => {
+    expect(centavoAcima(11.2148)).toBe(11.22);
+  });
+  it('valor já ao centavo fica igual (sem subir por ruído binário)', () => {
+    expect(centavoAcima(11.22)).toBe(11.22);
+    expect(centavoAcima(0.1 + 0.2)).toBe(0.3);
+  });
+  it('não finito → NaN', () => {
+    expect(centavoAcima(Number.NaN)).toBeNaN();
+  });
+});
+
+describe('somarQuantidade — sem resíduo binário (Codex #4164)', () => {
+  it('1,2 + 1,9 dá 3,1 exato, e a linha a R$ 1,05 fecha com o round(numeric) do gate (3,26)', () => {
+    const q = somarQuantidade(1.2, 1.9);
+    expect(q).toBe(3.1);
+    expect(totalDaLinha(q, 1.05)).toBe(3.26);
+  });
+  it('soma inteira fica inteira', () => {
+    expect(somarQuantidade(2, -1)).toBe(1);
   });
 });

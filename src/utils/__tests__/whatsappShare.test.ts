@@ -228,4 +228,18 @@ describe('shareOrderViaWhatsApp — itens a orçar (B4)', () => {
     expect(msg).toContain('*Total: R$');
     expect(msg).not.toContain('Subtotal conhecido');
   });
+
+  it('linha ao centavo, igual ao total do carrinho (1,5 × 2,01 = 3,02, não 3,01) — PR 2.4', () => {
+    shareOrderViaWhatsApp({
+      customerName: 'ACME LTDA',
+      items: [{ description: 'Lixa', quantity: 1.5, unitPrice: 2.01 }],
+      total: 3.02,
+      date: fixedDate,
+    });
+    const msg = decodedMessage();
+    const linha = msg.split('\n').find((l) => l.includes('Lixa')) ?? '';
+    expect(linha).toContain('3,02');
+    expect(linha).not.toContain('3,01');
+  });
 });
+

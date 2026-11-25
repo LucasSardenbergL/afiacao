@@ -1,4 +1,8 @@
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
+import { emCentavos } from '@/lib/pricing/centavos';
+
+/** Total da linha ao centavo (PR 2.4: o mesmo do carrinho e do crédito); ausente segue ausente. */
+const linhaAoCentavo = (v: number | null): number | null => (v === null ? null : emCentavos(v));
 
 interface OrderItem {
   description: string;
@@ -53,7 +57,7 @@ export function shareOrderViaWhatsApp({
         // "R$ 0,00" numa mensagem que vai PARA O CLIENTE, afirmando preco que ninguem apurou.
         // `lineTotal` null também não cai na conta bruta: é "não sei o líquido", e sai "—".
         const totalLinha =
-          item.lineTotal !== undefined ? item.lineTotal : totalLinhaOuAusente(item.quantity, item.unitPrice);
+          item.lineTotal !== undefined ? item.lineTotal : linhaAoCentavo(totalLinhaOuAusente(item.quantity, item.unitPrice));
         const valor = itensAOrcar > 0 && item.unitPrice === null ? 'A orçar' : formatPrecoOuAusente(totalLinha);
         return `• ${item.quantity}x ${item.description}${tintInfo} - ${valor}`;
       }

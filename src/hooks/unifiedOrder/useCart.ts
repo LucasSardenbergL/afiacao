@@ -11,7 +11,7 @@ import type {
 } from '@/hooks/useUnifiedOrder';
 import { nascerItemProduto } from './nascimento-item';
 import { subtotalServicosParaExibicao } from '@/services/orderSubmission/helpers';
-import { emCentavos, somaPorLinha } from '@/lib/pricing/centavos';
+import { emCentavos, somaPorLinha, somarQuantidade } from '@/lib/pricing/centavos';
 import {
   aplicarDescontoNasCores,
   mesmoDesconto,
@@ -127,7 +127,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
             c.type === 'product' &&
             (c as ProductCartItem).product.id === product.id &&
             !(c as ProductCartItem).tint_formula_id
-              ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem)
+              ? ({ ...c, quantity: somarQuantidade(c.quantity, qty) } as ProductCartItem)
               : c,
           );
         }
@@ -184,7 +184,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       }
       const proximo: CartItem[] =
         idx >= 0
-          ? atual.map((c, i) => (i === idx ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem) : c))
+          ? atual.map((c, i) => (i === idx ? ({ ...c, quantity: somarQuantidade(c.quantity, qty) } as ProductCartItem) : c))
           : [
               ...atual,
               {
@@ -276,7 +276,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       setCart(prev =>
         prev.map((c, i) => {
           if (i !== index) return c;
-          const newQty = c.quantity + delta;
+          const newQty = somarQuantidade(c.quantity, delta);
           if (c.type === 'service') {
             const maxQty = (c as ServiceCartItem).userTool.quantity || 1;
             if (newQty > maxQty) {

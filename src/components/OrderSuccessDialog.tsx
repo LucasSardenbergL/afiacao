@@ -1,4 +1,5 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { totalDaLinha } from '@/lib/pricing/centavos';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert, AlertTriangle, Plus } from 'lucide-react';
 import { format } from 'date-fns';
@@ -147,7 +148,7 @@ export function OrderSuccessDialog({
                   <span className={item.unitPrice === null ? 'text-muted-foreground' : 'font-medium'}>
                     {item.unitPrice === null
                       ? 'A orçar'
-                      : (item.quantity * item.unitPrice).toLocaleString('pt-BR', {
+                      : totalDaLinha(item.quantity, item.unitPrice).toLocaleString('pt-BR', {
                         style: 'currency',
                         currency: 'BRL',
                       })}

@@ -36,3 +36,23 @@ export function somaPorLinha<T>(itens: ReadonlyArray<T>, linha: (item: T) => num
   for (const it of itens) total += centavos(linha(it));
   return total / 100;
 }
+
+/**
+ * Centavo ACIMA (teto): o 1º centavo que não fica abaixo de `x`. Para PISO — "aplicar piso" de 11,2148
+ * tem de gravar 11,22; o half-up daria 11,21, abaixo do piso (Codex no #4164). Não finito → NaN.
+ */
+export function centavoAcima(x: number): number {
+  const c = centavos(x);
+  if (Number.isNaN(c)) return Number.NaN;
+  return (c / 100 < x - 1e-9 ? c + 1 : c) / 100;
+}
+
+/**
+ * Soma de quantidades sem resíduo binário: `1,2 + 1,9` dá 3,0999999999999996 em ponto flutuante, que vai
+ * cru no JSON e faz o `round(numeric, 2)` do gate de crédito divergir 1 centavo da tela (Codex no #4164).
+ * 6 casas cobrem qualquer quantidade do Omie (que usa até 4).
+ */
+export function somarQuantidade(a: number, b: number): number {
+  const s = a + b;
+  return Number.isFinite(s) ? Number(s.toFixed(6)) : s;
+}

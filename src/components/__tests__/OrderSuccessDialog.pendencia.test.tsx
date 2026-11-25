@@ -77,3 +77,19 @@ describe('OrderSuccessDialog — Novo pedido', () => {
     expect(screen.queryByRole('button', { name: /novo pedido/i })).toBeNull();
   });
 });
+
+// PR 2.4: a linha do resumo ao centavo, como o carrinho e o crédito (1,5 × 2,01 = 3,02, não 3,01).
+describe('OrderSuccessDialog — linha ao centavo (2.4)', () => {
+  it('1,5 × R$ 2,01 sai R$ 3,02 na linha', () => {
+    render(
+      <OrderSuccessDialog
+        open onOpenChange={vi.fn()} customerName="ACME"
+        items={[{ description: 'Lixa', quantity: 1.5, unitPrice: 2.01 }]}
+        total={9.99}
+        orderNumbers={['PV 1']} onViewOrder={vi.fn()} onShare={vi.fn()} envioConfirmado
+      />,
+    );
+    expect(screen.getByText(/R\$\s3,02/)).toBeTruthy();
+    expect(screen.queryByText(/R\$\s3,01/)).toBeNull();
+  });
+});
