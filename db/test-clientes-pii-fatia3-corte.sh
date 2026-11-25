@@ -267,6 +267,9 @@ P -q <<SQL
 UPDATE public.profiles SET document='12345678000199', cnpj=NULL, phone='4733330003' WHERE user_id='$C3';
 UPDATE public.profiles SET document='98765432000111', cnpj=NULL, phone='4133330001' WHERE user_id='$C1';
 UPDATE public.profiles SET requires_po=true WHERE user_id='$C3';
+-- CR: 14 dígitos (entra na Caça) mas com opt-out SÓ pelo telefone — a chave crua do telefone decide a fila
+UPDATE public.profiles SET document='11222333000144', cnpj=NULL, phone='48933330002' WHERE user_id='$CR';
+INSERT INTO public.whatsapp_conversations VALUES (NULL,'opt_out','+5548933330002',NULL);
 UPDATE public.profiles SET created_at = now() - interval '1 day' WHERE user_id='$C1';
 INSERT INTO public.omie_products VALUES ('$PR1','oben','lixas');
 INSERT INTO public.order_items(sales_order_id,product_id,quantity,unit_price) VALUES ('$SO1','$PR1',2,50),('$SO2','$PR1',1,30);
@@ -287,6 +290,11 @@ fat()    { como "$1" "SELECT coalesce(faturamento_total::text,'(null)') FROM pub
 cacafone() { como "$1" "SELECT coalesce(telefone,'(null)')||'|'||contato_visivel FROM public.v_caca_candidatos WHERE cliente_user_id='$2' LIMIT 1;"; }
 cacadoc() { como "$1" "SELECT count(*) FROM public.v_caca_candidatos WHERE cliente_user_id='$2';"; }
 compr()  { $1 "SELECT count(*)||'|'||coalesce(sum(volume)::text,'(null)') FROM public.v_caca_compradores;"; }
+# digests linha a linha (Codex P2: contagem/soma deixam passar troca de documento/empresa/lucro)
+dig_compr() { como_srv "SELECT md5(coalesce(string_agg(t::text, '§' ORDER BY t::text),'')) FROM public.v_caca_compradores t;"; }
+dig_cand()  { como "$1" "SELECT md5(coalesce(string_agg(concat_ws('|',documento,empresa_alvo,cidade_uf,ramo,ticket_faixa,familias::text,compra_em_outra_empresa,ultima_compra_grupo_dias,nome,cliente_user_id), '§' ORDER BY documento, empresa_alvo),'')) FROM public.v_caca_candidatos;"; }
+dig_grupo() { como "$1" "SELECT md5(coalesce(string_agg(t::text, '§' ORDER BY t::text),'')) FROM public.v_grupo_comercial t;"; }
+dig_lista() { como "$1" "SELECT md5(coalesce(string_agg(user_id::text||':'||total||':'||coalesce(prioridade_ordenacao::text,'-')||':'||coalesce(nome_ordenacao,'-'), ','),'')) FROM public.listar_clientes_base(NULL, NULL, '$2', 100, 0);"; }
 gcont()  { como "$1" "SELECT coalesce(phone,'(null)')||'|'||coalesce(email,'(null)')||'|'||contato_visivel||'|'||nome FROM public.v_grupo_contatos WHERE user_id='$2';"; }
 lista()  { como "$1" "SELECT coalesce(string_agg(user_id::text||':'||coalesce(email,'(null)'), ',' ORDER BY user_id),'(vazio)') FROM public.listar_clientes_base('$2', NULL, 'nome', 100, 0);"; }
 resolve() { como "$1" "SELECT coalesce(customer_user_id::text,'(null)')||'|'||fonte FROM public.resolver_cliente_por_telefone('$2');"; }
@@ -295,10 +303,13 @@ equipe() { como "$1" "SELECT coalesce(string_agg(user_id::text||':'||coalesce(em
 
 # linha de base com os corpos de PROD (antes): o que a 3a NÃO pode mudar
 BASE_FAT_F="$(fat $F)"; BASE_COMPR_SRV="$(compr como_srv)"; BASE_CACA_F="$(cacadoc $F $C3)"
+BASE_DIG_COMPR="$(dig_compr)"; BASE_DIG_CAND_F="$(dig_cand $F)"; BASE_DIG_CAND_B="$(dig_cand $B)"; BASE_DIG_GRUPO_F="$(dig_grupo $F)"
+BASE_DIG_LISTA_F="$(dig_lista $F prioridade)"; BASE_DIG_LISTA_B="$(dig_lista $B nome)"
 echo "linha de base: fat(F)=$BASE_FAT_F compradores(service_role)=$BASE_COMPR_SRV caca(F,C3)=$BASE_CACA_F"
 [ "$BASE_FAT_F" = "200" ] || bad "L0 fixture: faturamento do grupo (C1+C3) não é 200 (veio $BASE_FAT_F) — a prova abaixo seria de graça"
 [ "${BASE_COMPR_SRV%%|*}" != "0" ] || bad "L0 fixture: service_role não vê compradores — o assert A1 seria de graça"
 [ "$BASE_CACA_F" != "0" ] || bad "L0 fixture: F não vê C3 na Caça — o assert A3 seria de graça"
+eq "L0b fixture: opt-out SÓ por telefone tira CR da Caça já nos corpos de PROD" "$(cacadoc $F $CR)" "0"
 eq "L1 antes do corte: back-office lê o telefone alheio DIRETO de profiles (furo que a 3b fecha)" \
    "$(como $B "SELECT phone FROM public.profiles WHERE user_id='$C3';")" "4733330003"
 
@@ -308,6 +319,13 @@ echo "3a aplicada (postcondição embutida passou)"
 suite_a() {
   echo "-- A. leitores de servidor (3a) --"
   eq "A1 service_role (edge de custo) vê os MESMOS compradores de antes" "$(compr como_srv)" "$BASE_COMPR_SRV"
+  eq "A1b ... linha a linha (documento, empresa, volume, lucro)" "$(dig_compr)" "$BASE_DIG_COMPR"
+  eq "A1c Caça (farmer): mesma fila linha a linha, fora telefone" "$(dig_cand $F)" "$BASE_DIG_CAND_F"
+  eq "A1d Caça (back-office): idem" "$(dig_cand $B)" "$BASE_DIG_CAND_B"
+  eq "A1e Caça: opt-out SÓ por telefone continua tirando CR (a chave crua decide)" "$(cacadoc $F $CR)" "0"
+  eq "A1f grupo comercial (farmer): mesma linha inteira" "$(dig_grupo $F)" "$BASE_DIG_GRUPO_F"
+  eq "A1g lista (farmer, prioridade): mesmos ids, total e ordem" "$(dig_lista $F prioridade)" "$BASE_DIG_LISTA_F"
+  eq "A1h lista (back-office, nome): idem" "$(dig_lista $B nome)" "$BASE_DIG_LISTA_B"
   eq "A2 grupo: faturamento do grupo NÃO zera para quem está fora da carteira de parte dele" "$(fat $F)" "$BASE_FAT_F"
   eq "A3 Caça: cliente fora da carteira continua na fila (documento é a chave)" "$(cacadoc $F $C3)" "$BASE_CACA_F"
   eq "A4 Caça: telefone fora da carteira vem mascarado" "$(cacafone $F $C3)" "(null)|false"
@@ -351,13 +369,14 @@ suite_a() {
 suite_a
 
 echo "-- C0. antes do corte, o upsert do signup (como o PostgREST gera) funciona --"
-upsert_self() { # a forma NOVA do Auth.tsx: insert … ON CONFLICT DO NOTHING + UPDATE … WHERE user_id
-  como "$1" "INSERT INTO public.profiles(user_id,name,email,phone,document) VALUES ('$1','Cliente Um','um@x.test','4133330001','98765432000111')
+upsert_self() { # <uid> <email> — a forma NOVA do Auth.tsx: insert … ON CONFLICT DO NOTHING + UPDATE … WHERE user_id
+  como "$1" "INSERT INTO public.profiles(user_id,name,email,phone,document) VALUES ('$1','Cliente Um','$2','4133330001','98765432000111')
              ON CONFLICT (user_id) DO NOTHING;
-             UPDATE public.profiles SET name='Cliente Um', email='um@x.test', phone='4133330001', document='98765432000111' WHERE user_id='$1';
-             SELECT 'upsert-ok';"
+             UPDATE public.profiles SET name='Cliente Um', email='$2', phone='4133330001', document='98765432000111' WHERE user_id='$1';
+             SELECT email FROM public.v_perfil_contato WHERE user_id='$1';"
 }
-eq "C0 signup (forma nova) antes do corte" "$(upsert_self $C1)" "upsert-ok"
+eq "C0 signup (forma nova) antes do corte, e persiste" "$(upsert_self $C1 c0@x.test)" "c0@x.test"
+upsert_self $C1 um@x.test >/dev/null
 
 P -q -f "$MIGB"
 echo "3b aplicada (postcondição embutida passou)"
@@ -387,23 +406,30 @@ suite_b() {
   eq "B8 gestor pela view vê o de fora" "$(como $G "SELECT phone FROM public.v_perfil_contato WHERE user_id='$C3';")" "4733330003"
   eq "B8b farmer pela view: fora da carteira mascarado" \
      "$(como $F "SELECT coalesce(phone,'(null)')||'|'||contato_visivel FROM public.v_perfil_contato WHERE user_id='$C3';")" "(null)|false"
-  eq "B9 signup na forma nova (DO NOTHING + UPDATE) segue funcionando" "$(upsert_self $C1)" "upsert-ok"
+  eq "B9 signup na forma nova (DO NOTHING + UPDATE) segue funcionando e PERSISTE" "$(upsert_self $C1 b9@x.test)" "b9@x.test"
+  eq "B9c perfil NOVO nasce pela forma nova (caminho do INSERT, não do UPDATE)" "$(upsert_self $X x@x.test)" "x@x.test"
+  P -q -c "DELETE FROM public.profiles WHERE user_id='$X';"; upsert_self $C1 um@x.test >/dev/null
   eq "B9b a forma ANTIGA do Auth.tsx (ON CONFLICT DO UPDATE … EXCLUDED.email) quebra — por isso o front mudou" \
      "$(veredito "$(nega authenticated $C1 insufficient_privilege "INSERT INTO public.profiles(user_id,email) VALUES ('$C1','um@x.test') ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email")")" "barrado"
   eq "B10 update self do documento (Profile.tsx) segue funcionando" \
-     "$(como $C1 "UPDATE public.profiles SET document='98765432000111' WHERE user_id='$C1'; SELECT 'update-ok';")" "update-ok"
+     "$(como $C1 "UPDATE public.profiles SET document='98765432000222' WHERE user_id='$C1'; SELECT document FROM public.v_perfil_contato WHERE user_id='$C1';")" "98765432000222"
+  P -q -c "UPDATE public.profiles SET document='98765432000111' WHERE user_id='$C1';"
   eq "B11 service_role (edges) segue lendo tudo" "$(como_srv "SELECT phone FROM public.profiles WHERE user_id='$C3';")" "4733330003"
+  P -q -c "DELETE FROM public.contato_acesso_operacional;"
   eq "B12 RPC operacional da fatia 2 segue entregando (exceção no pedido)" \
      "$(como $B "SELECT phone FROM public.contato_cliente_operacional('pedido', '{$SO1}'::uuid[], 'detalhe_pedido');")" "4733330003"
+  eq "B12b ... e grava a exceção no ledger" \
+     "$(P -tA -q -c "SELECT count(*) FROM public.contato_acesso_operacional WHERE staff_user_id='$B' AND customer_user_id='$C3';")" "1"
 }
 suite_a
 suite_b
 
 # ═════════════════════════ FALSIFICAÇÃO (mesma invocação; as suítes verdes acima já rodaram) ═════════
 echo "-- FALSIFICAÇÃO: uma sabotagem por camada, cada uma com o SEU vermelho --"
-exige_vermelho() { # <rótulo> <obtido> <correto>
+exige_vermelho() { # <rótulo> <obtido> <correto> <vermelho-esperado> — o vermelho tem de ser O DO MUTANTE
   if [ "$2" = "$3" ]; then bad "$1 — sabotado ficou VERDE (assert não pega a camada) [$2]"
-  else ok "$1 — sabotado ficou vermelho [$2]"; fi
+  elif [ "$2" = "$4" ]; then ok "$1 — sabotado ficou vermelho [$2]"
+  else bad "$1 — vermelho ALHEIO ao mutante: esperado [$4], veio [$2]"; fi
 }
 sabota_a() { # <perl expr> — reaplica a 3a com o corpo sabotado (sem a postcondição)
   perl -0pe "$1" "$MIGA" > "$RODADA/sabotada.sql"
@@ -414,10 +440,10 @@ sabota_a() { # <perl expr> — reaplica a 3a com o corpo sabotado (sem a postcon
 restaura() { P -q -f "$MIGA"; P -q -f "$MIGB"; }
 
 P -q -c "GRANT SELECT ON public.profiles TO authenticated;"
-exige_vermelho "K1 sem o REVOKE → B1" "$(veredito "$(nega authenticated $B insufficient_privilege "SELECT phone FROM public.profiles WHERE user_id='$C3'")")" "barrado"; restaura
+exige_vermelho "K1 sem o REVOKE → B1" "$(veredito "$(nega authenticated $B insufficient_privilege "SELECT phone FROM public.profiles WHERE user_id='$C3'")")" "barrado" "vazou"; restaura
 
 P -q -c "GRANT SELECT (document) ON public.profiles TO anon;"
-exige_vermelho "K2 grant de coluna de contato ao anon → B5" "$(veredito "$(nega anon "" insufficient_privilege "SELECT id FROM public.profiles WHERE document = 'x'")")" "barrado"
+exige_vermelho "K2 grant de coluna de contato ao anon → B5" "$(veredito "$(nega anon "" insufficient_privilege "SELECT id FROM public.profiles WHERE document = 'x'")")" "barrado" "vazou"
 P -q -c "REVOKE SELECT (document) ON public.profiles FROM anon;"
 
 perl -0pe 's/prospect_origin_call_id\n\) ON public\.profiles/prospect_source\n) ON public.profiles/; s/  prospect_origin_call_id\n//' "$MIGB" > "$RODADA/b-sabotada.sql"
@@ -429,31 +455,31 @@ else bad "K3 abortou por outro motivo: $(head -c 300 "$RODADA/k3.err")"; fi
 restaura
 
 sabota_a 's/ WHERE ctx\.servico\n    OR /  WHERE /'
-exige_vermelho "K4 chave interna sem o ramo service_role → A1 (edge de custo ficaria vazia)" "$(compr como_srv)" "$BASE_COMPR_SRV"; restaura
+exige_vermelho "K4 chave interna sem o ramo service_role → A1 (edge de custo ficaria vazia)" "$(compr como_srv)" "$BASE_COMPR_SRV" "0|(null)"; restaura
 
 sabota_a 's/    vpc\.phone AS telefone,/    cand.phone AS telefone,/'
-exige_vermelho "K5 Caça projeta o telefone cru → A4" "$(cacafone $F $C3)" "(null)|false"; restaura
+exige_vermelho "K5 Caça projeta o telefone cru → A4" "$(cacafone $F $C3)" "(null)|false" "4733330003|false"; restaura
 
 sabota_a 's/    vpc\.phone,\n    vpc\.email,/    k.phone,\n    vpc.email,/'
-exige_vermelho "K6 grupo/contatos projeta o telefone cru → A7" "$(gcont $F $C3)" "(null)|(null)|false|Tres Ltda"; restaura
+exige_vermelho "K6 grupo/contatos projeta o telefone cru → A7" "$(gcont $F $C3)" "(null)|(null)|false|Tres Ltda" "4733330003|(null)|false|Tres Ltda"; restaura
 
 sabota_a 's/OR vpc\.email    ILIKE/OR (SELECT k.document FROM private.v_perfil_chaves_internas k WHERE k.user_id = p.user_id) ILIKE/'
-exige_vermelho "K7 lista busca no contato CRU → A9b (oráculo)" "$(lista $F '12345678')" "(vazio)"; restaura
+exige_vermelho "K7 lista busca no contato CRU → A9b (oráculo)" "$(lista $F '12345678')" "(vazio)" "$C3:(null)"; restaura
 
 sabota_a 's/  IF NOT \(COALESCE\(public\.has_role\(auth\.uid\(\), .employee.::public\.app_role\), false\)\n          OR COALESCE\(public\.has_role\(auth\.uid\(\), .master.::public\.app_role\), false\)\) THEN\n    RAISE EXCEPTION .resolver_cliente_por_telefone/  IF false THEN\n    RAISE EXCEPTION '"'"'resolver_cliente_por_telefone/'
-exige_vermelho "K8 telefonia sem gate de staff → A14" "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT * FROM public.resolver_cliente_por_telefone('4733330003')")")" "barrado"; restaura
+exige_vermelho "K8 telefonia sem gate de staff → A14" "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT * FROM public.resolver_cliente_por_telefone('4733330003')")")" "barrado" "vazou"; restaura
 
 sabota_a 's/  IF NOT \(COALESCE\(public\.has_role\(auth\.uid\(\), .employee.::public\.app_role\), false\)\n          OR COALESCE\(public\.has_role\(auth\.uid\(\), .master.::public\.app_role\), false\)\) THEN\n    RAISE EXCEPTION .cliente_por_documento/  IF false THEN\n    RAISE EXCEPTION '"'"'cliente_por_documento/'
-exige_vermelho "K9 documento sem gate de staff → A16" "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT public.cliente_por_documento(ARRAY['12345678000199'])")")" "barrado"; restaura
+exige_vermelho "K9 documento sem gate de staff → A16" "$(veredito "$(nega authenticated $C1 insufficient_privilege "SELECT public.cliente_por_documento(ARRAY['12345678000199'])")")" "barrado" "vazou"; restaura
 
 sabota_a 's/ WHERE ctx\.staff\n   AND p\.user_id IS NOT NULL/ WHERE p.user_id IS NOT NULL/'
-exige_vermelho "K10 equipe sem exigir leitor staff → A17b" "$(equipe $C1)" "(vazio)"; restaura
+exige_vermelho "K10 equipe sem exigir leitor staff → A17b" "$(equipe $C1)" "(vazio)" "$E:func@x.test,$E2:e2@x.test,$EX2:ex2@x.test"; restaura
 
 sabota_a 's/   AND \(COALESCE\(p\.is_employee, false\)\n        OR p\.user_id IN/   AND (true\n        OR p.user_id IN/'
-exige_vermelho "K11 equipe sem exigir ALVO staff (vazaria e-mail de cliente) → A17" "$(equipe $B)" "$E:func@x.test,$E2:e2@x.test,$EX2:ex2@x.test"; restaura
+exige_vermelho "K11 equipe sem exigir ALVO staff (vazaria e-mail de cliente) → A17" "$(equipe $B)" "$E:func@x.test,$E2:e2@x.test,$EX2:ex2@x.test" "$(P -tA -q -c "SELECT string_agg(user_id::text||':'||coalesce(email,'(null)'), ',' ORDER BY user_id) FROM public.profiles WHERE user_id IS NOT NULL")"; restaura
 
 sabota_a 's/    OR \(ctx\.uid IS NOT NULL AND \(p\.user_id = ctx\.uid OR ctx\.staff\)\);/    OR (ctx.uid IS NOT NULL);/'
-exige_vermelho "K12 chave interna sem fronteira de linha → A18b" "$(como $C1 "SELECT count(*) FROM private.v_perfil_chaves_internas;")" "1"; restaura
+exige_vermelho "K12 chave interna sem fronteira de linha → A18b" "$(como $C1 "SELECT count(*) FROM private.v_perfil_chaves_internas;")" "1" "7"; restaura
 
 # K13: anon é barrado nas 4 views por TRÊS camadas (o REVOKE na view, a chave interna e a v_perfil_contato,
 # ambas sem anon) — sabotar uma só fica verde, então nenhuma é falsificável sozinha pelo A19. O que se
@@ -465,6 +491,9 @@ if P -q -f "$RODADA/a-k13.sql" >/dev/null 2>"$RODADA/k13.err"; then bad "K13 vie
 elif grep -q 'anon le public.v_grupo_contatos' "$RODADA/k13.err"; then ok "K13 view de grupo aberta ao anon → postcondição aborta"
 else bad "K13 abortou por outro motivo: $(head -c 300 "$RODADA/k13.err")"; fi
 restaura
+
+sabota_a 's/SELECT p\.user_id, p\.document, p\.cnpj, p\.phone\n  FROM public\.profiles p/SELECT p.user_id, p.document, p.cnpj, NULL::text AS phone\n  FROM public.profiles p/'
+exige_vermelho "K14 chave interna sem o telefone cru → A1e (opt-out por telefone some)" "$(cacadoc $F $CR)" "0" "2"; restaura
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
 suite_a
