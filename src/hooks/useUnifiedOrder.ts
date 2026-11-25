@@ -811,8 +811,10 @@ export function useUnifiedOrder() {
       if (selectedCustomer.cnpj_cpf) {
         const docClean = chaveDocumentoParaBusca(selectedCustomer.cnpj_cpf);
         if (docClean) {
+          // Onda D: filtro pelo documento na view MASCARADA — fora da carteira é miss e cai no
+          // `criar_perfil_local`, que refaz a busca por documento no servidor (sem perfil duplicado).
           const { data: profile } = await supabase
-            .from('profiles').select('user_id').eq('document', docClean).maybeSingle();
+            .from('v_perfil_contato').select('user_id').eq('document', docClean).maybeSingle();
           if (profile?.user_id) {
             setCustomerUserId(profile.user_id);
             loadUserTools(profile.user_id);

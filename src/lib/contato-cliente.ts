@@ -46,7 +46,7 @@ export interface EnderecoContato {
 
 export type ObjetoOperacional = 'pedido' | 'ordem_servico' | 'expedicao' | 'rota' | 'aprovacao' | 'novo_pedido';
 
-export interface EnderecoOperacional {
+interface EnderecoOperacional {
   id: string;
   label: string | null;
   street: string | null;
@@ -74,8 +74,8 @@ export interface ContatoOperacional {
   pedido_telefone: string | null;
 }
 
-export const COLUNAS_PERFIL_CONTATO = 'user_id, contato_visivel, email, phone, document, cnpj, eh_pj';
-export const COLUNAS_ENDERECO_CONTATO =
+const COLUNAS_PERFIL_CONTATO = 'user_id, contato_visivel, email, phone, document, cnpj, eh_pj';
+const COLUNAS_ENDERECO_CONTATO =
   'id, user_id, contato_visivel, label, city, state, is_default, is_from_omie, created_at, street, number, complement, neighborhood, zip_code';
 
 const LOTE_VIEW = 150;

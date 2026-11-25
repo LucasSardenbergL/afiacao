@@ -74,4 +74,6 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 - Servidor: `listar_clientes_base`, `customer_metrics_mv`, views de grupo/caça, `resolver_cliente_por_telefone`,
   `cobranca_regua_hoje`, edges `mcp`/`omie-cliente`/`analyze-unified-order`, snapshot `sales_orders.customer_*`
   (os leitores do front já saíram dele).
+- Signup anônimo (`SignupForm`: `profiles.eq('document')` como anon) — decisão da spec: unicidade no
+  servidor e resposta pública uniforme no corte. Filtrar por coluna revogada também dá 42501.
 - Escrita em `customer_contacts` segue na tabela (o `.select()` pós-escrita depende das policies da fatia 3).
