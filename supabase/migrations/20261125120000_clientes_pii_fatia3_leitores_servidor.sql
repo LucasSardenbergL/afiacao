@@ -604,6 +604,12 @@ BEGIN
 END
 $function$;
 
+-- CREATE OR REPLACE preserva o ACL; o REVOKE explícito (PUBLIC E anon) não depende disso.
+REVOKE ALL ON FUNCTION public.listar_clientes_base(text, text, text, integer, integer) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.resolver_cliente_por_telefone(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.listar_clientes_base(text, text, text, integer, integer) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.resolver_cliente_por_telefone(text) TO authenticated, service_role;
+
 -- ───────────────────────── postcondição ─────────────────────────
 DO $post$
 DECLARE
