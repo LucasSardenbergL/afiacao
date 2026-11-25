@@ -149,6 +149,18 @@ describe('precoPartida — centavos (PR 2.4, decisão do founder)', () => {
     expect(meio).toBe(11.15); // 11,15 em ponto flutuante é 11,1499…: a regra via texto não perde o centavo
   });
 
+  it('tabela × mult no produto EXATO: 1,0229 × 1,080262 = 1,1049999998 → 1,10 (Codex #4164, rodada 3)', () => {
+    const p = precoPartida({
+      tabela: 1.0229, ultimoPraticado: null, ultimoPraticadoEm: null, hoje: HOJE, tier: 'B', mult: 1.080262,
+    });
+    expect(p).toBe(1.1);
+    // 2,01 × 1,5 = 3,015 exato; em float o produto é 3,0149999999999997 (daria 3,01)
+    const meio = precoPartida({
+      tabela: 2.01, ultimoPraticado: null, ultimoPraticadoEm: null, hoje: HOJE, tier: 'B', mult: 1.5,
+    });
+    expect(meio).toBe(3.02);
+  });
+
   it('tabela pura com 3 casas nasce ao centavo', () => {
     const p = precoPartida({
       tabela: 4.125, ultimoPraticado: null, ultimoPraticadoEm: null, hoje: HOJE, tier: null, mult: null,

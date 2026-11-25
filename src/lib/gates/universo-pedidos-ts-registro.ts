@@ -47,6 +47,7 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/components/salesOrders/useSalesOrderDetail.ts', forma: 'select·eq(id)·maybeSingle', categoria: 'lookup', motivo: 'detalhe de UM pedido por id (abre cancelado e orçamento também)' },
   { arquivo: 'src/components/salesOrderEdit/useSalesOrderEdit.ts', forma: 'select·eq(id)·single', categoria: 'lookup', motivo: 'edição de UM pedido por id' },
   { arquivo: 'src/pages/UnifiedOrder.tsx', forma: 'select·eq(id)·maybeSingle', categoria: 'lookup', motivo: 'retoma/edita UM pedido por id' },
+  { arquivo: 'src/services/orderSubmission/idempotency.ts', forma: 'select·eq(id)·maybeSingle', categoria: 'lookup', motivo: 'reenvio: lê o total gravado de UM pedido por id para conferir o valor do PV já enviado (PR 2.4)' },
   { arquivo: 'src/services/whatsappProposta/enviarProposta.ts', forma: 'select·eq(whatsapp_proposta_dedupe)·maybeSingle', categoria: 'lookup', motivo: 'dedupe da proposta: acha o orçamento já criado por ela' },
   { arquivo: 'src/hooks/usePedidosProgramados.ts', forma: 'select·eq(pedido_programado_envio_id)·not(omie_pedido_id)', categoria: 'lookup', motivo: 'o pedido gerado por UM envio programado' },
   { arquivo: 'src/hooks/usePedidosProgramados.ts', forma: 'select·in(id)·not(omie_pedido_id)', categoria: 'lookup', motivo: 'pedidos por ids' },
