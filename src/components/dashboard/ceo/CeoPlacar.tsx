@@ -332,6 +332,115 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
   );
 }
 
+type ComposicaoNcgCeo = ReturnType<typeof useCeoPlacar>['composicaoNcg'];
+type LinhaNcgCeo = ComposicaoNcgCeo['linhas'][number];
+
+/** Valor de parcela: "—" quando a linha não foi medida; o motivo da ausência quando a parcela é NULL legítimo. */
+function ParcelaNcg({ v, ausencia, dica }: { v: number | null; ausencia?: string; dica?: string }) {
+  if (v === null && ausencia) {
+    return (
+      <span className="text-status-warning" title={dica}>
+        {ausencia}
+      </span>
+    );
+  }
+  return <span title={v === null ? undefined : formatBRL(v)}>{formatarBRLCompacto(v)}</span>;
+}
+
+function LinhaNcg({ l, rotulo }: { l: LinhaNcgCeo; rotulo: string }) {
+  const m = l.medida;
+  return (
+    <tr className={cn('border-b border-border last:border-0', l.empresa === null && 'font-medium')}>
+      <th scope="row" className="py-1.5 pr-3 text-left font-medium">{rotulo}</th>
+      <td className="py-1.5 pr-3 text-right"><ParcelaNcg v={l.crAberto} /></td>
+      <td className="py-1.5 pr-3 text-right">
+        <ParcelaNcg v={l.estoque} ausencia={m && l.parcial ? 'sem fonte' : undefined} dica="Estoque sem fonte: a NCG soma só o resto (parcial)" />
+      </td>
+      <td className="py-1.5 pr-3 text-right">
+        <ParcelaNcg
+          v={l.adiantamentos}
+          ausencia={m && l.adiantamentoNaoSegregado ? 'no CP' : undefined}
+          dica="Não segregado: sem categoria própria, o adiantamento está dentro do CP fornecedor"
+        />
+      </td>
+      <td className="py-1.5 pr-3 text-right"><ParcelaNcg v={l.cpFornecedor} /></td>
+      <td className="py-1.5 pr-3 text-right"><ParcelaNcg v={l.folha30d} /></td>
+      <td className="py-1.5 pr-3 text-right"><ParcelaNcg v={l.tributosAPagar} /></td>
+      <td className="py-1.5 text-right font-medium">
+        <ParcelaNcg v={l.ncg} />
+        {m && l.parcial && <span className="ml-1 font-normal text-muted-foreground">parcial</span>}
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * De onde vem a NCG do tile: ativo cíclico (CR em aberto + estoque + adiantamentos) − passivo cíclico
+ * (CP fornecedor + folha 30d + tributos), por empresa e no consolidado. Linha não medida = "—" inteira.
+ */
+function CardComposicaoNcg({ c, erro, carregando }: { c: ComposicaoNcgCeo; erro: boolean; carregando: boolean }) {
+  if (carregando || (!erro && c.linhas.length === 0)) return null;
+  const nenhumaMedida = c.linhas.every((l) => !l.medida);
+  return (
+    <Card className="overflow-x-auto p-4" data-testid="ceo-composicao-ncg">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Como a NCG se forma{c.dataReferencia ? ` · snapshot ${dataCurta(c.dataReferencia)}` : ''}
+        </div>
+        <Link
+          to="/financeiro/capital-giro"
+          onClick={() => track('dashboard.ceo.kpi_click', { kpi: 'composicao_ncg' })}
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Abrir capital de giro →
+        </Link>
+      </div>
+      {erro ? (
+        <p className="mt-2 text-xs text-muted-foreground">Leitura dos snapshots falhou.</p>
+      ) : nenhumaMedida ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Composição ainda não medida: o snapshot mais recente é anterior à gravação das parcelas da NCG.
+        </p>
+      ) : (
+        <>
+          <table className="mt-2 w-full text-xs tabular-nums">
+            <caption className="sr-only">Composição da necessidade de capital de giro por empresa</caption>
+            <thead>
+              <tr className="text-2xs uppercase tracking-wide text-muted-foreground">
+                <th scope="col" className="py-1 pr-3" />
+                <th scope="colgroup" colSpan={3} className="py-1 pr-3 text-right font-normal">+ Ativo cíclico</th>
+                <th scope="colgroup" colSpan={3} className="py-1 pr-3 text-right font-normal">− Passivo cíclico</th>
+                <th scope="col" className="py-1" />
+              </tr>
+              <tr className="border-b border-border text-2xs uppercase tracking-wide text-muted-foreground">
+                <th scope="col" className="py-1.5 pr-3 text-left font-normal">Empresa</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">A receber</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Estoque</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Adiantamentos</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Fornecedores</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Folha 30d</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Tributos</th>
+                <th scope="col" className="py-1.5 text-right font-normal">NCG</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.linhas.map((l) => (
+                <LinhaNcg key={l.empresa ?? 'grupo'} l={l} rotulo={l.empresa ? COMPANIES[l.empresa].shortName : 'Grupo'} />
+              ))}
+              {c.consolidado && <LinhaNcg l={c.consolidado} rotulo="Grupo" />}
+            </tbody>
+          </table>
+          {c.linhas.some((l) => !l.medida) && (
+            <p className="mt-2 text-2xs text-muted-foreground">
+              — = composição não medida nesse snapshot (anterior à medição, desatualizado ou incoerente com o total).
+            </p>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function CeoPlacar() {
   const { selection, companyInfo } = useCompany();
   const vendas = useTeamKpis();
@@ -491,6 +600,8 @@ export function CeoPlacar() {
       )}
 
       <CardComposicaoMargem c={p.composicaoMargem} regime={p.regime} />
+
+      <CardComposicaoNcg c={p.composicaoNcg} erro={p.erro.ncg} carregando={p.carregando.ncg} />
 
       <CardCobranca
         c={p.cobranca}

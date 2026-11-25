@@ -26,7 +26,7 @@
  */
 import type { Company, CompanySelection } from '@/contexts/CompanyContext';
 import { consolidarTitulos, type TotaisTitulos } from '@/lib/financeiro/resumo-titulos';
-import type { SnapshotEmpresa } from '@/lib/financeiro/cockpit-consolida-helpers';
+import type { ComposicaoNcgBruta, SnapshotEmpresa } from '@/lib/financeiro/cockpit-consolida-helpers';
 
 const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
 
@@ -254,12 +254,8 @@ function rupturaDaEmpresa(ultimo: SnapshotEmpresa | undefined, empresa: Company,
   };
 }
 
-export function caixaProjetadoDoEscopo(
-  snapshots: readonly SnapshotEmpresa[] | null,
-  empresas: readonly Company[],
-  hoje: string,
-): CaixaProjetado {
-  if (!snapshots || empresas.length === 0) return { falta: null, porEmpresa: [], diasDefasagem: null };
+/** Último snapshot por CNPJ e a data da coorte — a mesma régua do `consolidarCockpit` (KPI de NCG). */
+function ultimosECoorte(snapshots: readonly SnapshotEmpresa[]): { ultimos: Map<string, SnapshotEmpresa>; dataCoorte: string | null } {
   const ultimos = new Map<string, SnapshotEmpresa>();
   for (const s of snapshots) {
     const atual = ultimos.get(s.company);
@@ -271,6 +267,16 @@ export function caixaProjetadoDoEscopo(
     const d = s.snapshot_at.slice(0, 10);
     if (dataCoorte === null || d > dataCoorte) dataCoorte = d;
   }
+  return { ultimos, dataCoorte };
+}
+
+export function caixaProjetadoDoEscopo(
+  snapshots: readonly SnapshotEmpresa[] | null,
+  empresas: readonly Company[],
+  hoje: string,
+): CaixaProjetado {
+  if (!snapshots || empresas.length === 0) return { falta: null, porEmpresa: [], diasDefasagem: null };
+  const { ultimos, dataCoorte } = ultimosECoorte(snapshots);
   const porEmpresa = empresas.map((co) => rupturaDaEmpresa(ultimos.get(co), co, dataCoorte));
   const falta = porEmpresa.some((r) => r.motivo !== null)
     ? null
@@ -431,4 +437,96 @@ export function composicaoMargem(
     })
     .filter((l): l is LinhaComposicaoMargem => l !== null);
   return { mes, linhas };
+}
+
+/**
+ * De onde vem a NCG: ACO (CR em aberto + estoque + adiantamentos a fornecedor) − PCO (CP fornecedor +
+ * folha 30d + tributos a pagar), lidos das colunas `ncg_*` da engine v2.5 no MESMO snapshot (e coorte)
+ * do KPI. Ausente ≠ zero, em 4 sabores (contrato `fin-cashflow-engine/ncg-composicao.ts`):
+ * - `ncg_cr_aberto` NULL (snapshot pré-v2.5, ou composição recusada pelo helper — as 6 NULL) → linha
+ *   inteira não medida ("—");
+ * - CR presente e estoque NULL → NCG PARCIAL (estoque `null`, nunca 0);
+ * - CR presente e adiantamentos NULL → "não segregado" (o adiantamento está dentro do CP fornecedor);
+ * - qualquer outra incoerência (PCO NULL, negativo, não-número, Σ ≠ total além da folga) → não medida.
+ * Consolidado: cada parcela só soma medida em TODAS as empresas do escopo; uma não medida anula a linha.
+ */
+export interface LinhaComposicaoNcg {
+  /** `null` = consolidado do escopo. */
+  empresa: Company | null;
+  medida: boolean;
+  ncg: number | null;
+  crAberto: number | null;
+  estoque: number | null;
+  adiantamentos: number | null;
+  cpFornecedor: number | null;
+  folha30d: number | null;
+  tributosAPagar: number | null;
+  /** Estoque sem fonte: a NCG soma só o resto. */
+  parcial: boolean;
+  /** Adiantamento sem categoria própria: está dentro do CP fornecedor. */
+  adiantamentoNaoSegregado: boolean;
+}
+
+/** Folga de fechamento Σ parcelas × `ncg` — a mesma do CHECK do banco (o helper da engine exige 0,04). */
+const NCG_FOLGA_FECHAMENTO = 0.05;
+const TETO_PARCELA_NCG = 1e10;
+
+/** Parcela lida da coluna: só número finito em [0, teto); NULL/ausente → `null`; o resto → inválida. */
+function parcelaNcg(v: unknown): number | null | 'invalida' {
+  if (v === null || v === undefined) return null;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < TETO_PARCELA_NCG ? v : 'invalida';
+}
+
+function ncgNaoMedida(empresa: Company | null): LinhaComposicaoNcg {
+  return {
+    empresa, medida: false, ncg: null,
+    crAberto: null, estoque: null, adiantamentos: null, cpFornecedor: null, folha30d: null, tributosAPagar: null,
+    parcial: false, adiantamentoNaoSegregado: false,
+  };
+}
+
+function linhaNcgDoSnapshot(s: SnapshotEmpresa | undefined, empresa: Company, dataCoorte: string | null): LinhaComposicaoNcg {
+  const nao = ncgNaoMedida(empresa);
+  if (!s || s.snapshot_at.slice(0, 10) !== dataCoorte || !s.composicao_ncg) return nao;
+  const ncg = s.ncg;
+  if (typeof ncg !== 'number' || !Number.isFinite(ncg)) return nao;
+  const c: ComposicaoNcgBruta = s.composicao_ncg;
+  const cr = parcelaNcg(c.ncg_cr_aberto);
+  const est = parcelaNcg(c.ncg_estoque);
+  const ad = parcelaNcg(c.ncg_adiantamentos);
+  const cp = parcelaNcg(c.ncg_cp_fornecedor);
+  const fo = parcelaNcg(c.ncg_folha_30d);
+  const tr = parcelaNcg(c.ncg_tributos_a_pagar);
+  if (cr === null || cr === 'invalida' || est === 'invalida' || ad === 'invalida') return nao;
+  if (cp === null || cp === 'invalida' || fo === null || fo === 'invalida' || tr === null || tr === 'invalida') return nao;
+  // O fechamento só confere a coerência: estoque/adiantamento NULL ficam fora da soma, não viram 0 na tela.
+  const soma = cr + (est ?? 0) + (ad ?? 0) - cp - fo - tr;
+  if (Math.abs(soma - ncg) > NCG_FOLGA_FECHAMENTO) return nao;
+  return {
+    empresa, medida: true, ncg,
+    crAberto: cr, estoque: est, adiantamentos: ad, cpFornecedor: cp, folha30d: fo, tributosAPagar: tr,
+    parcial: est === null, adiantamentoNaoSegregado: ad === null,
+  };
+}
+
+function consolidarNcg(linhas: readonly LinhaComposicaoNcg[]): LinhaComposicaoNcg {
+  if (linhas.length === 0 || linhas.some((l) => !l.medida)) return ncgNaoMedida(null);
+  const soma = (k: 'ncg' | 'crAberto' | 'estoque' | 'adiantamentos' | 'cpFornecedor' | 'folha30d' | 'tributosAPagar') =>
+    linhas.some((l) => l[k] === null) ? null : linhas.reduce((t, l) => t + (l[k] as number), 0);
+  return {
+    empresa: null, medida: true, ncg: soma('ncg'),
+    crAberto: soma('crAberto'), estoque: soma('estoque'), adiantamentos: soma('adiantamentos'),
+    cpFornecedor: soma('cpFornecedor'), folha30d: soma('folha30d'), tributosAPagar: soma('tributosAPagar'),
+    parcial: linhas.some((l) => l.parcial), adiantamentoNaoSegregado: linhas.some((l) => l.adiantamentoNaoSegregado),
+  };
+}
+
+export function composicaoNcgDoEscopo(
+  snapshots: readonly SnapshotEmpresa[] | null,
+  empresas: readonly Company[],
+): { linhas: LinhaComposicaoNcg[]; consolidado: LinhaComposicaoNcg | null; dataReferencia: string | null } {
+  if (!snapshots || empresas.length === 0) return { linhas: [], consolidado: null, dataReferencia: null };
+  const { ultimos, dataCoorte } = ultimosECoorte(snapshots);
+  const linhas = empresas.map((co) => linhaNcgDoSnapshot(ultimos.get(co), co, dataCoorte));
+  return { linhas, consolidado: empresas.length > 1 ? consolidarNcg(linhas) : null, dataReferencia: dataCoorte };
 }

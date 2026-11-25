@@ -4,6 +4,7 @@ import {
   caixaProjetadoDoEscopo,
   cobrancaDoEscopo,
   composicaoMargem,
+  composicaoNcgDoEscopo,
   devedorDaFila,
   empresasDoEscopo,
   linhasPorEmpresa,
@@ -403,5 +404,124 @@ describe('composicaoMargem', () => {
     expect(m({ resultado_provisorio: false, detalhamento: det })).toBeNull();
     expect(m({ resultado_provisorio: true, detalhamento: { fora_dre: { motivo: '  ' } } })).toBeNull();
     expect(m({ resultado_provisorio: true })).toBeNull();
+  });
+});
+
+describe('composicaoNcgDoEscopo', () => {
+  // Números sintéticos. NCG = CR + estoque + adiantamentos − CP fornecedor − folha 30d − tributos.
+  const comp = (o: Partial<Record<string, unknown>> = {}) => ({
+    ncg_cr_aberto: 1000,
+    ncg_estoque: 500,
+    ncg_adiantamentos: 50,
+    ncg_cp_fornecedor: 600,
+    ncg_folha_30d: 100,
+    ncg_tributos_a_pagar: 50,
+    ...o,
+  });
+  const snapNcg = (company: string, ncg: number | null, c: ReturnType<typeof comp> | null | undefined, at = '2026-11-25'): SnapshotEmpresa => ({
+    company,
+    snapshot_at: `${at}T10:10:00Z`,
+    ncg,
+    ncg_completa: true,
+    saldo_tesouraria: null,
+    semanas: [],
+    ...(c === undefined ? {} : { composicao_ncg: c }),
+  });
+  const uma = (s: SnapshotEmpresa) => composicaoNcgDoEscopo([s], ['oben']).linhas[0];
+
+  it('composição medida que fecha com o total: as 6 parcelas e a NCG', () => {
+    expect(uma(snapNcg('oben', 800, comp()))).toEqual({
+      empresa: 'oben', medida: true, ncg: 800,
+      crAberto: 1000, estoque: 500, adiantamentos: 50, cpFornecedor: 600, folha30d: 100, tributosAPagar: 50,
+      parcial: false, adiantamentoNaoSegregado: false,
+    });
+  });
+
+  it('controle: o fechamento aceita a folga de centavos do banco (0,05)', () => {
+    expect(uma(snapNcg('oben', 800.04, comp())).medida).toBe(true);
+  });
+
+  it('CR NULL = não medido: a linha inteira vai "—", mesmo com as outras parcelas gravadas', () => {
+    const l = uma(snapNcg('oben', 800, comp({ ncg_cr_aberto: null })));
+    expect(l.medida).toBe(false);
+    expect([l.ncg, l.crAberto, l.estoque, l.adiantamentos, l.cpFornecedor, l.folha30d, l.tributosAPagar]).toEqual([null, null, null, null, null, null, null]);
+  });
+
+  it('CR presente e estoque NULL = NCG parcial (estoque null, nunca 0)', () => {
+    const l = uma(snapNcg('oben', 300, comp({ ncg_estoque: null })));
+    expect(l).toMatchObject({ medida: true, parcial: true, estoque: null, crAberto: 1000, ncg: 300 });
+  });
+
+  it('adiantamentos NULL com CR presente = "não segregado" (null, nunca 0)', () => {
+    const l = uma(snapNcg('oben', 750, comp({ ncg_adiantamentos: null })));
+    expect(l).toMatchObject({ medida: true, adiantamentoNaoSegregado: true, adiantamentos: null, cpFornecedor: 600 });
+  });
+
+  it('as 6 NULL com o total presente = composição recusada: "—"', () => {
+    const nulas = comp({
+      ncg_cr_aberto: null, ncg_estoque: null, ncg_adiantamentos: null,
+      ncg_cp_fornecedor: null, ncg_folha_30d: null, ncg_tributos_a_pagar: null,
+    });
+    expect(uma(snapNcg('oben', 800, nulas)).medida).toBe(false);
+  });
+
+  it('snapshot anterior à leitura das colunas (campo ausente) = não medido', () => {
+    expect(uma(snapNcg('oben', 800, undefined)).medida).toBe(false);
+    expect(uma(snapNcg('oben', 800, null)).medida).toBe(false);
+  });
+
+  it('composição que NÃO fecha com o total, valor negativo ou não-número = não medido', () => {
+    expect(uma(snapNcg('oben', 900, comp())).medida).toBe(false);
+    expect(uma(snapNcg('oben', 800, comp({ ncg_folha_30d: -100, ncg_cr_aberto: 800 }))).medida).toBe(false);
+    expect(uma(snapNcg('oben', 800, comp({ ncg_cp_fornecedor: '600' }))).medida).toBe(false);
+    expect(uma(snapNcg('oben', null, comp())).medida).toBe(false);
+  });
+
+  it('CR presente mas parcela do PCO NULL (fora do contrato) = não medido', () => {
+    expect(uma(snapNcg('oben', 900, comp({ ncg_tributos_a_pagar: null }))).medida).toBe(false);
+  });
+
+  it('snapshot desatualizado (fora da coorte do KPI) = não medido', () => {
+    const r = composicaoNcgDoEscopo([snapNcg('oben', 800, comp(), '2026-11-24'), snapNcg('colacor', 800, comp())], ['oben', 'colacor']);
+    expect(r.linhas.map((l) => l.medida)).toEqual([false, true]);
+    expect(r.consolidado?.medida).toBe(false);
+    expect(r.dataReferencia).toBe('2026-11-25');
+  });
+
+  it('consolidado soma cada parcela só quando medida nas 3', () => {
+    const r = composicaoNcgDoEscopo(
+      [snapNcg('oben', 800, comp()), snapNcg('colacor', 800, comp()), snapNcg('colacor_sc', 800, comp())],
+      ['oben', 'colacor', 'colacor_sc'],
+    );
+    expect(r.consolidado).toEqual({
+      empresa: null, medida: true, ncg: 2400,
+      crAberto: 3000, estoque: 1500, adiantamentos: 150, cpFornecedor: 1800, folha30d: 300, tributosAPagar: 150,
+      parcial: false, adiantamentoNaoSegregado: false,
+    });
+  });
+
+  it('consolidado com uma empresa parcial: estoque e adiantamento não somam NULL como 0', () => {
+    const r = composicaoNcgDoEscopo(
+      [
+        snapNcg('oben', 800, comp()),
+        snapNcg('colacor', 300, comp({ ncg_estoque: null })),
+        snapNcg('colacor_sc', 750, comp({ ncg_adiantamentos: null })),
+      ],
+      ['oben', 'colacor', 'colacor_sc'],
+    );
+    expect(r.consolidado).toMatchObject({
+      medida: true, parcial: true, estoque: null, adiantamentoNaoSegregado: true, adiantamentos: null,
+      crAberto: 3000, cpFornecedor: 1800, ncg: 1850,
+    });
+  });
+
+  it('consolidado com uma empresa não medida vira "—" inteiro; escopo de 1 empresa não tem consolidado', () => {
+    const r = composicaoNcgDoEscopo(
+      [snapNcg('oben', 800, comp()), snapNcg('colacor', 800, comp({ ncg_cr_aberto: null })), snapNcg('colacor_sc', 800, comp())],
+      ['oben', 'colacor', 'colacor_sc'],
+    );
+    expect(r.consolidado).toMatchObject({ medida: false, ncg: null, crAberto: null });
+    expect(composicaoNcgDoEscopo([snapNcg('oben', 800, comp())], ['oben']).consolidado).toBeNull();
+    expect(composicaoNcgDoEscopo(null, ['oben']).linhas).toEqual([]);
   });
 });
