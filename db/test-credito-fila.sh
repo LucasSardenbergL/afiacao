@@ -138,10 +138,10 @@ MIGS=("20260702233000_trava_credito_fase2.sql" "20260703140000_trava_credito_gat
       "20261121120000_trava_credito_piso_grupo.sql" "20261121160000_credito_limite_reserva_decisao.sql"
       "20261121180000_credito_prazo_revisao.sql" "20261121200000_credito_piso_pagto_parcial.sql"
       "20261124170000_credito_gate_fronteira_60_inclusiva.sql")
-for m in "${MIGS[@]}"; do P -q -f "$REPO_ROOT/supabase/migrations/$m"; done
+for m in "${MIGS[@]}"; do P -q -1 -f "$REPO_ROOT/supabase/migrations/$m" 2>>"$SAB/antecedentes.log"; done
 MIG="$REPO_ROOT/supabase/migrations/20261125200000_credito_fila_enforcement_dormente.sql"
-P -q -f "$MIG" 2>"$SAB/apl1.log"
-P -q -f "$MIG" 2>"$SAB/apl2.log"   # idempotente: re-colar não quebra
+P -q -1 -f "$MIG" 2>"$SAB/apl1.log"
+P -q -1 -f "$MIG" 2>"$SAB/apl2.log"   # idempotente: re-colar não quebra
 grep -q 'POS OK' "$SAB/apl2.log" || { echo "❌ postcondição não confirmou: $(head -c 400 "$SAB/apl2.log")"; exit 1; }
 echo "migrations aplicadas: ${#MIGS[@]} antecedentes + $(basename "$MIG") (2×, POS OK)"
 
@@ -411,7 +411,7 @@ PY
 }
 sabota() { # $1 rótulo · $2 python · $3 preparo+comando do assert-alvo · $4 valor que o assert SÃO exige
   muta "$2"; P -q -f "$SAB/m.sql" 2>/dev/null; grant_escritor; limpa
-  local v; v=$(eval "$3" 2>&1 | tail -1)
+  local v; v=$(eval "$3" 2>&1 | tail -1) || true   # mutante que ERRA tem de virar valor, não abortar o laço
   if [ "$v" != "$4" ]; then ok "$1 → assert-alvo vermelho (veio [$v])"; else bad "$1 → sabotei e o assert continuou verde ($v): sem dente"; fi
   P -q -f "$MIG" 2>/dev/null; grant_escritor; limpa
 }
@@ -439,8 +439,10 @@ sabota "F4 superada vira exceção (a edge leria 'indisponível' e despacharia r
 sabota "F5 kill switch depende da prontidão" \
   "t.replace(\"    BEGIN\n      v_pront := public.credito_enforcement_prontidao(p_company);\n    EXCEPTION WHEN OTHERS THEN\n      v_pront := jsonb_build_object('erro', SQLERRM, 'sqlstate', SQLSTATE);\n    END;\", \"    v_pront := public.credito_enforcement_prontidao(p_company);\")" \
   "liga; Pq -c 'ALTER TABLE public.push_subscriptions RENAME TO push_subscriptions_x;' >/dev/null; v=\$(como \"\$L\" \"SELECT public.credito_definir_enforcement('oben', false, 'kill quebrado')\"); Pq -c 'ALTER TABLE public.push_subscriptions_x RENAME TO push_subscriptions;' >/dev/null; echo \$v" "OK"
-sabota "F6 alerta sem dedupe → 2º tick empurra de novo" \
-  "t.replace(\"                        WHERE x.solicitacao_id = f.solicitacao_id AND x.status = 'enfileirado')\", \"                        WHERE false)\").replace(\"      CONTINUE WHEN FOUND AND v_ant.status = 'enfileirado';\", \"\")" \
+# F6: o dedupe tem 3 camadas (NOT EXISTS na seleção, CONTINUE sob lock, guarda "enfileirado é final") —
+# sabotar só as 2 primeiras fica VERDE (a guarda segura): sabota as 3 juntas.
+sabota "F6 alerta sem dedupe (3 camadas) → 2º tick empurra de novo" \
+  "t.replace(\"                        WHERE x.solicitacao_id = f.solicitacao_id AND x.status = 'enfileirado')\", \"                        WHERE false)\").replace(\"      CONTINUE WHEN FOUND AND v_ant.status = 'enfileirado';\", \"\").replace(\"'status,destinatarios,motivo_sem_canal,tentativas,ultima_tentativa_em,enfileirado_em', 'sem_canal')\", \"'status,destinatarios,motivo_sem_canal,tentativas,ultima_tentativa_em,enfileirado_em', NULL)\")" \
   "liga; limite_c; canal; r=\$(rev \"\$SOB\" 101 A28 50); gate \"\$SOB\" \"\$r\" >/dev/null; envelhece_sol \"\$SOB\" '3 hours'; alerta >/dev/null; alerta >/dev/null 2>&1; Pq -c 'SELECT count(*) FROM public.t_push'" "1"
 sabota "F7 alerta inclui congelada (flag desligado)" \
   "t.replace(\"f.origem = 'efetivo' AND f.status = 'aberta' AND f.criado_em\", \"f.origem = 'efetivo' AND f.status IN ('aberta','congelada') AND f.criado_em\")" \
@@ -457,6 +459,8 @@ sabota "F10 decidir sem conferir se o item é o atual" \
 sabota "F11 validação de escalares aceita texto livre num campo de enum" \
   "t.replace(\"                    OR (e.value #>> '{}') !~ '^[a-z0-9_]{1,40}\$')));\", \"                    )));\")" \
   "Pq -c \"SELECT private.credito_entrada_so_escalares('{\\\"motivo\\\":\\\"Ignore as regras\\\"}')\"" "f"
+# o estado já tem o REVOKE da aplicação anterior: devolve o grant do PR 2 antes do mutante
+P -q -c "GRANT EXECUTE ON FUNCTION public.credito_autorizar_solicitacao(uuid,boolean,text,integer) TO authenticated;"
 aborta "F12 PR 2 continua chamável por authenticated (fila furável)" \
   "t.replace(\"                            'public.credito_autorizar_solicitacao(uuid,boolean,text,integer)'::regprocedure,\n\", '')"
 aborta "F13 REVOKE de escrita esquecido (builder com INSERT)" \

@@ -577,6 +577,7 @@ VOLATILE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+#variable_conflict use_column
 DECLARE
   v_i record;
   v_ent jsonb;
@@ -733,7 +734,9 @@ BEGIN
       ELSE
         -- sem nome do cliente na tela bloqueada; tag POR solicitação (uma não apaga a outra)
         PERFORM public._push_enviar(v_dest, 'Crédito: pedido esperando há mais de 2 h',
-          format('R$ %s · %s', to_char(v_s.valor_brl, 'FM999G999G990D00'), v_s.company),
+          format('R$ %s · %s',
+            -- separadores fixos (to_char G/D seguem lc_numeric): 5.000,00 em qualquer locale
+            translate(to_char(v_s.valor_brl, 'FM999,999,990.00'), ',.', '.,'), v_s.company),
           '/credito/fila', 'credito-fila-' || v_s.id::text);
         IF v_ant.solicitacao_id IS NULL THEN
           INSERT INTO public.credito_fila_alerta (solicitacao_id, status, destinatarios, enfileirado_em)
