@@ -344,3 +344,23 @@ app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; fr
 'retirada'). `orders` está vazia em prod. Falsificação 16/16 vermelha (8 sabotagens × `C` e
 `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
 Deno (a edge inteira não é importável no teste).
+
+**PR 2.5 — reenvio honesto, parte das edges** (edges `omie-vendas-sync` v1.48 e `omie-sync` v1.18;
+o front fica para depois do #4138, que toca os mesmos arquivos). (A) O reenvio que bate duplicata
+vincula o PV da tentativa anterior e só comparava SKU e quantidade: a data prometida trocada saía
+como sucesso. `compararPrevisaoEntregaPv` (`_shared/atp-pv-omie.ts`) confere
+`frete.previsao_entrega` — na doc do Omie é string10 SEM formato documentado, e não há
+ConsultarPedido real em prod (0 `sales_orders` com `omie_response.consulta`). Régua fail-closed:
+campo ausente = não conferível (nunca "igual"), vazio = PV sem data, data legível compara o DIA. Data
+divergente ou não conferível LANÇA depois do write-back, com "a previsão de entrega no Omie ficou
+DD/MM/AAAA". O `omie_payload` gravava o payload que o Omie RECUSOU como duplicata; passa a gravar o PV
+que o Omie tem (`pedido_venda_produto` da consulta, mesma forma; `null` sem forma legível, como na
+reconciliação pela exclusão), no write-back atômico e no legado. (B) No reenvio que reconcilia a OS,
+o upsert `ignoreDuplicates` de `orders` mantinha o endereço/turno da tentativa anterior.
+`decidirAtualizacaoLocalOs` (`omie-sync/reenvio-os-local.ts`) regrava só local, só em
+`pedido_recebido` (guard também no WHERE do UPDATE), e devolve `aviso_local`; em outra etapa NÃO
+regrava e avisa. Endereço/turno seguem FORA da assinatura da OS: o id do #4138 não muda. `orders`
+segue vazia em prod; os triggers de `orders` só agem em mudança de status. Falsificação 18/18
+vermelha (9 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacunas: o front
+ainda não mostra o `aviso_local`, e o ramo skip do front (`pvReconciliadoConfere`) não compara a data;
+os dois entram depois do #4138.
