@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Package, Printer, Search, Loader2, UserRound } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Plus, Package, Printer, Search, Loader2, UserRound, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPrecoOuAusente } from '@/lib/format';
 import { type Account } from './types';
@@ -198,14 +201,30 @@ export function SalesOrdersToolbar({
 export function SalesOrdersAcoes({ onNavigate }: { onNavigate: (path: string) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <Button variant="outline" size="sm" onClick={() => onNavigate('/sales/products')} className="gap-1.5">
+      <Button variant="outline" size="sm" onClick={() => onNavigate('/sales/products')} className="hidden gap-1.5 md:inline-flex">
         <Package className="w-4 h-4" />
         Catálogo
       </Button>
-      <Button variant="outline" size="sm" onClick={() => onNavigate('/sales/print')} className="gap-1.5">
+      <Button variant="outline" size="sm" onClick={() => onNavigate('/sales/print')} className="hidden gap-1.5 md:inline-flex">
         <Printer className="w-4 h-4" />
         Imprimir
       </Button>
+      {/* No celular as secundárias cabem num "⋯": o título não disputa a largura com dois botões. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="icon" className="h-8 w-8 md:hidden" aria-label="Mais ações de pedidos">
+            <MoreHorizontal className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => onNavigate('/sales/products')}>
+            <Package className="mr-2 h-3.5 w-3.5" /> Catálogo
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onNavigate('/sales/print')}>
+            <Printer className="mr-2 h-3.5 w-3.5" /> Imprimir
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {/* No celular o "Novo pedido" mora no botão fixo do rodapé (SalesOrders), ao alcance do polegar. */}
       <Button size="sm" onClick={() => onNavigate('/sales/new')} className="hidden gap-1.5 md:inline-flex" aria-keyshortcuts="n">
         <Plus className="w-4 h-4" />

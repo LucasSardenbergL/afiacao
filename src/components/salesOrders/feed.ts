@@ -371,8 +371,11 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
       valor_unitario: precoUtilizavel(i.unitPrice),
       valor_total: totalLinhaOuAusente(i.quantity ?? 1, precoUtilizavel(i.unitPrice)),
     })),
-    subtotal: row.subtotal || row.total || 0,
-    total: row.total || 0,
+    // Sem o `|| 0` final: `orders.subtotal/total` são NOT NULL DEFAULT 0 (conferido em prod), então
+    // ele nunca disparava, e um null futuro sairia R$ 0,00 em vez de "—". O `subtotal || total` fica:
+    // subtotal 0 é o DEFAULT não preenchido (0 linhas hoje com subtotal 0 e total > 0), não "zero".
+    subtotal: row.subtotal || row.total,
+    total: row.total,
     status: row.status,
     omie_numero_pedido: null,
     omie_pedido_id: null,

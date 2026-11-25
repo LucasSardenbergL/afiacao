@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
-import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff, Plus, X as XIcon } from 'lucide-react';
+import { ShoppingCart, Trash2, Loader2, AlertTriangle, WifiOff, Plus, X as XIcon } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { agruparPorDia, chaveDaLinha, decodeHtml, EFEITO_DA_EXCLUSAO, type OrderFeedRow } from '@/components/salesOrders/types';
+import { agruparPorDia, chaveDaLinha, contagemDoDia, decodeHtml, EFEITO_DA_EXCLUSAO, ultimoDiaAberto, type OrderFeedRow } from '@/components/salesOrders/types';
 import { ALCANCE_VAZIO, alcanceDaExclusao, type AlcanceExclusao } from '@/components/salesOrders/alcance-exclusao';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
@@ -137,6 +137,9 @@ const SalesOrders = () => {
   const porValor = ordem === 'valor';
   // O dia de HOJE entra na dependência: o rótulo "Hoje"/"Ontem" vira à meia-noite mesmo com o cache igual.
   const hoje = format(new Date(), 'yyyy-MM-dd');
+  // Dia que as próximas páginas ainda podem engordar: o cabeçalho dele não mostra contagem.
+  const ultimo = orders[orders.length - 1];
+  const limiteAberto = ultimo ? ultimoDiaAberto(ultimo.created_at) : null;
   const grupos = useMemo(
     () => (porValor ? [{ dia: 'valor', rotulo: '', pedidos: orders }] : agruparPorDia(orders, hoje)),
     [porValor, orders, hoje],
@@ -186,9 +189,7 @@ const SalesOrders = () => {
     <div className="max-w-6xl mx-auto space-y-4 pb-24">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" onClick={() => navigate(-1)} aria-label="Voltar">
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
+          {/* Sem seta "Voltar": /sales é página raiz (menu lateral); o navigate(-1) levava a qualquer lugar. */}
           <div className="min-w-0">
             <h1 className="font-display text-2xl leading-tight">Pedidos</h1>
             <p className="text-xs text-muted-foreground">Vendas e afiação das três empresas</p>
@@ -306,7 +307,13 @@ const SalesOrders = () => {
                   // O sticky fica na LINHA (filha direta do grupo): no h2 de dentro ele só grudaria na própria linha.
                   <div role="row" className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
                     <div role="cell" aria-colspan={7}>
-                      <h2 className="text-xs font-medium text-muted-foreground">{grupo.rotulo}</h2>
+                      <h2 className="text-xs font-medium text-muted-foreground">
+                        {grupo.rotulo}
+                        {(() => {
+                          const n = contagemDoDia(grupo, !!hasNextPage, limiteAberto);
+                          return n ? <span className="font-normal"> · {n}</span> : null;
+                        })()}
+                      </h2>
                     </div>
                   </div>
                 )}
