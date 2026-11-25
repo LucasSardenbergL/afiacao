@@ -148,8 +148,19 @@ Régua "ativo atrasado acima de inativo": maior nota stale = 29,82 < menor nota 
 0 violações nos 282 ativos × 427 stale. `sem_historico` (2.123) segue sem nota (NULL, não 0).
 `priority_score_log` do run: os 4 `*_component` = NULL em todas as linhas, notas com 2 casas.
 
-Pendente: estabilidade do top 10 entre dias consecutivos (régua ≥ 8/10) — só mede depois do cron
-de 2026-11-25 06:00 UTC, com a query acima sobre `priority_score_log`.
+**Estabilidade medida (2026-11-25, psql-ro, exit 0):** último run v1.9 de 24/11 (20:58 UTC, recálculo
+manual) contra o cron de 25/11 (06:25 UTC), 709 clientes com nota nos dois. Na `priority_score_log`, a
+última nota de cada cliente por dia, ordenada por nota desc e `customer_user_id`:
+
+| Corte | Iguais entre os dois dias |
+|---|---|
+| top 10 | **10/10** (régua ≥ 8/10) |
+| top 20 | 18/20 |
+| top 100 | 97/100 |
+
+A métrica principal se manteve no cron: 0 stale no top 100, média de 64 dias, 1º ativo no rank 1,
+552 notas distintas. Ressalva: é 1 par de dias, separados por ~9h e sem dia útil inteiro entre eles —
+mede a estabilidade da regra, não a do comportamento de compra.
 
 ## Reserva de reativação no Meu dia (decisão do founder, 2026-11-24)
 
