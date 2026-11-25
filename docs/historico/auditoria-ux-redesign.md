@@ -308,6 +308,26 @@ na entrada; `nPercentual` (33,33/33,33/33,34) divergia do valor rateado → `par
 percentual do valor, saldo na última fecha 100,00. Falsificado uma camada por vez, controle verde na
 mesma invocação.
 
+**PR 2.2 — PV duplicado entre abas: FECHADO sem merge, adiado para a Onda 3** (#4138, decisão do founder
+em 25/11). O P0 era o envelope de envio `{checkoutId, fingerprint, committed}` numa chave FIXA do
+localStorage, com o `checkoutId` sorteado no clique: duas abas, ou um refresh que perdesse o envelope,
+geravam 2 PVs. A ideia central era derivar o id: `SHA-256(nonce do rascunho, itens)`, com o envelope por
+usuário e a reserva feita sob Web Locks. Entre 22 e 25/11 o PR teve 6 versões, e o Codex achou P0 em
+todas: 4 → 4 → 6 → 8 → 7 → 6. A última versão separava o id por conta (Oben, Colacor e OS) e criou 6 P0
+que deixavam o envio PIOR que a main:
+- OS duplicada quando o vendedor muda a quantidade antes de reenviar;
+- reenvio do PV Colacor barrado depois do autocadastro;
+- 2º PV numa conta já confirmada quando o código do cliente é corrigido;
+- id inválido que ainda libera o envio;
+- mesma tinta com dois ids entre abas;
+- cor com `#` que muda o id da outra conta.
+
+**Lição:** idempotência de dinheiro calculada no navegador, com três contas, várias abas e cadastro que
+muda no meio do envio, não fecha. Cada borda corrigida abre outra, porque o navegador não tem uma fonte
+única de verdade. A Onda 3 resolve com o rascunho no servidor: "já enviado" é o ESTADO da linha, e o
+`nonce` é o id dela. Até lá vale a regra da main. Se a série de P0 por rodada não cai, a saída é mudar de
+camada, não fazer a 7ª rodada.
+
 **PR 2.3 — o que vai ao Omie** (edges `omie-vendas-sync` v1.47 e `omie-sync` v1.17, front 1 campo).
 (a) Tinta COM ordem de compra saía SEM a cor no item: `if (ordemCompra) … else if (cor)` — a NF e a
 observação do item (a que a produção lê para tingir) perdiam a cor. `infoAdicionalItem`
