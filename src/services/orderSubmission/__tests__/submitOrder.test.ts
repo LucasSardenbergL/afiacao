@@ -329,6 +329,26 @@ describe('submitOrder', () => {
     expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('antes de criar outra'))).toBe(true);
   });
 
+  it('8.4: invoke da OP que LANÇA (rede caiu no meio) também manda conferir por produto', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-op3',
+      invokeImpl: (body) => {
+        if (body.action === 'criar_ordem_producao') throw new Error('Failed to fetch');
+        return { data: { omie_numero_pedido: '903' }, error: null };
+      },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    const op = r.errors.filter((e) => e.step === 'create_production_order');
+    expect(op).toHaveLength(1);
+    expect(op[0].message).toContain('Failed to fetch');
+    expect(op[0].message).toContain('antes de criar outra');
+  });
+
   it('Modo cliente (autoatendimento): OS de afiação NÃO é bloqueada pelo preflight (cliente sintético code 0)', async () => {
     const { client } = makeSupabase();
     const r = await submitOrder(makeParams({
