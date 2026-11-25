@@ -324,3 +324,16 @@ app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; fr
 'retirada'). `orders` está vazia em prod. Falsificação 16/16 vermelha (8 sabotagens × `C` e
 `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
 Deno (a edge inteira não é importável no teste).
+
+**PR 8.1 — vendedor e crédito falham fechado** (só front · Publish). A validação do vendedor nos
+Omies (`omie-cliente` → `validar_vendedor`) só bloqueava com `consistente === false` E lista
+não vazia; rede/4xx/corpo sem `consistente` caíam em "sem divergência" e o envio seguia — e o
+caminho de envio nem conferia o vendedor (só o `disabled` do botão). Agora 4 estados
+(`validacao-vendedor.ts`: validando · consistente · divergente · indisponível + `nao_verificado`
+para autoatendimento/sem documento, que não bloqueia); só `consistente === true` libera; o guard
+também roda no `submitOrder` antes da trava; "Tentar de novo" revalida sem limpar o carrinho. O
+alerta de crédito que falhava calado agora diz "não foi possível consultar" (não trava a venda: a
+trava de crédito no servidor, `gate-credito.ts`, já é fail-closed). Falsificação 20/20 vermelha
+(10 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna conhecida: a
+EDGE trata conta Omie que falhou como "não encontrada" (fica fora da comparação) — 3 contas
+falhando devolvem `consistente: true`; corrigir exige deploy da `omie-cliente` (Onda 3).
