@@ -57,7 +57,11 @@ export function montarCompartilhamento(
     description: item.descricao,
     quantity: item.quantidade,
     unitPrice: item.valor_unitario,
-    ...(descontoPorItem ? { lineTotal: receitaLiquidaItem(item.valor_unitario, item.quantidade, descontoPorItem[i]) } : {}),
+    // PR 2.4 (Codex #4164, rodada 3): sem desconto, a linha é o `valor_total` GRAVADO (o que o total do
+    // pedido soma) — recalcular q × v dava R$ 3,01 na linha de um orçamento gravado a R$ 3,02.
+    ...(descontoPorItem
+      ? { lineTotal: receitaLiquidaItem(item.valor_unitario, item.quantidade, descontoPorItem[i]) }
+      : typeof item.valor_total === 'number' && Number.isFinite(item.valor_total) ? { lineTotal: item.valor_total } : {}),
   }));
   if (decisao.quebra) {
     const { subtotalBruto, descontoTotal, itensApurados } = decisao;

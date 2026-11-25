@@ -105,7 +105,7 @@ export function subtotalServicosParaExibicao<T extends { quantity: number }>(
 ): number {
   return somaPorLinha(itens, c => {
     const preco = precoServicoParaExibicao(precoDe(c));
-    return preco === null ? 0 : preco * c.quantity;
+    return preco === null ? [0, 0] : [c.quantity, preco];
   });
 }
 

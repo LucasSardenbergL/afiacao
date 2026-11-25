@@ -86,6 +86,8 @@ describe('ReguaPrecoSinal', () => {
     expect(botao.textContent).toMatch(/11,22/);
     fireEvent.click(botao);
     expect(onAplicar).toHaveBeenCalledWith(11.22);
+    // a referência do popover é o MESMO preço — nunca o 11,21 abaixo do piso (Codex #4164, rodada 3)
+    expect(screen.queryByText(/11,21/)).toBeNull();
   });
 });
 

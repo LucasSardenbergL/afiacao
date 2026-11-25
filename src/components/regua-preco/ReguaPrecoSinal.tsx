@@ -57,7 +57,7 @@ export function ReguaPrecoSinal({
     ? pisoOculto
       ? 'abaixo do piso'
       : result.precoReferencia != null ? `MC<0 · piso ${fmt(precoAplicavel!)}` : 'MC<0 · confira custo'
-    : result.precoReferencia != null ? `💰 ${fmt(result.precoReferencia)} (+${pct}%)` : '💰 ⓘ';
+    : result.precoReferencia != null ? `💰 ${fmt(precoAplicavel!)} (+${pct}%)` : '💰 ⓘ';
 
   return (
     <Popover>
@@ -91,7 +91,7 @@ export function ReguaPrecoSinal({
           <>
             {result.precoReferencia != null && (
               <p className="text-muted-foreground">
-                Você: {fmt(precoAtual)}/un · Referência: <span className="font-mono">{fmt(result.precoReferencia)}/un</span>
+                Você: {fmt(precoAtual)}/un · Referência: <span className="font-mono">{fmt(precoAplicavel!)}/un</span>
               </p>
             )}
             {result.recibos.map((r, i) => (

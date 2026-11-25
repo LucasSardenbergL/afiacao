@@ -18,9 +18,10 @@ const pedido = (total: number) => ({ items: ITENS, total });
 
 // A mensagem de sempre: descrição, quantidade e preço do jsonb, SEM a chave `lineTotal` (o share faz
 // quantidade × preço) e sem `quebraDesconto`. `toStrictEqual` reprova a chave presente com undefined.
+// Sem desconto, a linha leva o `valor_total` GRAVADO (PR 2.4) — o que o total do pedido soma.
 const ITENS_COMO_HOJE = [
-  { description: 'BASE METALIZADA', quantity: 1, unitPrice: 460.25 },
-  { description: 'BASE BRANCA', quantity: 2, unitPrice: 584.5 },
+  { description: 'BASE METALIZADA', quantity: 1, unitPrice: 460.25, lineTotal: 460.25 },
+  { description: 'BASE BRANCA', quantity: 2, unitPrice: 584.5, lineTotal: 1169 },
 ];
 const TITULO_AVISO = 'Mensagem do WhatsApp sem as linhas de desconto';
 
@@ -102,4 +103,12 @@ describe('montarCompartilhamento — a régua do cupom na mensagem de WhatsApp',
   it('pedido sem itens no jsonb (null): lista vazia, sem quebrar', () => {
     expect(montarCompartilhamento({ items: null, total: 0 }, { estado: 'nao-se-aplica' })).toStrictEqual({ items: [], aviso: null });
   });
+
+  it('orçamento do front 1,5 × 2,01 gravado a R$ 3,02: a linha da mensagem é 3,02, não a conta crua 3,01 (PR 2.4)', () => {
+    const itens = [{ descricao: 'LIXA', quantidade: 1.5, valor_unitario: 2.01, valor_total: 3.02 }] as unknown as SalesOrder['items'];
+    expect(montarCompartilhamento({ items: itens, total: 3.02 }, { estado: 'nao-se-aplica' }).items).toStrictEqual([
+      { description: 'LIXA', quantity: 1.5, unitPrice: 2.01, lineTotal: 3.02 },
+    ]);
+  });
 });
+

@@ -20,7 +20,7 @@
  * `unit_price === precoNascimento` e os dois nascem daqui, a igualdade continua valendo.
  */
 
-import { emCentavos } from '@/lib/centavos';
+import { emCentavos, totalDaLinha } from '@/lib/centavos';
 
 export const JANELA_ULTIMO_PRATICADO_DIAS = 180;
 
@@ -66,7 +66,7 @@ export function precoPartida(input: PrecoPartidaInput): number {
   // 2) Partida por tier: tabela × mult (só com tier E mult válido E tabela positiva).
   const multValido = mult != null && Number.isFinite(mult) && mult > 0;
   if (tier != null && multValido && tabela > 0) {
-    return emCentavos(tabela * mult);
+    return totalDaLinha(tabela, mult); // produto EXATO (sem o float de tabela * mult)
   }
 
   // 3) Tabela pura (degradação honesta: sem os dados novos, comportamento de hoje).

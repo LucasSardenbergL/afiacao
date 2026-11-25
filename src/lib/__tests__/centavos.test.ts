@@ -35,14 +35,14 @@ describe('total por linha (decisão do founder: como o Omie e o crédito)', () =
       { q: 0.5, v: 0.01 }, // 0,005 → 0,01
       { q: 0.5, v: 0.01 }, // 0,005 → 0,01
     ];
-    expect(somaPorLinha(itens, (i) => i.q * i.v)).toBe(0.02);
+    expect(somaPorLinha(itens, (i) => [i.q, i.v])).toBe(0.02);
     // o fim-só daria 0,01: este é o caso que a regra escolhida decide
     expect(emCentavos(itens.reduce((s, i) => s + i.q * i.v, 0))).toBe(0.01);
   });
 
   it('soma em centavos inteiros: sem resíduo de ponto flutuante', () => {
     const itens = [0.1, 0.2, 0.3].map((v) => ({ q: 1, v }));
-    expect(somaPorLinha(itens, (i) => i.q * i.v)).toBe(0.6);
+    expect(somaPorLinha(itens, (i) => [i.q, i.v])).toBe(0.6);
   });
 
   it('totalDaLinha', () => {
@@ -51,7 +51,7 @@ describe('total por linha (decisão do founder: como o Omie e o crédito)', () =
   });
 
   it('linha NaN contamina o total (o priceGuard barra; nunca vira 0)', () => {
-    expect(somaPorLinha([1, Number.NaN], (x) => x)).toBeNaN();
+    expect(somaPorLinha([1, Number.NaN], (x) => [1, x])).toBeNaN();
   });
 });
 
@@ -87,5 +87,20 @@ describe('sem arredondamento duplo (Codex #4164, rodada 2)', () => {
   it('o ruído binário do meio exato continua subindo (1,005 → 1,01; 2,675 → 2,68)', () => {
     expect(emCentavos(1.005)).toBe(1.01);
     expect(emCentavos(2.675)).toBe(2.68);
+  });
+});
+
+describe('decimal exato — sem N casas fixas (Codex #4164, rodada 3)', () => {
+  it('1,0229 × 1,080262 = 1,1049999998 → 1,10 (9 casas fixas dava 1,11)', () => {
+    expect(totalDaLinha(1.0229, 1.080262)).toBe(1.1);
+  });
+  it('1,5 × 2,01 = 3,015 exato → 3,02 (o float do produto é 3,0149999999999997)', () => {
+    expect(totalDaLinha(1.5, 2.01)).toBe(3.02);
+    expect(somaPorLinha([{ q: 1.5, v: 2.01 }], (i) => [i.q, i.v])).toBe(3.02);
+  });
+  it('notação exponencial e negativos', () => {
+    expect(centavos(1e-7)).toBe(0);
+    expect(centavos(1.5e3)).toBe(150000);
+    expect(centavos(-2.675)).toBe(-268);
   });
 });

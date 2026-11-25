@@ -88,17 +88,17 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
 
   /* ─── Subtotals ─── */
   const obenSubtotal = useMemo(
-    () => somaPorLinha(obenProductItems, c => c.quantity * c.unit_price),
+    () => somaPorLinha(obenProductItems, c => [c.quantity, c.unit_price]),
     [obenProductItems],
   );
   const colacorProdSubtotal = useMemo(
-    () => somaPorLinha(colacorProductItems, c => c.quantity * c.unit_price),
+    () => somaPorLinha(colacorProductItems, c => [c.quantity, c.unit_price]),
     [colacorProductItems],
   );
   const serviceSubtotal = useMemo(() => {
     return somaPorLinha(serviceItems, c => {
       const price = getServicePrice(c);
-      return price !== null ? price * c.quantity : 0;
+      return price !== null ? [c.quantity, price] : [0, 0];
     });
   }, [serviceItems, getServicePrice]);
   // Apresentação (resumo/total na tela): só preço > 0, como a linha. `serviceSubtotal` acima segue

@@ -1,7 +1,11 @@
 /**
- * Centavos no front — a regra do `centavos()` da edge (`omie-vendas-sync/revisao-credito.ts`, que lê 6 casas; aqui 9, ver abaixo) e do
- * `round(q × v, 2)` por linha do crédito: half-up na 2ª casa, via texto decimal (`Math.round(1.005 * 100)`
- * dá 100 por ponto flutuante; aqui dá 101).
+ * Centavos no front — a MESMA conta do `round(q × v, 2)` por linha do gate de crédito (SQL `numeric`):
+ * half-up na 2ª casa sobre o DECIMAL EXATO do número como ele vai no JSON (`String(x)`, a representação
+ * mais curta). A conta é em inteiros (BigInt), então não há ponto flutuante no meio:
+ *   - `1,005` → 1,01 (`Math.round(1.005 * 100)` daria 1,00);
+ *   - `1,5 × 2,01` → 3,02 (em float o produto é 3,0149999999999997);
+ *   - `1,0229 × 1,080262` = 1,1049999998 → 1,10 (ler N casas fixas arredondava duas vezes para 1,11 —
+ *     Codex #4164, rodadas 2 e 3: qualquer N fixo tem um caso assim; o decimal exato não tem).
  *
  * Decisão do founder (2026-11-24, PR 2.4): o preço unitário do produto vive em centavos (inclusive o último
  * praticado que o Omie devolve com 3-4 casas) e o total do pedido é a SOMA DAS LINHAS já arredondadas — como
@@ -9,17 +13,42 @@
  * (`lib/tint`), e arredondar de novo divergiria 1 centavo em x,xx5.
  *
  * Ausente ≠ zero: entrada não finita devolve NaN (o `priceGuard` barra o envio), nunca 0.
+ * (A edge `omie-vendas-sync/revisao-credito.ts` ainda lê 6 casas fixas — follow-up de edge.)
  */
+
+/** Decimal exato de `String(x)`: valor = m × 10^-e. Não finito → null. */
+function decimalDe(x: number): { m: bigint; e: number } | null {
+  if (!Number.isFinite(x)) return null;
+  const [base, expoente] = String(x).toLowerCase().split('e');
+  const negativo = base.startsWith('-');
+  const [inteiro, frac = ''] = (negativo ? base.slice(1) : base).split('.');
+  let m = BigInt(inteiro + frac);
+  let e = frac.length - (expoente ? Number(expoente) : 0);
+  if (e < 0) { m *= 10n ** BigInt(-e); e = 0; }
+  return { m: negativo ? -m : m, e };
+}
+
+/** Centavos inteiros de um decimal exato, half-up (meio para longe do zero, como o `round` do Postgres). */
+function centavosDoDecimal(m: bigint, e: number): number {
+  if (e <= 2) return Number(m * 10n ** BigInt(2 - e));
+  const divisor = 10n ** BigInt(e - 2);
+  const abs = m < 0n ? -m : m;
+  let q = abs / divisor;
+  if ((abs % divisor) * 2n >= divisor) q += 1n;
+  return Number(m < 0n ? -q : q);
+}
 
 /** Inteiro de centavos, half-up (negativo espelhado). Não finito → NaN. */
 export function centavos(x: number): number {
-  if (!Number.isFinite(x)) return Number.NaN;
-  if (x < 0) return -centavos(-x);
-  // 9 casas, não 6 (Codex #4164, rodada 2): com 6, 1,1149996 vira "1,115000" ANTES do half-up e sobe para
-  // 1,12 (arredondamento duplo — o round(numeric, 2) do crédito dá 1,11). 9 casas ainda absorvem o ruído
-  // binário de 1,005 / 2,675 (que precisam virar 1,01 / 2,68) e ficam longe do ULP até ~1e6.
-  const [inteiro, frac] = x.toFixed(9).split('.');
-  return Number(inteiro) * 100 + Number(frac.slice(0, 2)) + (Number(frac[2]) >= 5 ? 1 : 0);
+  const d = decimalDe(x);
+  return d ? centavosDoDecimal(d.m, d.e) : Number.NaN;
+}
+
+/** Centavos inteiros do produto EXATO a × b (sem passar pelo float de `a * b`). Não finito → NaN. */
+function centavosDoProduto(a: number, b: number): number {
+  const da = decimalDe(a);
+  const db = decimalDe(b);
+  return da && db ? centavosDoDecimal(da.m * db.m, da.e + db.e) : Number.NaN;
 }
 
 /** Valor em reais arredondado ao centavo (half-up). Não finito → NaN. */
@@ -28,15 +57,23 @@ export function emCentavos(x: number): number {
   return Number.isNaN(c) ? Number.NaN : c / 100;
 }
 
-/** Total de UMA linha: quantidade × unitário, arredondado ao centavo. */
+/** Total de UMA linha: quantidade × unitário, no produto exato, arredondado ao centavo. Também serve para
+ *  tabela × multiplicador no nascimento do preço. */
 export function totalDaLinha(quantidade: number, unitario: number): number {
-  return emCentavos(quantidade * unitario);
+  const c = centavosDoProduto(quantidade, unitario);
+  return Number.isNaN(c) ? Number.NaN : c / 100;
 }
 
-/** Soma por linha (cada linha já arredondada), somada em centavos inteiros — sem resíduo de ponto flutuante. */
-export function somaPorLinha<T>(itens: ReadonlyArray<T>, linha: (item: T) => number): number {
+/**
+ * Soma por linha: cada linha é `[quantidade, unitário]`, arredondada no produto exato, somada em centavos
+ * inteiros. Recebe o PAR (não o produto já multiplicado) justamente para não passar pelo float de `q * v`.
+ */
+export function somaPorLinha<T>(itens: ReadonlyArray<T>, linha: (item: T) => readonly [number, number]): number {
   let total = 0;
-  for (const it of itens) total += centavos(linha(it));
+  for (const it of itens) {
+    const [q, v] = linha(it);
+    total += centavosDoProduto(q, v);
+  }
   return total / 100;
 }
 
