@@ -75,13 +75,13 @@ export function formatCustomerType(t: string | null | undefined): string {
 export function orderStatusTone(status: string): { className: string; label: string } {
   const s = (status || '').toLowerCase();
   if (['faturado', 'concluido', 'pago', 'entregue'].includes(s)) {
-    return { className: 'bg-status-success-bg text-status-success-bold border-status-success/20', label: status };
+    return { className: 'bg-status-success-bg text-status-success-foreground border-status-success/20', label: status };
   }
   if (['cancelado', 'recusado', 'erro'].includes(s)) {
-    return { className: 'bg-status-error-bg text-status-error-bold border-status-error/20', label: status };
+    return { className: 'bg-status-error-bg text-status-error-foreground border-status-error/20', label: status };
   }
   if (['pendente', 'aguardando', 'em_analise'].includes(s)) {
-    return { className: 'bg-status-warning-bg text-status-warning-bold border-status-warning/20', label: status };
+    return { className: 'bg-status-warning-bg text-status-warning-foreground border-status-warning/20', label: status };
   }
   return { className: 'text-muted-foreground', label: status };
 }
@@ -172,9 +172,9 @@ export function churnTone(risk: number | null): { label: string; className: stri
     return { label: '—', className: 'text-muted-foreground' };
   }
   const label = `${risk.toFixed(0)}% risco churn`;
-  if (risk >= 70) return { label, className: 'text-status-error-bold' };
-  if (risk >= 40) return { label, className: 'text-status-warning-bold' };
-  return { label, className: 'text-status-success-bold' };
+  if (risk >= 70) return { label, className: 'text-status-error-foreground' };
+  if (risk >= 40) return { label, className: 'text-status-warning-foreground' };
+  return { label, className: 'text-status-success-foreground' };
 }
 
 /**
@@ -194,12 +194,12 @@ export const MARGEM_ATENCAO_MIN = 30;
 /** Faixa e cor do badge. Recebe só margem CONHECIDA — null não é faixa (o caller não renderiza). */
 export function margemTone(pct: number): { faixa: 'boa' | 'atencao' | 'baixa'; className: string } {
   if (pct >= MARGEM_BOA_MIN) {
-    return { faixa: 'boa', className: 'bg-status-success-bg text-status-success-bold border-status-success/20' };
+    return { faixa: 'boa', className: 'bg-status-success-bg text-status-success-foreground border-status-success/20' };
   }
   if (pct >= MARGEM_ATENCAO_MIN) {
-    return { faixa: 'atencao', className: 'bg-status-warning-bg text-status-warning-bold border-status-warning/20' };
+    return { faixa: 'atencao', className: 'bg-status-warning-bg text-status-warning-foreground border-status-warning/20' };
   }
-  return { faixa: 'baixa', className: 'bg-status-error-bg text-status-error-bold border-status-error/20' };
+  return { faixa: 'baixa', className: 'bg-status-error-bg text-status-error-foreground border-status-error/20' };
 }
 
 export function formatDocument(doc: string): string {

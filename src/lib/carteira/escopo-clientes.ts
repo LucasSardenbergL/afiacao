@@ -124,10 +124,10 @@ export function ownersAtivosDoAlvo(
   return [alvoId, ...cobertos];
 }
 
-export const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
 /** Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
  *  posse direta + carteiras que o alvo cobre (ativas e dentro da validade). */
-export async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
+async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
   const { data: cov, error: covErr } = await supabase
     .from('carteira_coverage')
     .select('covered_user_id, valid_until')
@@ -143,7 +143,7 @@ export async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
  * puro capa em 1000. `ownerFilter` null = confia na RLS (`carteira_visivel_para`: carteira própria +
  * cobertura); com lista, recorta pelos donos. Página com erro LANÇA (carteira parcial trocaria o escopo).
  */
-export async function fetchAssignmentsElegiveis(
+async function fetchAssignmentsElegiveis(
   ownerFilter: string[] | null,
   rotulo: string,
 ): Promise<{ customer_user_id: string; owner_user_id: string }[]> {
