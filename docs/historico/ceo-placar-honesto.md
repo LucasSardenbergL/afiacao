@@ -125,13 +125,24 @@ coorte do KPI (`ultimosECoorte`, agora compartilhado com o caixa de 13 semanas).
 - **Os 4 sabores na tela.** CR NULL (pré-v2.5 ou composição recusada, as 6 NULL) → linha inteira
   "—". Estoque NULL com o CR presente → "sem fonte" e NCG "parcial". Adiantamentos NULL com o CR
   presente → "no CP" (não segregado). Qualquer outra incoerência (PCO NULL, negativo, não-número,
-  Σ ≠ total além de 0,05) → "—". Nenhum snapshot medido → o card diz "composição ainda não medida".
+  Σ ≠ total além de 0,05) → "—". Nenhum snapshot medido → o card diz "composição não medida neste snapshot".
 - **Consolidado:** cada parcela só soma medida em todas as empresas; uma empresa não medida anula a
   linha do grupo.
 - **Lição da falsificação:** o caso "CR NULL" passava mesmo com a regra do CR sabotada, porque o
   fechamento também quebrava (CR NULL deixava a soma longe do total). Foi preciso um caso em que o
   resto fecha com o total, para a camada do CR ser exercitada sozinha. Controle 13/13 verde e 6
   sabotagens vermelhas na mesma invocação.
+- **Codex** (gpt-6.2-astra, high): nenhum P1. Três ajustes no mesmo PR:
+  - **Fronteira do fechamento:** o float recusava exatamente R$ 0,05 (1,05 − 1 = 0,050000000000000044); agora há um epsilon.
+  - **Consolidado misto:** mostra "parcial" em vez de "no CP" quando só parte das empresas segrega o adiantamento.
+  - **Mensagem sem medida:** virou "não medida neste snapshot", sem presumir snapshot pré-v2.5.
+- **No ar** ([#4170](https://github.com/LucasSardenbergL/afiacao/pull/4170), merge `497c4bc8`, 2026-11-25):
+  - O `__BUILD_SHA__` servido em steu.lovable.app é o próprio merge.
+  - **Pré-condição:** o snapshot das 10:00–10:10 UTC gravou CR nas 3 empresas.
+  - **QA visual**, escopo "Todas": cabeçalho de dois níveis, 3 empresas + Grupo, Colacor SC "sem fonte" no estoque e NCG "parcial", "no CP" nas 3, link para `/financeiro/capital-giro`, console sem erro.
+- **A conferir no backend (não é bug da tela):**
+  - `ncg_folha_30d` e `ncg_tributos_a_pagar` vieram **0 medido** nas 3 empresas no 1º snapshot.
+  - Não é NULL: a engine afirmou zero. Vale conferir a fonte de folha e de tributos da `fin-cashflow-engine` antes de ler a NCG como completa.
 
 ## Fase 4b — confiança do CMV (engine `omie-financeiro` v1.14, 2026-11-22)
 
