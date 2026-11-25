@@ -161,9 +161,12 @@ CENARIO=esperar_fora_main; semeia "$BASE" x; espera 6 'MECANICA=FORA_DA_MAIN:.*'
 CENARIO=esperar_sha_ruim;  semeia "$BASE" x; espera 6 'MECANICA=SHA_NAO_RESOLVE:.*' deadbeef
 CENARIO=esperar_ar_fora;   semeia "$BASE" x; touch "$F/fora"; espera 6 'MECANICA=AR_ILEGIVEL:.*' "$FRONT"
 # carimbo de um commit que este clone não tem (merge recente): fetch e resolve
-git clone -q "$base/origin.git" "$base/r2" 2>/dev/null
-NOVO=$(cd "$base/r2" && git config user.email t@t && git config user.name t && c src/n.ts novo \
-  && git push -q origin HEAD:refs/heads/main 2>/dev/null)
+# `-b main`: o HEAD do bare segue o init.defaultBranch da máquina (master no CI) — sem isto o r2
+# commita num ramo órfão e o push para main é recusado (non-ff)
+git clone -q -b main "$base/origin.git" "$base/r2" 2>/dev/null
+NOVO=$(cd "$base/r2" && git config user.email t@t && git config user.name t && c src/n.ts novo)
+(cd "$base/r2" && git push -q origin HEAD:refs/heads/main 2>/dev/null) \
+  || { echo "FALHOU [esperar_fetch]: o push do NOVO para o origin falhou"; fail=1; }
 git rev-parse -q --verify "$NOVO^{commit}" >/dev/null && { echo "FALHOU [esperar_fetch]: o clone já tinha o NOVO"; fail=1; }
 CENARIO=esperar_fetch;   semeia "$NOVO" x; espera 0 "NO_AR=$NOVO" "$FRONT2"
 
