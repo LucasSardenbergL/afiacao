@@ -42,10 +42,12 @@ describe('AlertaCreditoCliente', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('erro na fonte → silêncio (não trava a venda) + track de erro', () => {
-    mockUseAlerta.mockReturnValue({ data: undefined, error: new Error('boom') });
-    const { container } = render(<AlertaCreditoCliente cliente={{ codigo_cliente: 111 }} />);
-    expect(container.firstChild).toBeNull();
+  it('8.1: erro na fonte → aviso "não consultado" (não trava a venda, não finge OK) + track de erro', () => {
+    mockUseAlerta.mockReturnValue({ data: undefined, error: new Error('boom'), refetch: vi.fn() });
+    render(<AlertaCreditoCliente cliente={{ codigo_cliente: 111 }} />);
+    expect(screen.getByTestId('alerta-credito-indisponivel')).toBeTruthy();
+    expect(screen.queryByTestId('alerta-credito-cliente')).toBeNull();
+    expect(screen.getByText(/Não foi possível consultar o crédito/)).toBeTruthy();
     expect(mockTrack).toHaveBeenCalledWith('venda.alerta_credito_erro', expect.objectContaining({ message: 'boom' }));
   });
 

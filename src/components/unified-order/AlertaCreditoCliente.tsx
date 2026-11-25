@@ -17,7 +17,7 @@ import { track } from '@/lib/analytics';
  * Casa por (company, omie_codigo_cliente) — os títulos do Omie não carregam CNPJ.
  */
 export function AlertaCreditoCliente({ cliente }: { cliente: ClienteComCodigos | null | undefined }) {
-  const { data: alerta, error } = useAlertaCreditoCliente(cliente);
+  const { data: alerta, error, refetch } = useAlertaCreditoCliente(cliente);
   const chave = paresDoCliente(cliente)
     .map((p) => `${p.company}:${p.codigo}`)
     .join('|');
@@ -39,7 +39,26 @@ export function AlertaCreditoCliente({ cliente }: { cliente: ClienteComCodigos |
     if (error) track('venda.alerta_credito_erro', { message: error instanceof Error ? error.message : 'erro' });
   }, [error]);
 
-  // Erro na fonte ou sem evidência → silêncio (o alerta informativo não pode travar a venda).
+  // 8.1: erro na fonte NÃO é "cliente sem pendência" — avisa que o crédito não foi conferido aqui.
+  // Não trava a venda: quem segura é a trava de crédito no envio (gate-credito, fail-closed).
+  if (error) {
+    return (
+      <div
+        className="bg-muted border border-border rounded-lg p-3 flex items-start gap-2"
+        data-testid="alerta-credito-indisponivel"
+        role="status"
+      >
+        <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+        <p className="text-xs text-muted-foreground flex-1">
+          Não foi possível consultar o crédito agora. O envio confere de novo no servidor.
+        </p>
+        <button type="button" className="text-xs underline" onClick={() => { void refetch(); }}>
+          Tentar de novo
+        </button>
+      </div>
+    );
+  }
+  // Sem evidência → silêncio (nada de "cliente OK" fabricado).
   if (!alerta) return null;
 
   return (
