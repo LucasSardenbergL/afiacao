@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { lerContatoOperacional } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
@@ -153,13 +154,14 @@ export function useAdminOrderDetail(id: string | undefined) {
       });
       setItemPrices(initialPrices);
 
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('name, document, phone')
-        .eq('user_id', orderData.user_id)
-        .single();
-
-      if (profileData) setProfile(profileData);
+      // Nome = identidade (profiles); documento/telefone pelo contexto OPERACIONAL da OS (onda D:
+      // objeto = esta OS; a leitura fora da carteira fica no ledger).
+      const [{ data: profileData }, contato] = await Promise.all([
+        supabase.from('profiles').select('name').eq('user_id', orderData.user_id).single(),
+        lerContatoOperacional('ordem_servico', [data.id], 'detalhe_os'),
+      ]);
+      const c = contato.get(data.id);
+      if (profileData) setProfile({ ...profileData, document: c?.document ?? null, phone: c?.phone ?? null });
 
       const osCheck = await checkOsExistsInOmie(data.id);
       // `indeterminado` vem ANTES do teste de existência de propósito. A edge devolve

@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { lerContatoNovoPedido } from '@/lib/contato-cliente';
 import type { Json } from '@/integrations/supabase/types';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
@@ -143,21 +145,19 @@ export function useCustomerSelection({
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
 
   /* ─── Addresses (react-query, 5min stale) ─── */
+  // Endereço de entrega (onda D): o próprio cliente lê pela view; staff pelo contexto `novo_pedido`
+  // (objeto = o cliente do pedido em montagem; fora da carteira grava no ledger). Falha LANÇA.
+  const { user: authUser } = useAuth();
   const { data: addresses = [] } = useQuery<AddressData[]>({
-    queryKey: ['customer-addresses', customerUserId],
+    queryKey: ['customer-addresses', customerUserId, authUser?.id],
     enabled: !!customerUserId,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('addresses')
-        .select('*')
-        .eq('user_id', customerUserId!)
-        .order('is_default', { ascending: false });
-      if (error) throw error;
-      return (data || []).map((addr) => ({
-        id: addr.id, label: addr.label, street: addr.street, number: addr.number,
-        complement: addr.complement, neighborhood: addr.neighborhood, city: addr.city,
-        state: addr.state, zipCode: addr.zip_code,
+      const contato = await lerContatoNovoPedido(customerUserId!, customerUserId === authUser?.id, 'novo_pedido');
+      return (contato?.enderecos ?? []).map((addr) => ({
+        id: addr.id, label: addr.label ?? '', street: addr.street ?? '', number: addr.number ?? '',
+        complement: addr.complement, neighborhood: addr.neighborhood ?? '', city: addr.city ?? '',
+        state: addr.state ?? '', zipCode: addr.zip_code ?? '',
       }));
     },
   });

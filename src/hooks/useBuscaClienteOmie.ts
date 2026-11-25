@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
 import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 
@@ -49,9 +50,10 @@ export function useBuscaClienteOmie() {
       const namePat = ilikeContainsPattern(query);
       const { data: localProfiles } = namePat
         ? await supabase.from('profiles')
-          .select('user_id, name, email, phone').ilike('name', namePat).limit(10)
+          .select('user_id, name').ilike('name', namePat).limit(10)
         : { data: null };
-      const local: ClienteBusca[] = (localProfiles || []).map((p) => ({
+      // Telefone/e-mail pela view MASCARADA (onda D).
+      const local: ClienteBusca[] = (await comContatoMascarado(localProfiles || [])).map((p) => ({
         user_id: p.user_id, nome: p.name ?? 'Cliente', documento: null,
         telefone: p.phone ?? null, email: p.email ?? null,
         empresa_omie: null,

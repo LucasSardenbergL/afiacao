@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   AlertTriangle,
@@ -105,10 +106,12 @@ const AdminDemandForecast = () => {
 
       // Buscar perfis dos usuários
       const userIds = [...new Set(toolsData.map(t => t.user_id))];
-      const { data: profilesData } = await supabase
+      const { data: identidades } = await supabase
         .from('profiles')
-        .select('user_id, name, phone, document, is_employee')
+        .select('user_id, name, is_employee')
         .in('user_id', userIds);
+      // Telefone/documento pela view MASCARADA (onda D).
+      const profilesData = await comContatoMascarado(identidades ?? []);
 
       // Filtrar apenas clientes (não funcionários)
       const customerProfiles = profilesData?.filter(p => !p.is_employee) || [];

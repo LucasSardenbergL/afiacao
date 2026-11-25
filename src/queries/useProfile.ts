@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { lerPerfilContato } from '@/lib/contato-cliente';
 
 interface ProfileData {
   name: string;
@@ -19,13 +20,19 @@ export function useProfile(userId: string | undefined) {
   return useQuery({
     queryKey: ['profile', userId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('name, email, phone, document, customer_type, avatar_url, business_hours_open, business_hours_close, lunch_start, lunch_end, preferred_delivery_time')
-        .eq('user_id', userId!)
-        .maybeSingle();
+      // Onda D: e-mail/telefone/documento pela view (self sempre visível; staff na lente "Ver como"
+      // vê mascarado fora da carteira). O resto do perfil segue de profiles.
+      const [{ data, error }, contato] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('name, customer_type, avatar_url, business_hours_open, business_hours_close, lunch_start, lunch_end, preferred_delivery_time')
+          .eq('user_id', userId!)
+          .maybeSingle(),
+        lerPerfilContato(userId!),
+      ]);
       if (error) throw error;
-      return data as ProfileData | null;
+      if (!data) return null;
+      return { ...data, email: contato?.email ?? null, phone: contato?.phone ?? null, document: contato?.document ?? null } as ProfileData;
     },
     enabled: !!userId,
   });
@@ -36,13 +43,12 @@ export function useBasicProfile(userId: string | undefined) {
   return useQuery({
     queryKey: ['profile', 'basic', userId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('name, customer_type, document')
-        .eq('user_id', userId!)
-        .single();
+      const [{ data, error }, contato] = await Promise.all([
+        supabase.from('profiles').select('name, customer_type').eq('user_id', userId!).single(),
+        lerPerfilContato(userId!),
+      ]);
       if (error) throw error;
-      return data as { name: string; customer_type: string | null; document: string | null };
+      return { ...data, document: contato?.document ?? null } as { name: string; customer_type: string | null; document: string | null };
     },
     enabled: !!userId,
   });

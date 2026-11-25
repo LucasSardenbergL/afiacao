@@ -5,6 +5,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { toast } from 'sonner';
 import { decisaoDaLinha } from './borda';
 
@@ -30,10 +31,11 @@ function useCustomerProfiles(customerIds: string[]) {
       if (!customerIds.length) return [];
       const { data, error } = await supabase
         .from('profiles')
-        .select('user_id, name, document, phone, email, customer_type')
+        .select('user_id, name, customer_type')
         .in('user_id', customerIds);
       if (error) throw error;
-      return data ?? [];
+      // Contato pela view MASCARADA (onda D).
+      return comContatoMascarado(data ?? []);
     },
     enabled: customerIds.length > 0,
   });

@@ -49,7 +49,17 @@ function chain(table: string): unknown {
   return c;
 }
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+// Onda D: o documento do cliente vem pela RPC operacional (`novo_pedido`/`proposta_recompra`).
+function rpc(nome: string, args: { p_objeto_ids: string[] }) {
+  chamadas.push({ table: nome, metodos: [['rpc', [args]]] });
+  if (erros[nome]) return Promise.resolve({ data: null, error: erros[nome] });
+  return Promise.resolve({
+    data: args.p_objeto_ids.map((id) => ({ objeto_id: id, customer_user_id: id, via_excecao: false,
+      document: '12345678000190', cnpj: null, phone: null, email: null, enderecos: [] })),
+    error: null,
+  });
+}
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t), rpc } }));
 
 import { usePropostaPreview } from './usePropostaPreview';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
@@ -167,8 +177,9 @@ describe('usePropostaPreview — falha de leitura é ERRO, nunca uma cesta "vazi
   });
 
   // omie_products: sem o lance, `ativos` vazio tirava a cesta inteira ("só SKUs inativos", causa fabricada);
-  // farmer_recommendations: a seção de cross-sell sumia em silêncio; profiles: o envio saía sem documento.
-  it.each(['omie_products', 'farmer_recommendations', 'profiles'])('falha em %s → ERRO, sem proposta', async (tabela) => {
+  // farmer_recommendations: a seção de cross-sell sumia em silêncio; profiles/contato_cliente_operacional:
+  // o envio saía sem nome/documento.
+  it.each(['omie_products', 'farmer_recommendations', 'profiles', 'contato_cliente_operacional'])('falha em %s → ERRO, sem proposta', async (tabela) => {
     erros[tabela] = ERRO_TIMEOUT;
     const { result } = montar();
     await waitFor(() => expect(result.current.isError).toBe(true));

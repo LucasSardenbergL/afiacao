@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { lerContatoOperacional } from '@/lib/contato-cliente';
 import { fetchAllPages } from '@/lib/postgrest';
 import { STATUS_NAO_VENDA, STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { montarCestaRecompra } from '@/lib/whatsapp/cesta-recompra';
@@ -159,11 +160,16 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       }
 
       // 5) nome + documento do cliente + formata
-      const { data: prof, error: profErr } = await supabase
-        .from('profiles').select('name, razao_social, cnpj, document').eq('user_id', customerUserId!).maybeSingle();
-      // nome e documento vão no ENVIO (`documento` do payload): falha não pode virar "cliente sem documento"
+      // Nome = identidade (profiles); documento pelo contexto `novo_pedido`/`proposta_recompra` (onda D:
+      // proposta é de staff; fora da carteira a leitura fica no ledger). Ambos LANÇAM: nome e documento
+      // vão no ENVIO (`documento` do payload) — falha não pode virar "cliente sem documento".
+      const [{ data: prof, error: profErr }, contato] = await Promise.all([
+        supabase.from('profiles').select('name, razao_social').eq('user_id', customerUserId!).maybeSingle(),
+        lerContatoOperacional('novo_pedido', [customerUserId!], 'proposta_recompra'),
+      ]);
       if (profErr) throw profErr;
-      const p = (prof ?? null) as ProfileRow | null;
+      const c = contato.get(customerUserId!);
+      const p = (prof ? { ...prof, cnpj: c?.cnpj ?? null, document: c?.document ?? null } : null) as ProfileRow | null;
       const nomeCliente = p?.razao_social || p?.name || null;
       const documentoCliente = p?.cnpj || p?.document || null;
       const primeiroNome = nomeCliente ? nomeCliente.split(' ')[0] : undefined;

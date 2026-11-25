@@ -224,6 +224,10 @@ const BASELINE = new Map<string, Waiver>([
   ['radar_lista @ src/queries/useRadarLista.ts',
     { tipo: 'estrutural', teto: 200, prova: '`p_limit > 200` → RAISE 22023 e `LIMIT $17` (= p_limit); o hook pede PAGE=50 por página' }],
   // Cmd-K (onda D): o teto é do SERVIDOR — o caller passa p_limite 5 e a função clampa.
+  ['contato_cliente_operacional @ src/lib/contato-cliente.ts',
+    { tipo: 'estrutural', teto: 200, prova: '`IF cardinality(p_objeto_ids) > 200 THEN RAISE 22023` e 1 linha por objeto DISTINTO (20261124180000); o helper manda lotes de LOTE_OPERACIONAL=200' }],
+  ['contato_cliente_operacional @ src/services/orderSubmission/helpers.ts',
+    { tipo: 'estrutural', teto: 1, prova: '`novo_pedido` com 1 id: o servidor recusa >1 cliente por chamada (22023, 20261124180000)' }],
   ['buscar_clientes_global @ src/hooks/useGlobalSearch.ts',
     { tipo: 'estrutural', teto: 20, prova: '`v_lim := least(greatest(coalesce(p_limite, 5), 1), 20)` e `LIMIT v_lim` no único RETURN QUERY (20261124120000/20261124130000)' }],
   ['order_feed_total @ src/components/salesOrders/useSalesOrders.ts',

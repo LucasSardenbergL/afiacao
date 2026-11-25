@@ -11,7 +11,8 @@ export function useCustomerContacts(customerId: string | null) {
     queryFn: async (): Promise<CustomerContact[]> => {
       if (!customerId) return [];
        
-      const { data, error } = await supabase.from('customer_contacts')
+      // Onda D: leitura pela view (só staff, só cliente com contato visível); escrita segue na tabela.
+      const { data, error } = await supabase.from('v_cliente_contatos')
         .select('*')
         .eq('customer_user_id', customerId)
         .order('is_primary', { ascending: false })
