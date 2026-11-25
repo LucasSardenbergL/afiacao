@@ -23,8 +23,8 @@ export function useFarmerTacticalPlan() {
   // lente, o próprio usuário fora). A geração de plano (botões em GerarPlanoCard) é write
   // — bloqueada na lente pelo write-guard + disabled. Fora da lente effectiveUserId === user.id.
   const { effectiveUserId, isImpersonating } = useImpersonation();
-  // Cobertura: o dropdown inclui também os clientes que EU cubro agora (paridade com
-  // useMyCarteiraScores). Fora da lente: [eu, ...cobertos]; na lente: só o alvo.
+  // Cobertura: o dropdown inclui também os clientes que EU cubro agora (fora da lente:
+  // [eu, ...cobertos]; na lente: só o alvo).
   const { coveredIds, coberturaIndisponivel } = useCarteirasQueEuCubro();
   const coveredKey = coveredIds.join(',');
   const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);

@@ -22,7 +22,6 @@ const ALLOWED = new Set([
   'src/hooks/useSinalPositivacao.ts',
   'src/components/farmer/MixGapCard.tsx',
   'src/hooks/useMyVisitSuggestions.ts',
-  'src/hooks/useMyCarteiraScores.ts',
   'src/hooks/useImpersonatedAccessProfile.ts',
   // useMarkMixGapFeedback usa effectiveUserId SÓ na queryKey de leitura/cache;
   // o write (mark_mixgap_feedback) é seller=auth.uid() server-side, sem effectiveUserId.
