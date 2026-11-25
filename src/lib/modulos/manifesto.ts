@@ -998,6 +998,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/build-id.ts",
       "src/lib/erro-mensagem.ts",
       "src/lib/escape-html.ts",
+      // Centavos half-up (PR 2.4): usado pelo carrinho (vendas), pelo resumo do pedido e pelo WhatsApp.
+      "src/lib/centavos.ts",
       // Compartilhado entre `vendas` (useCrossSellEngine) e `farmer-inteligencia`
       // (useBundleEngine) — por isso mora em plataforma, e não num dos dois.
       "src/lib/farmer/**",

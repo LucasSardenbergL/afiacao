@@ -1,5 +1,5 @@
 import type { Product, ProductAccount, ProductCartItem } from './types';
-import { centavos } from '@/lib/pricing/centavos';
+import { centavos } from '@/lib/centavos';
 
 /**
  * NASCIMENTO de um item de produto comum no carrinho — UMA função para TODA via que o cria: a lista

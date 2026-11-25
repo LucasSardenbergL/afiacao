@@ -14,7 +14,7 @@ import type {
 import { fmt, getToolName, PAYMENT_OPTIONS } from '@/hooks/useUnifiedOrder';
 import type { OmieServico } from '@/services/omieService';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
-import { totalDaLinha } from '@/lib/pricing/centavos';
+import { totalDaLinha } from '@/lib/centavos';
 
 interface ServiceItemFormProps {
   customerUserId: string | null;

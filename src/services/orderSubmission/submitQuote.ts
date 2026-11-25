@@ -4,7 +4,7 @@ import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 import { bloqueioTabelaTint } from './tabelaTint';
-import { totalDaLinha } from '@/lib/pricing/centavos';
+import { totalDaLinha } from '@/lib/centavos';
 
 /**
  * Saves cart as quotes (orcamento) — no Omie sync.

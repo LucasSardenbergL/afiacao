@@ -20,7 +20,7 @@
  * `unit_price === precoNascimento` e os dois nascem daqui, a igualdade continua valendo.
  */
 
-import { emCentavos } from './centavos';
+import { emCentavos } from '@/lib/centavos';
 
 export const JANELA_ULTIMO_PRATICADO_DIAS = 180;
 

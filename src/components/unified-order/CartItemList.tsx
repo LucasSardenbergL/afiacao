@@ -28,7 +28,7 @@ import { QuantidadeInput } from './QuantidadeInput';
 import { rotuloTotal } from './rotulo-total';
 import { DescontoCoresPedido } from './DescontoCoresPedido';
 import { fmtPct } from './fmt-pct';
-import { centavoAcima, emCentavos, totalDaLinha } from '@/lib/pricing/centavos';
+import { centavoAcima, emCentavos, totalDaLinha } from '@/lib/centavos';
 
 interface CartItemListProps {
   cart: { length: number };

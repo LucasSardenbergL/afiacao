@@ -11,7 +11,7 @@ import type { DeliveryOption } from '@/types';
 import { findParcelaDesc, getToolName, precoServicoParaExibicao } from './helpers';
 // Impressão sai do app: razão de MEI sem o CPF do titular (M1, 2026-11-11). `razao_fiscal` nunca vem aqui.
 import { razaoSemCpf } from '@/lib/omie/razao-exibicao';
-import { totalDaLinha } from '@/lib/pricing/centavos';
+import { totalDaLinha } from '@/lib/centavos';
 
 interface BuildPrintDataParams {
   customer: OmieCustomer;

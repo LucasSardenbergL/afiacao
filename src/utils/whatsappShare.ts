@@ -1,5 +1,5 @@
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
-import { emCentavos } from '@/lib/pricing/centavos';
+import { emCentavos } from '@/lib/centavos';
 
 /** Total da linha ao centavo (PR 2.4: o mesmo do carrinho e do crédito); ausente segue ausente. */
 const linhaAoCentavo = (v: number | null): number | null => (v === null ? null : emCentavos(v));

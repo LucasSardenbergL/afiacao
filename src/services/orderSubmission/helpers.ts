@@ -6,7 +6,7 @@ import type {
   UserTool,
 } from '@/hooks/unifiedOrder/types';
 import { logger } from '@/lib/logger';
-import { somaPorLinha } from '@/lib/pricing/centavos';
+import { somaPorLinha } from '@/lib/centavos';
 import type { SubmitClient } from './types';
 
 export const getToolName = (t: UserTool): string =>

@@ -30,7 +30,7 @@ import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } fro
 import { assinaturaServicosAfiacao, avisoOsAfiacaoDesatualizada } from './checkout-envelope';
 // O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
 import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
-import { totalDaLinha } from '@/lib/pricing/centavos';
+import { totalDaLinha } from '@/lib/centavos';
 
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {

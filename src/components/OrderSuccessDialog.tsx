@@ -1,5 +1,5 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { totalDaLinha } from '@/lib/pricing/centavos';
+import { totalDaLinha } from '@/lib/centavos';
 import { Button } from '@/components/ui/button';
 import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert, AlertTriangle, Plus } from 'lucide-react';
 import { format } from 'date-fns';

@@ -11,7 +11,7 @@ import type {
 } from '@/hooks/useUnifiedOrder';
 import { nascerItemProduto } from './nascimento-item';
 import { subtotalServicosParaExibicao } from '@/services/orderSubmission/helpers';
-import { emCentavos, somaPorLinha, somarQuantidade } from '@/lib/pricing/centavos';
+import { emCentavos, somaPorLinha, somarQuantidade } from '@/lib/centavos';
 import {
   aplicarDescontoNasCores,
   mesmoDesconto,

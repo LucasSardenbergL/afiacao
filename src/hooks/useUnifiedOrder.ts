@@ -16,7 +16,7 @@ import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection'
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
-import { somarQuantidade } from '@/lib/pricing/centavos';
+import { somarQuantidade } from '@/lib/centavos';
 import { reprecificarNaFronteira } from '@/hooks/unifiedOrder/nascimento-item';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
