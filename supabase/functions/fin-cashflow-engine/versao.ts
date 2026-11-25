@@ -63,7 +63,12 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // Só medida: `ncg`, semanas e saldos IDÊNTICOS. `ncg_cr_aberto` NULL = não medido; com ele presente,
 // `ncg_estoque` NULL = NCG parcial e `ncg_adiantamentos` NULL = não segregado. O INSERT nomeia as colunas:
 // a migration vai ANTES do deploy.
-export const VERSAO = "v2.5-ncg-composicao";
+// v2.5 → v2.6: folha e tributos da NCG pela FONTE certa — família 2.03 (Pessoal, sem config) e 2.06
+// (Impostos e Taxas) do plano Omie; a v2.5 lia tributos de `3.99` (inexistente) e gravou 0 afirmado nas
+// 3 empresas em 25/11. Fonte vazia (nenhum título da família) → composição NÃO medida (6 NULL). O total
+// `ncg` NÃO muda (só reclassifica dentro do PCO); `saldo_tesouraria` passa a descontar a folha 2.03 da
+// janela de 30 d. Sem migration (o CHECK de coerência já aceita as 6 NULL).
+export const VERSAO = "v2.6-ncg-fonte-folha-tributos";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

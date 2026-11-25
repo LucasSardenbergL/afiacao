@@ -28,11 +28,17 @@ const cp = (n: number, venc: string, saldo: number, categoria: string) => ({
   data_emissao: somarDias(HOJE, -10), data_vencimento: venc, data_pagamento: null,
   status_titulo: "A VENCER", categoria_codigo: categoria,
 });
-const CPS = [
+const CPS_PADRAO = [
   cp(1, somarDias(HOJE, 10), 1234.56, "2.05.01"), // fornecedor
-  cp(2, somarDias(HOJE, 12), 300, "3.99.01"),     // tributo a pagar
+  cp(2, somarDias(HOJE, 12), 300, "2.06.01"),     // tributo a pagar (2.06 Impostos e Taxas)
   cp(3, somarDias(HOJE, 5), 70000, "2.10.01"),    // folha no ERP na janela de 30 d (> recorrente)
   cp(4, somarDias(HOJE, 20), 450, "2.03.01"),     // adiantamento a fornecedor (ACO, segregado pela config)
+];
+let CPS: Array<ReturnType<typeof cp>> = CPS_PADRAO;
+/** `folha_categorias_codigos` da config; `[]` = sem config → folha pela família padrão 2.03. */
+let FOLHA_CATS: string[] = ["2.10.01"];
+const EVENTOS_PADRAO = [
+  { id: "rec-folha", descricao: "Folha", valor: 60000, tipo: "saida", categoria_dre: "pessoal", is_folha: true, dia_do_mes: 5, inicio: "2025-01-01", fim: null },
 ];
 const CRS = Array.from({ length: 30 }, (_, i) => ({
   id: uuid(i, 1), saldo: 3000 + i, valor_documento: 3000 + i, valor_recebido: 0,
@@ -43,9 +49,7 @@ const CRS = Array.from({ length: 30 }, (_, i) => ({
 const [anoH, mesH] = HOJE.split("-").map(Number);
 const TABELAS: Record<string, unknown> = {
   fin_contas_correntes: [{ saldo_atual: 150000.25, saldo_data: HOJE }],
-  fin_eventos_recorrentes: [
-    { id: "rec-folha", descricao: "Folha", valor: 60000, tipo: "saida", categoria_dre: "pessoal", is_folha: true, dia_do_mes: 5, inicio: "2025-01-01", fim: null },
-  ],
+  fin_eventos_recorrentes: EVENTOS_PADRAO,
   fin_eventos_eventuais: [],
   fin_estoque_valor: [],
   fin_dre_snapshots: Array.from({ length: 15 }, (_, k) => {
@@ -97,7 +101,7 @@ h.responderForaDoGate(async (req) => {
     if (caminho === "fin_contas_pagar") return paginar(CPS, url);
     if (caminho === "fin_config_cashflow") {
       const sel = url.searchParams.get("select") ?? "";
-      return json([sel.includes("folha_categorias_codigos") ? { folha_categorias_codigos: ["2.10.01"] } : CONFIG]);
+      return json([sel.includes("folha_categorias_codigos") ? { folha_categorias_codigos: FOLHA_CATS } : CONFIG]);
     }
     if (caminho === "fin_alertas") return json([]);
     if (caminho in TABELAS) return json(TABELAS[caminho]);
@@ -119,8 +123,12 @@ h.responderForaDoGate(async (req) => {
 });
 
 const URL_EDGE = `${ENV_TESTE.SUPABASE_URL}/functions/v1/fin-cashflow-engine`;
-async function rodar(estoqueGiro: unknown) {
+type Cenario = { cps?: typeof CPS; folhaCats?: string[]; eventos?: unknown[] };
+async function rodar(estoqueGiro: unknown, cen: Cenario = {}) {
   RPCS.fin_estoque_giro_valor = estoqueGiro;
+  CPS = cen.cps ?? CPS_PADRAO;
+  FOLHA_CATS = cen.folhaCats ?? ["2.10.01"];
+  TABELAS.fin_eventos_recorrentes = cen.eventos ?? EVENTOS_PADRAO;
   snapshots.length = 0;
   h.limpar();
   const res = await handler(new Request(URL_EDGE, {
@@ -136,6 +144,23 @@ async function rodar(estoqueGiro: unknown) {
 
 const COMPLETA = await rodar(ESTOQUE_GIRO);
 const PARCIAL = await rodar(null);
+// Plano de contas REAL do grupo e SEM config de folha (o estado das 3 empresas em 25/11): folha vem da
+// família 2.03 e tributos da 2.06, sem evento recorrente de folha.
+const SEM_CONFIG_CPS = [
+  cp(1, somarDias(HOJE, 10), 1234.56, "2.05.01"), // fornecedor
+  cp(2, somarDias(HOJE, 12), 300, "2.06.99"),     // tributo (DAS)
+  cp(3, somarDias(HOJE, 3), 800, "2.06.01"),      // tributo (ICMS)
+  cp(5, somarDias(HOJE, 6), 7000, "2.03.04"),     // folha no ERP, na janela de 30 d
+  cp(6, somarDias(HOJE, 45), 6500, "2.03.04"),    // folha FORA da janela → segue em cp_fornecedor
+];
+const FONTE_CERTA = await rodar(ESTOQUE_GIRO, { cps: SEM_CONFIG_CPS, folhaCats: [], eventos: [] });
+// Fonte vazia: nenhum título 2.06 na empresa (tributos) / nenhum 2.03 nem recorrente (folha).
+const SEM_TRIBUTO = await rodar(ESTOQUE_GIRO, {
+  cps: SEM_CONFIG_CPS.filter((c) => !c.categoria_codigo.startsWith("2.06")), folhaCats: [], eventos: [],
+});
+const SEM_FOLHA = await rodar(ESTOQUE_GIRO, {
+  cps: SEM_CONFIG_CPS.filter((c) => !c.categoria_codigo.startsWith("2.03")), folhaCats: [], eventos: [],
+});
 
 type NcgResposta = {
   aco: { cr_aberto: number; estoque: number | null; adiantamentos: number };
@@ -151,6 +176,9 @@ const composicao = (s: Record<string, unknown>) => ({
 Deno.test("controle: a coluna ncg (total) do snapshot = ncg.valor da resposta", () => {
   igual(COMPLETA.snapshot.ncg, ncgDe(COMPLETA).valor, "ncg do snapshot (completa)");
   igual(PARCIAL.snapshot.ncg, ncgDe(PARCIAL).valor, "ncg do snapshot (parcial)");
+  for (const [nome, r] of [["fonte certa", FONTE_CERTA], ["sem tributo", SEM_TRIBUTO], ["sem folha", SEM_FOLHA]] as const) {
+    igual(r.snapshot.ncg, ncgDe(r).valor, `ncg do snapshot (${nome})`);
+  }
 });
 
 Deno.test("fixture: a NCG completa tem estoque e a parcial não", () => {
@@ -182,6 +210,7 @@ const BASE = {
   aco: { cr_aberto: 100, estoque: 50 as number | null, adiantamentos: 10 },
   pco: { cp_fornecedor: 40, folha_30d: 20, tributos_a_pagar: 5 },
   valor: 95,
+  fontes: { folha: true, tributos: true },
 };
 const NULAS = {
   ncg_cr_aberto: null, ncg_estoque: null, ncg_adiantamentos: null,
@@ -207,12 +236,12 @@ Deno.test("helper: fora de faixa ou que não fecha → as 6 NULL (não medido)",
     // Achado Codex P1: passa na faixa ANTES de arredondar, vira 1e10 depois — o CHECK (< 1e10) recusaria.
     ["teto após arredondar", {
       aco: { cr_aberto: 0, estoque: 9999999999.999, adiantamentos: 0 },
-      pco: { cp_fornecedor: 0, folha_30d: 0, tributos_a_pagar: 0 }, valor: 9999999999.999,
+      pco: { cp_fornecedor: 0, folha_30d: 0, tributos_a_pagar: 0 }, valor: 9999999999.999, fontes: BASE.fontes,
     }],
     // Achado Codex P2: na fronteira o float aceita 0,05 e o numeric do banco não; o helper recusa antes.
     ["fronteira do fechamento", {
       aco: { cr_aberto: 0.1, estoque: 0.2, adiantamentos: 0 },
-      pco: { cp_fornecedor: 0, folha_30d: 0, tributos_a_pagar: 0 }, valor: 0.35000000000000003,
+      pco: { cp_fornecedor: 0, folha_30d: 0, tributos_a_pagar: 0 }, valor: 0.35000000000000003, fontes: BASE.fontes,
     }],
   ];
   for (const [nome, entrada] of casos) igual(colunasComposicaoNcg(entrada, true), NULAS, `caso ${nome}`);
@@ -224,4 +253,38 @@ Deno.test("helper: sem categoria de adiantamento configurada → ncg_adiantament
     { ncg_cr_aberto: 100, ncg_estoque: 50, ncg_adiantamentos: null, ncg_cp_fornecedor: 40, ncg_folha_30d: 20, ncg_tributos_a_pagar: 5 },
     "não segregado",
   );
+});
+
+// ── Fonte de folha/tributos (incidente: 1º snapshot medido da v2.5, 25/11, folha 0 e tributos 0) ──
+// Linha de base: no código de antes os 3 testes abaixo ficam VERMELHOS — tributos lidos de `3.99`
+// (inexistente) e folha só pela config vazia gravavam 0 afirmado, com os títulos dentro do CP fornecedor.
+Deno.test("sem config de folha: tributos da família 2.06 e folha 2.03 na janela, total da NCG intacto", () => {
+  igual(
+    composicao(FONTE_CERTA.snapshot),
+    { cr_aberto: 90435, estoque: 500000, adiantamentos: 0, cp_fornecedor: 7734.56, folha_30d: 7000, tributos_a_pagar: 1100 },
+    "colunas ncg_* (fonte certa)",
+  );
+  igual(
+    Math.round((FONTE_CERTA.snapshot.ncg as number) * 100),
+    Math.round((90435 + 500000 - 1234.56 - 300 - 800 - 7000 - 6500) * 100),
+    "reclassificar dentro do PCO não muda o total",
+  );
+});
+
+Deno.test("fonte vazia de tributos: composição não medida (6 NULL), nunca tributos 0 afirmado", () => {
+  igual(composicao(SEM_TRIBUTO.snapshot), {
+    cr_aberto: null, estoque: null, adiantamentos: null, cp_fornecedor: null, folha_30d: null, tributos_a_pagar: null,
+  }, "colunas ncg_* (sem tributo)");
+  igual(typeof SEM_TRIBUTO.snapshot.ncg, "number", "o total segue gravado");
+});
+
+Deno.test("fonte vazia de folha (sem 2.03 nem recorrente): composição não medida (6 NULL)", () => {
+  igual(composicao(SEM_FOLHA.snapshot), {
+    cr_aberto: null, estoque: null, adiantamentos: null, cp_fornecedor: null, folha_30d: null, tributos_a_pagar: null,
+  }, "colunas ncg_* (sem folha)");
+});
+
+Deno.test("helper: fonte de folha ou de tributos ausente → as 6 NULL", () => {
+  igual(colunasComposicaoNcg({ ...BASE, fontes: { folha: false, tributos: true } }, true), NULAS, "sem folha");
+  igual(colunasComposicaoNcg({ ...BASE, fontes: { folha: true, tributos: false } }, true), NULAS, "sem tributos");
 });

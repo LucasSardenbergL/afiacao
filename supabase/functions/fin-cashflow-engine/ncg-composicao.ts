@@ -12,6 +12,8 @@
 //   - empresa sem categoria de adiantamento configurada → `ncg_adiantamentos` NULL ("não segregado": o
 //     adiantamento, se houver, está dentro de `ncg_cp_fornecedor`) — nunca um 0 com cara de medido;
 //   - leitor: `ncg_cr_aberto IS NULL` = não medido; só com ele presente o estoque NULL quer dizer parcial.
+//   - folha ou tributos sem FONTE (nenhum título da família 2.03/2.06 na empresa, nem evento recorrente
+//     de folha) → as 6 NULL: a parcela somaria 0 por não achar nada, e o CHECK não aceita só ela NULL;
 //   - composição incoerente (não finita, negativa, acima do teto, ou que não fecha com o total) → as 6
 //     NULL: "não medido" em vez de um número que não bate. O CHECK da tabela espelha isto, então ele
 //     nunca derruba o snapshot.
@@ -30,6 +32,8 @@ export type ComposicaoNcgEntrada = {
   aco: { cr_aberto: number; estoque: number | null; adiantamentos: number };
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number };
   valor: number;
+  /** A fonte enxergou a família (folha 2.03 / tributos 2.06) na empresa? `false` = filtro que não casa. */
+  fontes: { folha: boolean; tributos: boolean };
 };
 
 export type ColunasComposicaoNcg = {
@@ -52,6 +56,13 @@ const valido = (v: number) => Number.isFinite(v) && v >= 0 && v < TETO;
 export function colunasComposicaoNcg(ncg: ComposicaoNcgEntrada, adiantamentoSegregado: boolean): ColunasComposicaoNcg {
   const { cr_aberto, estoque, adiantamentos } = ncg.aco;
   const { cp_fornecedor, folha_30d, tributos_a_pagar } = ncg.pco;
+  // Fonte vazia: folha/tributo somariam 0 por não acharem NENHUM título da família — zero fabricado
+  // (o 1º snapshot da v2.5, 25/11, lia tributos de `3.99`, que não existe). O CHECK de coerência exige
+  // folha e tributos NOT NULL numa linha medida, então "não medido" aqui são as 6 NULL.
+  if (!ncg.fontes.folha || !ncg.fontes.tributos) {
+    console.error("[fin-cashflow] composição da NCG sem fonte de folha/tributos — gravada como não medida");
+    return { ...VAZIO };
+  }
   const obrigatorios = [cr_aberto, adiantamentos, cp_fornecedor, folha_30d, tributos_a_pagar];
   if (!obrigatorios.every(valido) || (estoque !== null && !valido(estoque)) || !Number.isFinite(ncg.valor)) {
     console.error("[fin-cashflow] composição da NCG fora de faixa — gravada como não medida");
