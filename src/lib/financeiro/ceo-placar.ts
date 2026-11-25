@@ -463,12 +463,16 @@ export interface LinhaComposicaoNcg {
   tributosAPagar: number | null;
   /** Estoque sem fonte: a NCG soma só o resto. */
   parcial: boolean;
-  /** Adiantamento sem categoria própria: está dentro do CP fornecedor. */
+  /** Adiantamento sem categoria própria: está dentro do CP fornecedor (no consolidado: em TODAS). */
   adiantamentoNaoSegregado: boolean;
+  /** Só no consolidado: segregado em parte das empresas — a soma some, mas nem tudo está no CP. */
+  adiantamentoSegregacaoParcial: boolean;
 }
 
 /** Folga de fechamento Σ parcelas × `ncg` — a mesma do CHECK do banco (o helper da engine exige 0,04). */
 const NCG_FOLGA_FECHAMENTO = 0.05;
+/** O float do JS erra na fronteira (1,05 − 1 = 0,050000000000000044): 5 centavos exatos têm de passar. */
+const EPSILON_FECHAMENTO = 1e-9;
 const TETO_PARCELA_NCG = 1e10;
 
 /** Parcela lida da coluna: só número finito em [0, teto); NULL/ausente → `null`; o resto → inválida. */
@@ -481,7 +485,7 @@ function ncgNaoMedida(empresa: Company | null): LinhaComposicaoNcg {
   return {
     empresa, medida: false, ncg: null,
     crAberto: null, estoque: null, adiantamentos: null, cpFornecedor: null, folha30d: null, tributosAPagar: null,
-    parcial: false, adiantamentoNaoSegregado: false,
+    parcial: false, adiantamentoNaoSegregado: false, adiantamentoSegregacaoParcial: false,
   };
 }
 
@@ -501,11 +505,11 @@ function linhaNcgDoSnapshot(s: SnapshotEmpresa | undefined, empresa: Company, da
   if (cp === null || cp === 'invalida' || fo === null || fo === 'invalida' || tr === null || tr === 'invalida') return nao;
   // O fechamento só confere a coerência: estoque/adiantamento NULL ficam fora da soma, não viram 0 na tela.
   const soma = cr + (est ?? 0) + (ad ?? 0) - cp - fo - tr;
-  if (Math.abs(soma - ncg) > NCG_FOLGA_FECHAMENTO) return nao;
+  if (Math.abs(soma - ncg) > NCG_FOLGA_FECHAMENTO + EPSILON_FECHAMENTO) return nao;
   return {
     empresa, medida: true, ncg,
     crAberto: cr, estoque: est, adiantamentos: ad, cpFornecedor: cp, folha30d: fo, tributosAPagar: tr,
-    parcial: est === null, adiantamentoNaoSegregado: ad === null,
+    parcial: est === null, adiantamentoNaoSegregado: ad === null, adiantamentoSegregacaoParcial: false,
   };
 }
 
@@ -517,7 +521,10 @@ function consolidarNcg(linhas: readonly LinhaComposicaoNcg[]): LinhaComposicaoNc
     empresa: null, medida: true, ncg: soma('ncg'),
     crAberto: soma('crAberto'), estoque: soma('estoque'), adiantamentos: soma('adiantamentos'),
     cpFornecedor: soma('cpFornecedor'), folha30d: soma('folha30d'), tributosAPagar: soma('tributosAPagar'),
-    parcial: linhas.some((l) => l.parcial), adiantamentoNaoSegregado: linhas.some((l) => l.adiantamentoNaoSegregado),
+    parcial: linhas.some((l) => l.parcial),
+    adiantamentoNaoSegregado: linhas.every((l) => l.adiantamentoNaoSegregado),
+    adiantamentoSegregacaoParcial:
+      linhas.some((l) => l.adiantamentoNaoSegregado) && !linhas.every((l) => l.adiantamentoNaoSegregado),
   };
 }
 

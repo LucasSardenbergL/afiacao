@@ -433,12 +433,16 @@ describe('composicaoNcgDoEscopo', () => {
     expect(uma(snapNcg('oben', 800, comp()))).toEqual({
       empresa: 'oben', medida: true, ncg: 800,
       crAberto: 1000, estoque: 500, adiantamentos: 50, cpFornecedor: 600, folha30d: 100, tributosAPagar: 50,
-      parcial: false, adiantamentoNaoSegregado: false,
+      parcial: false, adiantamentoNaoSegregado: false, adiantamentoSegregacaoParcial: false,
     });
   });
 
   it('controle: o fechamento aceita a folga de centavos do banco (0,05)', () => {
     expect(uma(snapNcg('oben', 800.04, comp())).medida).toBe(true);
+    // Fronteira exata em float: 1,05 − 1 = 0,050000000000000044 (achado Codex P2).
+    const zero = { ncg_estoque: 0, ncg_adiantamentos: 0, ncg_cp_fornecedor: 0, ncg_folha_30d: 0, ncg_tributos_a_pagar: 0 };
+    expect(uma(snapNcg('oben', 1.05, comp({ ncg_cr_aberto: 1, ...zero }))).medida).toBe(true);
+    expect(uma(snapNcg('oben', 1.06, comp({ ncg_cr_aberto: 1, ...zero }))).medida).toBe(false);
   });
 
   it('CR NULL = não medido: a linha inteira vai "—", mesmo com as outras parcelas gravadas', () => {
@@ -498,7 +502,7 @@ describe('composicaoNcgDoEscopo', () => {
     expect(r.consolidado).toEqual({
       empresa: null, medida: true, ncg: 2400,
       crAberto: 3000, estoque: 1500, adiantamentos: 150, cpFornecedor: 1800, folha30d: 300, tributosAPagar: 150,
-      parcial: false, adiantamentoNaoSegregado: false,
+      parcial: false, adiantamentoNaoSegregado: false, adiantamentoSegregacaoParcial: false,
     });
   });
 
@@ -512,7 +516,7 @@ describe('composicaoNcgDoEscopo', () => {
       ['oben', 'colacor', 'colacor_sc'],
     );
     expect(r.consolidado).toMatchObject({
-      medida: true, parcial: true, estoque: null, adiantamentoNaoSegregado: true, adiantamentos: null,
+      medida: true, parcial: true, estoque: null, adiantamentoNaoSegregado: false, adiantamentoSegregacaoParcial: true, adiantamentos: null,
       crAberto: 3000, cpFornecedor: 1800, ncg: 1850,
     });
   });

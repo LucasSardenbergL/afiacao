@@ -359,8 +359,12 @@ function LinhaNcg({ l, rotulo }: { l: LinhaNcgCeo; rotulo: string }) {
       <td className="py-1.5 pr-3 text-right">
         <ParcelaNcg
           v={l.adiantamentos}
-          ausencia={m && l.adiantamentoNaoSegregado ? 'no CP' : undefined}
-          dica="Não segregado: sem categoria própria, o adiantamento está dentro do CP fornecedor"
+          ausencia={m && l.adiantamentoNaoSegregado ? 'no CP' : m && l.adiantamentoSegregacaoParcial ? 'parcial' : undefined}
+          dica={
+            l.adiantamentoSegregacaoParcial
+              ? 'Segregação parcial: só parte das empresas separa o adiantamento; nas outras ele está no CP fornecedor'
+              : 'Não segregado: sem categoria própria, o adiantamento está dentro do CP fornecedor'
+          }
         />
       </td>
       <td className="py-1.5 pr-3 text-right"><ParcelaNcg v={l.cpFornecedor} /></td>
@@ -399,7 +403,7 @@ function CardComposicaoNcg({ c, erro, carregando }: { c: ComposicaoNcgCeo; erro:
         <p className="mt-2 text-xs text-muted-foreground">Leitura dos snapshots falhou.</p>
       ) : nenhumaMedida ? (
         <p className="mt-2 text-xs text-muted-foreground">
-          Composição ainda não medida: o snapshot mais recente é anterior à gravação das parcelas da NCG.
+          Composição não medida neste snapshot.
         </p>
       ) : (
         <>
