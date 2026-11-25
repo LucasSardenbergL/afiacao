@@ -445,6 +445,8 @@ describe('composicaoNcgDoEscopo', () => {
     const l = uma(snapNcg('oben', 800, comp({ ncg_cr_aberto: null })));
     expect(l.medida).toBe(false);
     expect([l.ncg, l.crAberto, l.estoque, l.adiantamentos, l.cpFornecedor, l.folha30d, l.tributosAPagar]).toEqual([null, null, null, null, null, null, null]);
+    // Mesmo quando o resto fecha com o total (500 + 50 − 600 − 100 − 50 = −200): CR NULL não é CR 0.
+    expect(uma(snapNcg('oben', -200, comp({ ncg_cr_aberto: null }))).medida).toBe(false);
   });
 
   it('CR presente e estoque NULL = NCG parcial (estoque null, nunca 0)', () => {
