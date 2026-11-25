@@ -7,6 +7,13 @@
 - `useCallBackend()` (`src/hooks/useCallBackend.ts`) retorna WebRTC **incondicionalmente**; `useWebRTCCall` é só `return useWebRTCCallContext()`. O **Nvoip click-to-call foi descontinuado da UI** (`useNvoipCall`/`NvoipDialer` = **código morto**; não há mais toggle de backend em `/settings`). Doc/código que fale em "dois backends + toggle" é histórico.
 - Vendedor liga **direto pelo navegador** (JsSIP + SIP over WebSocket), áudio bidirecional `localStream`/`remoteStream`.
 
+## Estado de uso (piloto desde 2026-11-25)
+
+- Congelada pelo M-41 de 2026-10-12 a 2026-11-25 (20 tentativas em `call_log` entre 28/05 e 09/06, 0 `farmer_calls`). **Descongelada só a telefonia** para piloto com 1 vendedora no único ramal de `vendor_sip_credentials`; WhatsApp/Rota seguem em `rotasCongeladas` do mesmo módulo no manifesto.
+- **Critério de saída do piloto** (Codex): ela escolhe o discador em ≥8 dos últimos 10 contatos, com áudio bilateral, e `call_log`/`farmer_calls` batem com o extrato da Nvoip. Baixa adesão com telefonia funcionando → revisar o fluxo comercial; falha comprovada do provedor → comparar Zenvia/Twilio no mesmo roteiro.
+- Riscos conhecidos antes de ampliar: só STUN público (sem TURN — ramal registra e fica mudo atrás de NAT simétrico); entrante só com aba aberta; **não há gravação de áudio**, só transcrição Deepgram no navegador; entrante atendida transcreve até desconhecido, e a transcrição pode começar antes do fim do aviso LGPD.
+- Staff sem ramal: o Provider monta, `nvoip-sip-creds` devolve 403 e o estado vai a `error` sem toast no boot; o `CallDialerView` mostra o estado de erro com a mensagem da edge ("peça ao master para cadastrar").
+
 ## Fonte ÚNICA da ligação
 
 - `<Dialer/>` (`src/components/call/Dialer.tsx`) renderiza o `WebRTCDialer` (lazy). **Toda ligação passa por `WebRTCCallContext.makeCall`** (+ `acceptIncoming` p/ entrante) — todos os callsites passam por aqui (`AgendaTodayList`, `Telefonia`, `FarmerCalls`). UI compartilhada: `CallDialerView` (`src/components/call/CallDialerView.tsx`).

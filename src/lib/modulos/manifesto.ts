@@ -862,11 +862,15 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/telefonia", "/whatsapp", "/rota", "/admin/route-planner", "/admin/sip-credentials"],
     gates: ["RequireStaff"],
-    status: "congelado",
-    congelamento: {
+    // Telefonia (/telefonia, /admin/sip-credentials) DESCONGELADA em 2026-11-25 para o piloto
+    // com 1 vendedora no ramal Nvoip já cadastrado (decisão Lucas). Sinal de saída do piloto =
+    // call_log + farmer_calls dela vs o extrato da Nvoip. WhatsApp e Rota seguem congelados.
+    status: "ativo",
+    rotasCongeladas: {
+      prefixos: ["/whatsapp", "/rota", "/admin/route-planner"],
       desde: "2026-10-12",
       ate: "2027-01-10",
-      motivo: "0 linha em whatsapp_messages/whatsapp_conversations/farmer_calls/route_visits; call_log parado desde 2026-06-09 (psql-ro 2026-10-12)",
+      motivo: "0 linha em whatsapp_messages/whatsapp_conversations/route_visits (psql-ro 2026-10-12); a telefonia saiu do congelamento em 2026-11-25",
     },
     codigo: [
       "src/lib/call/**",
