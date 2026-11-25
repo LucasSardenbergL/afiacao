@@ -71,7 +71,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/tintImport/queries.ts', 1], // 12:omie_products
   ['src/hooks/dashboard/useEstoqueZone.ts', 1], // 38:nfe_recebimentos
   ['src/hooks/dashboard/useVendasZone.ts', 1], // 47:sales_orders
-  ['src/hooks/useDepartmentsAdmin.ts', 1], // 23:profiles
   ['src/hooks/useExcecaoCredito.ts', 1], // 75:user_roles
   ['src/hooks/usePontoEquilibrio.ts', 2], // 227:fin_categorias 376:fin_categorias
   ['src/hooks/useRoutePlanner.ts', 1], // 333:profiles
@@ -79,12 +78,9 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/AdminApprovals.tsx', 2], // 45:user_roles 52:profiles
   ['src/pages/AdminReposicaoCadastros.tsx', 2], // 65:sku_parametros 279:pedido_compra_sugerido(LIMIT1000)
   ['src/pages/AdminReposicaoPedidos.tsx', 2], // 128:pedido_compra_sugerido 157:pedido_compra_sugerido
-  ['src/pages/AdminVendorSipCredentials.tsx', 1], // 46:profiles
   ['src/pages/ExecutiveDashboard.tsx', 1], // 42:user_roles
   ['src/pages/GovernanceAudit.tsx', 1], // 101:profiles
-  ['src/pages/GovernancePermissions.tsx', 1], // 68:profiles
   ['src/pages/GovernanceSettings.tsx', 1], // 26:user_roles
-  ['src/pages/GovernanceUsers.tsx', 1], // 54:profiles
   ['src/pages/Recebimento.tsx', 1], // 129:nfe_recebimentos
   ['src/pages/SalesPrintDashboard.tsx', 1], // 91:sales_orders
   ['src/pages/SalesQuotes.tsx', 1], // 62:sales_orders

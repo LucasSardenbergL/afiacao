@@ -112,8 +112,15 @@ const Auth = () => {
           customer_type: opts.isIndustrial ? 'industrial' : 'domestic',
           cnae: opts.cnae, is_employee: opts.isEmployee, is_approved: shouldAutoApprove,
         };
-        await supabase.from('profiles').upsert(perfil, { onConflict: 'user_id', ignoreDuplicates: true });
-        await supabase.from('profiles').update(perfil).eq('user_id', signUpData.user.id);
+        const { error: erroCriarPerfil } = await supabase
+          .from('profiles').upsert(perfil, { onConflict: 'user_id', ignoreDuplicates: true });
+        const { error: erroPerfil } = erroCriarPerfil
+          ? { error: erroCriarPerfil }
+          : await supabase.from('profiles').update(perfil).eq('user_id', signUpData.user.id);
+        if (erroPerfil) {
+          toast.error('Conta criada, mas o cadastro não foi salvo', { description: erroPerfil.message });
+          return;
+        }
 
         await supabase.from('addresses').insert({
           user_id: signUpData.user.id, label: 'Principal', street: formData.street,

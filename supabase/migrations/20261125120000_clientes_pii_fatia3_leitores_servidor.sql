@@ -32,6 +32,40 @@
 -- Todo CREATE OR REPLACE VIEW repete o WITH (security_invoker…) — omitir RESETA a opção.
 -- Aplicação: bun run db:aplicar (o EXECUTOR fornece a transação — este arquivo não leva BEGIN/COMMIT).
 
+-- ───────────────────────── v_perfil_contato: contexto e conjunto 1x ─────────────────────────
+-- Mesmas colunas e a MESMA regra da fatia 2 (20261124180000); só o PLANO muda. Em prod (25/11, farmer)
+-- a forma antiga levava ~14 s — inclusive no lote de 150 ids do front: o CTE `ctx` era achatado e
+-- has_role() (SECDEF, não inlinável) rodava POR LINHA no filtro, e clientes_contato_visiveis rodava
+-- 1x POR COLUNA mascarada (5). MATERIALIZED fixa os dois em 1 avaliação: 88 ms / 16.105 linhas, digest
+-- md5 linha a linha IGUAL ao da forma antiga (ensaio com rollback em prod). Esta fatia passa mais
+-- leitores por ela (lista de clientes, Caça, grupo) — sem isto a lista iria de 0,6 s a 8,5 s.
+CREATE OR REPLACE VIEW public.v_perfil_contato WITH (security_invoker = off, security_barrier = true) AS
+ WITH ctx AS MATERIALIZED (
+         SELECT e.uid,
+            COALESCE(public.has_role(e.uid, 'employee'::public.app_role), false)
+              OR COALESCE(public.has_role(e.uid, 'master'::public.app_role), false) AS staff,
+            COALESCE(private.pode_ver_carteira_completa(e.uid), false) AS gestao
+           FROM (SELECT (SELECT auth.uid()) AS uid) e
+          WHERE e.uid IS NOT NULL
+        ), vis AS MATERIALIZED (
+         SELECT x.c
+           FROM private.clientes_contato_visiveis((SELECT auth.uid())) x(c)
+          WHERE x.c IS NOT NULL
+        )
+ SELECT p.user_id,
+    v.visivel AS contato_visivel,
+        CASE WHEN v.visivel THEN p.email ELSE NULL::text END AS email,
+        CASE WHEN v.visivel THEN p.phone ELSE NULL::text END AS phone,
+        CASE WHEN v.visivel THEN p.document ELSE NULL::text END AS document,
+        CASE WHEN v.visivel THEN p.cnpj ELSE NULL::text END AS cnpj,
+    length(regexp_replace(upper(COALESCE(p.document, ''::text)), '[^0-9A-Z]'::text, ''::text, 'g'::text)) = 14 AS eh_pj
+   FROM public.profiles p
+     CROSS JOIN ctx
+     CROSS JOIN LATERAL ( SELECT p.user_id IS NOT NULL
+              AND (p.user_id = ctx.uid
+                   OR ctx.staff AND (ctx.gestao OR p.user_id IN (SELECT vis.c FROM vis))) AS visivel) v
+  WHERE p.user_id = ctx.uid OR ctx.staff;
+
 -- ───────────────────────── chave fiscal interna (private) ─────────────────────────
 CREATE OR REPLACE VIEW private.v_perfil_chaves_internas
 WITH (security_invoker = off, security_barrier = true) AS
@@ -477,7 +511,13 @@ BEGIN
   -- Aliases próprios (uid/nome/…) no CTE: as colunas de saída do RETURNS TABLE são variáveis
   -- plpgsql e colidiriam com p.user_id/p.name (42702 só em RUNTIME — late-bound).
   RETURN QUERY
-  WITH recorte AS (
+  -- MATERIALIZED: a v_perfil_contato é security_barrier e monta o conjunto de visíveis por varredura.
+  -- Em LEFT JOIN direto o plano a re-varre por linha da base (medido em prod, farmer: 8,5 s em toda
+  -- página); materializada 1x vira hash join.
+  WITH vpc AS MATERIALIZED (
+    SELECT c.user_id, c.email, c.phone, c.document FROM public.v_perfil_contato c
+  ),
+  recorte AS (
     SELECT
       p.user_id AS uid, p.name AS nome, vpc.email AS mail, vpc.phone AS fone, vpc.document AS doc,
       p.customer_type AS tipo, p.created_at AS criado, p.requires_po AS exige_po,
@@ -486,7 +526,7 @@ BEGIN
     FROM public.profiles p
     LEFT JOIN public.farmer_client_scores s ON s.customer_user_id = p.user_id
     -- Onda D fatia 3: contato pela fonte MASCARADA (termo que só casa no contato oculto = termo ausente).
-    LEFT JOIN public.v_perfil_contato vpc ON vpc.user_id = p.user_id
+    LEFT JOIN vpc ON vpc.user_id = p.user_id
     WHERE p.is_employee = false
       -- v_busca decide se HÁ busca; o padrão escapado vem do helper (IMMUTABLE: avaliado 1x).
       -- Termo sem conteúdo útil → padrão NULL → ILIKE NULL → nenhuma linha (não "sem filtro").
@@ -625,7 +665,7 @@ BEGIN
       RAISE EXCEPTION 'postcondicao: anon le %', v;
     END IF;
   END LOOP;
-  FOREACH v IN ARRAY ARRAY['private.v_perfil_chaves_internas', 'public.v_perfil_equipe'] LOOP
+  FOREACH v IN ARRAY ARRAY['private.v_perfil_chaves_internas', 'public.v_perfil_equipe', 'public.v_perfil_contato'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = v::regclass
                     AND c.reloptions @> ARRAY['security_invoker=off', 'security_barrier=true']) THEN
       RAISE EXCEPTION 'postcondicao: % sem invoker=off/barrier', v;

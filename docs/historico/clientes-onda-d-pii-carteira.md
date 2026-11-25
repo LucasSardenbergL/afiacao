@@ -91,6 +91,14 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   SECDEF com gate de staff explícito.
 - **3b `20261125130000`:** `REVOKE SELECT` de tabela + `GRANT SELECT` das 21 colunas de identidade (anon e
   authenticated); postcondição confere coluna a coluna.
+- **Achado do ensaio (prod, farmer, rollback):** a `v_perfil_contato` da fatia 2 levava **~14 s**, inclusive no
+  lote de 150 ids do front — o CTE `ctx` era achatado e `has_role()` (SECDEF, não inlinável) rodava POR LINHA,
+  e `clientes_contato_visiveis` 1x por coluna mascarada (5 SubPlans). A medição de 215 ms da fatia 2 não
+  reproduz hoje. A 3a a recria com `ctx` e `vis` `MATERIALIZED`: **88 ms** (lote: 68 ms), digest md5 linha a
+  linha IGUAL (16.105 linhas). Sem isso a `listar_clientes_base` iria de 0,6 s a 8,5 s em toda página.
+  Ensaio por consulta (1 por rodada: o envelope é 1 statement com teto de 300 s, e o bloco inteiro estourava
+  já no estado de hoje por causa da página de candidatos da Caça — pré-existente, igual antes e depois).
+  Harness ganhou A1i (digest da view por persona, 8 personas) e K15 (regra afrouxada → digest do gestor).
 - **Achado do harness:** o `upsert` do signup (`Auth.tsx`, `ON CONFLICT DO UPDATE … EXCLUDED.email`) quebra com
   grant de coluna — o PG exige SELECT na coluna lida pelo `EXCLUDED`. Virou `ignoreDuplicates` + `update`.
   A checagem "documento já cadastrado" do `SignupForm` lia como anon e **nunca disparou** (RLS) — removida.

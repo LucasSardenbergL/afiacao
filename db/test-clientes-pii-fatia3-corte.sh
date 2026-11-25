@@ -135,7 +135,6 @@ SO2=a2000000-0000-0000-0000-0000000000a2 # pedido de C1
 OS1=a3000000-0000-0000-0000-0000000000a3 # OS de afiação de C3
 PT1=a4000000-0000-0000-0000-0000000000a4 # tarefa de picking do SO1
 RV1=a5000000-0000-0000-0000-0000000000a5 # visita agendada (pela F) a C3
-NADA=a9000000-0000-0000-0000-0000000000a9 # objeto inexistente
 E2=e2000000-0000-0000-0000-0000000000e2  # employee por PAPEL, sem a flag is_employee
 EX2=e3000000-0000-0000-0000-0000000000e3 # flag is_employee sem papel
 SO3=a6000000-0000-0000-0000-0000000000a6 # pedido do ALIAS CA
@@ -294,6 +293,8 @@ compr()  { $1 "SELECT count(*)||'|'||coalesce(sum(volume)::text,'(null)') FROM p
 dig_compr() { como_srv "SELECT md5(coalesce(string_agg(t::text, '§' ORDER BY t::text),'')) FROM public.v_caca_compradores t;"; }
 dig_cand()  { como "$1" "SELECT md5(coalesce(string_agg(concat_ws('|',documento,empresa_alvo,cidade_uf,ramo,ticket_faixa,familias::text,compra_em_outra_empresa,ultima_compra_grupo_dias,nome,cliente_user_id), '§' ORDER BY documento, empresa_alvo),'')) FROM public.v_caca_candidatos;"; }
 dig_grupo() { como "$1" "SELECT md5(coalesce(string_agg(t::text, '§' ORDER BY t::text),'')) FROM public.v_grupo_comercial t;"; }
+# v_perfil_contato é RECRIADA pela 3a (só o plano: ctx/visíveis MATERIALIZED) — a linha inteira, por persona.
+dig_vpc()   { como "$1" "SELECT md5(coalesce(string_agg(t::text, '§' ORDER BY t::text),''))||':'||count(*) FROM public.v_perfil_contato t;"; }
 dig_lista() { como "$1" "SELECT md5(coalesce(string_agg(user_id::text||':'||total||':'||coalesce(prioridade_ordenacao::text,'-')||':'||coalesce(nome_ordenacao,'-'), ','),'')) FROM public.listar_clientes_base(NULL, NULL, '$2', 100, 0);"; }
 gcont()  { como "$1" "SELECT coalesce(phone,'(null)')||'|'||coalesce(email,'(null)')||'|'||contato_visivel||'|'||nome FROM public.v_grupo_contatos WHERE user_id='$2';"; }
 lista()  { como "$1" "SELECT coalesce(string_agg(user_id::text||':'||coalesce(email,'(null)'), ',' ORDER BY user_id),'(vazio)') FROM public.listar_clientes_base('$2', NULL, 'nome', 100, 0);"; }
@@ -305,6 +306,7 @@ equipe() { como "$1" "SELECT coalesce(string_agg(user_id::text||':'||coalesce(em
 BASE_FAT_F="$(fat $F)"; BASE_COMPR_SRV="$(compr como_srv)"; BASE_CACA_F="$(cacadoc $F $C3)"
 BASE_DIG_COMPR="$(dig_compr)"; BASE_DIG_CAND_F="$(dig_cand $F)"; BASE_DIG_CAND_B="$(dig_cand $B)"; BASE_DIG_GRUPO_F="$(dig_grupo $F)"
 BASE_DIG_LISTA_F="$(dig_lista $F prioridade)"; BASE_DIG_LISTA_B="$(dig_lista $B nome)"
+for _q in F O K G M B X C1; do printf -v "BASE_DIG_VPC_$_q" '%s' "$(dig_vpc "${!_q}")"; done
 echo "linha de base: fat(F)=$BASE_FAT_F compradores(service_role)=$BASE_COMPR_SRV caca(F,C3)=$BASE_CACA_F"
 [ "$BASE_FAT_F" = "200" ] || bad "L0 fixture: faturamento do grupo (C1+C3) não é 200 (veio $BASE_FAT_F) — a prova abaixo seria de graça"
 [ "${BASE_COMPR_SRV%%|*}" != "0" ] || bad "L0 fixture: service_role não vê compradores — o assert A1 seria de graça"
@@ -326,6 +328,9 @@ suite_a() {
   eq "A1f grupo comercial (farmer): mesma linha inteira" "$(dig_grupo $F)" "$BASE_DIG_GRUPO_F"
   eq "A1g lista (farmer, prioridade): mesmos ids, total e ordem" "$(dig_lista $F prioridade)" "$BASE_DIG_LISTA_F"
   eq "A1h lista (back-office, nome): idem" "$(dig_lista $B nome)" "$BASE_DIG_LISTA_B"
+  for _q in F O K G M B X C1; do
+    _base="BASE_DIG_VPC_$_q"; eq "A1i v_perfil_contato ($_q): mesma linha inteira" "$(dig_vpc "${!_q}")" "${!_base}"
+  done
   eq "A2 grupo: faturamento do grupo NÃO zera para quem está fora da carteira de parte dele" "$(fat $F)" "$BASE_FAT_F"
   eq "A3 Caça: cliente fora da carteira continua na fila (documento é a chave)" "$(cacadoc $F $C3)" "$BASE_CACA_F"
   eq "A4 Caça: telefone fora da carteira vem mascarado" "$(cacafone $F $C3)" "(null)|false"
@@ -494,6 +499,11 @@ restaura
 
 sabota_a 's/SELECT p\.user_id, p\.document, p\.cnpj, p\.phone\n  FROM public\.profiles p/SELECT p.user_id, p.document, p.cnpj, NULL::text AS phone\n  FROM public.profiles p/'
 exige_vermelho "K14 chave interna sem o telefone cru → A1e (opt-out por telefone some)" "$(cacadoc $F $CR)" "0" "2"; restaura
+
+# a v_perfil_contato recriada com a regra AFROUXADA (todo staff como gestão): a farmer passa a ver
+# exatamente o que o gestor vê — o digest por persona tem de pegar, não só "mudou alguma coisa".
+sabota_a 's/OR ctx\.staff AND \(ctx\.gestao OR p\.user_id IN/OR ctx.staff AND (true OR p.user_id IN/'
+exige_vermelho "K15 v_perfil_contato com gestão para todo staff → A1i" "$(dig_vpc $F)" "$BASE_DIG_VPC_F" "$BASE_DIG_VPC_G"; restaura
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
 suite_a
