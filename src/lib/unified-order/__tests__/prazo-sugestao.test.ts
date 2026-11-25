@@ -124,13 +124,17 @@ describe('sugerirParcela — degrau abaixo, nunca inventa condição', () => {
   it('atual não está na lista e sem descrição conhecida → condicao_ilegivel', () => {
     expect(sugerirParcela({ ...base, parcelaAtual: 'ZZZ' })).toEqual({ tipo: 'nenhuma', motivoSistema: 'condicao_ilegivel' });
   });
-  it('vencido há mais de 60 dias → à vista direto (o gate já exige exceção; degrau não cabe)', () => {
-    const s = sugerirParcela({ ...base, diasVencidoMax: 61, parcelaAtual: '003' });
+  it('vencido no 60º dia → à vista direto (o gate bloqueia ≥ 60 d; degrau não cabe)', () => {
+    const s = sugerirParcela({ ...base, diasVencidoMax: 60, parcelaAtual: '003' });
     expect(s.tipo).toBe('degrau');
     if (s.tipo === 'degrau') {
       expect(s.sugerida.codigo).toBe('999');
       expect(s.motivo).toBe('vencido_60d');
     }
+  });
+  it('vencido no 59º dia → ainda é degrau normal, não à vista', () => {
+    const s = sugerirParcela({ ...base, diasVencidoMax: 59, parcelaAtual: '003' });
+    expect(s.tipo === 'degrau' ? s.motivo : s.tipo).not.toBe('vencido_60d');
   });
   it('sem forma à vista e sem forma menor → nenhuma com sem_forma_menor (não fabrica código)', () => {
     const formas: FormaLegivel[] = [{ codigo: '001', descricao: '30 dias' }, { codigo: 'B01', descricao: 'Boleto' }];

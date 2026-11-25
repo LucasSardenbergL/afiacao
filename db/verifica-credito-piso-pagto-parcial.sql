@@ -13,7 +13,7 @@ DECLARE
 BEGIN
   FOR r IN SELECT DISTINCT f.company, f.omie_codigo_cliente
              FROM public.fin_contas_receber f
-            WHERE f.status_titulo = 'PAGTO PARCIAL' AND f.data_vencimento < v_corte LOOP  -- qualquer saldo
+            WHERE f.status_titulo = 'PAGTO PARCIAL' AND f.data_vencimento <= v_corte LOOP  -- qualquer saldo
     g := public.venda_gate_credito_grupo(gen_random_uuid(), r.company, r.omie_codigo_cliente);
     v_pares := v_pares + 1;
     -- IS DISTINCT FROM: resposta sem a chave ({}) dá NULL e NÃO pode passar (Codex diff P2-3)
