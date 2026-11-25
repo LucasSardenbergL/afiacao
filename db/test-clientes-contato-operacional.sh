@@ -406,6 +406,7 @@ exige_vermelho "K5 rua sem máscara → E2" "$(ender $F $C3)" "Joinville/false/(
 sabota 's/   AND \(ctx\.gestao\n        OR cc\.customer_user_id IN/   AND (true\n        OR cc.customer_user_id IN/'
 exige_vermelho "K6 contatos sem filtro de carteira → C2" "$(contatos $F $C3)" "(sem-linha)" "Beto/cc-fone-c3"; restaura
 
+# shellcheck disable=SC2016  # \$1 é do perl, não do shell
 sabota 's/\(ctx\.staff AND \(ctx\.gestao(\s+OR p\.user_id IN)/(ctx.staff AND (false$1/'
 exige_vermelho "K7 perfil sem ramo de gestão → V7" "$(fone $G $C3)" "true|fone-c3" "false|(null)"; restaura
 
@@ -436,6 +437,7 @@ sabota 's/WHERE x\.c IS NOT NULL AND NOT v_gestao/WHERE NOT v_gestao/; s/NOT COA
 P -q -c "DELETE FROM public.contato_acesso_operacional;" >/dev/null; op $F expedicao $PT1 >/dev/null
 exige_vermelho "K14 RPC sem NULL-safety → N2 (PII sai sem ledger)" "$(ledger "WHERE staff_user_id='$F' AND objeto_id='$PT1'")" "1" "0"; restaura
 
+# shellcheck disable=SC2016  # \$1 é do perl, não do shell
 sabota 's/(OR p\.user_id IN \(SELECT x\.c FROM private\.clientes_contato_visiveis\(\(SELECT auth\.uid\(\)\)\) x\(c\)\s+)WHERE x\.c IS NOT NULL\)/$1)/'
 exige_vermelho "K15 view sem NULL-safety → V2" "$(fone $F $C3)" "false|(null)" "(sem-linha)|(null)"; restaura
 

@@ -45,11 +45,11 @@ export default defineTool({
     const sb = supabaseForUser(ctx);
     // Onda D: nome casa em qualquer cliente; documento/e-mail/telefone só casam (e só voltam) onde o
     // contato é visível — o filtro corre na view MASCARADA v_perfil_contato.
-    const predicado = (cols: string[]) => cols.map((c) => `${c}.ilike.%${safe}%`).join(",");
-    const predicadoContato = predicado(["document", "email", "phone"]);
-    const [porNome, porContato] = await Promise.all([
-      sb.from("profiles").select("user_id").or(predicado(["name"])).limit(20),
-      sb.from("v_perfil_contato").select("user_id").or(predicadoContato).limit(20),
+    const predicadoNome = ["name"].map((c) => `${c}.ilike.%${safe}%`).join(",");
+    const predicado = ["document", "email", "phone"].map((c) => `${c}.ilike.%${safe}%`).join(",");
+    const [porContato, porNome] = await Promise.all([
+      sb.from("v_perfil_contato").select("user_id").or(predicado).limit(20),
+      sb.from("profiles").select("user_id").or(predicadoNome).limit(20),
     ]);
     const erro = porNome.error ?? porContato.error;
     if (erro) {
