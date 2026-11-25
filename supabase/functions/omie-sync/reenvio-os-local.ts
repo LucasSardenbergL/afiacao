@@ -2,33 +2,21 @@
 // PURO (zero Deno/DB): provado por `deno test --no-remote supabase/functions/omie-sync/reenvio-os-local_test.ts`.
 //
 // O registro em `orders` é um upsert com `ignoreDuplicates` (PK = orderId): no reenvio que reconcilia
-// a OS ("confere"), `address` e `time_slot` da tentativa ANTERIOR ficavam, e o roteirizador buscava ou
-// entregava no endereço/turno velho sem ninguém saber. Os dois são SÓ LOCAIS (o turno vai ao Omie
-// apenas no texto da observação da OS, que o reenvio não reescreve) e ficam FORA da assinatura da OS
+// a OS ("confere"), `address` e `time_slot` da tentativa ANTERIOR ficam, e o vendedor não sabia que o
+// endereço/turno deste envio não entrou. Os dois são SÓ LOCAIS (o turno vai ao Omie apenas no texto da
+// observação da OS, que o reenvio não reescreve) e ficam FORA da assinatura da OS
 // (`montarAssinaturaOS`/`assinaturaServicosAfiacao`) de propósito: entrar lá mudaria o id da OS.
 //
-// Régua: só atualiza enquanto o pedido está em `pedido_recebido` — dali em diante a coleta/rota já pode
-// ter sido montada com o endereço velho, e trocar por baixo seria pior que avisar. Sempre com aviso.
-// Cortes do Codex r1 do #4174 (P0s nas bordas desta correção):
-//   - só com a MODALIDADE DECLARADA por este envio e igual à gravada: o front anterior ao PR 2.3 não
-//     manda modalidade/turno, e a edge calcularia null e APAGARIA o endereço/turno válidos;
-//   - só os campos que MUDARAM: dois reenvios concorrentes (um troca o endereço, outro o turno) não
-//     desfazem a mudança um do outro regravando o campo que não tocaram.
+// Só AVISA, NÃO regrava (decisão do founder 2026-11-25, depois de 2 rodadas do Codex no #4174 acharem
+// P0 nas bordas da regravação): front antigo sem modalidade e consulta de endereço que falhou no front
+// mandam `null` e apagariam o endereço válido; dois reenvios concorrentes desfaziam a mudança um do
+// outro. Sem escrita, nenhum dos dois existe — o gravado é MANTIDO e o vendedor ajusta no roteiro.
 
 export interface LocalOs {
   address: unknown;
   time_slot: unknown;
-  status?: unknown;
   delivery_option?: unknown;
 }
-
-export type AtualizacaoLocalOs =
-  | { acao: "nada" }
-  | { acao: "atualizar"; campos: { address?: Record<string, string> | null; time_slot?: string | null }; aviso: string }
-  | { acao: "recusar"; aviso: string };
-
-/** Status em que a coleta/rota ainda não foi montada: o único em que o reenvio regrava endereço/turno. */
-export const STATUS_ATUALIZAVEL = "pedido_recebido";
 
 /** JSON com chaves ordenadas: `{a,b}` e `{b,a}` são o mesmo endereço; null/{} distintos de preenchido. */
 function canonico(v: unknown): string {
@@ -41,35 +29,21 @@ function canonico(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** O que fazer com `orders` depois do upsert de uma OS RECONCILIADA. `atual` é a linha lida depois do
- *  upsert (null = não existe); `desejado` sai de `enderecoDaOs`/`turnoDaOs` deste envio, e
- *  `modalidade` é a que ESTE envio declarou (null = não declarou: front antigo ou valor inválido). */
-export function decidirAtualizacaoLocalOs(
+/** Aviso quando o endereço/turno deste envio difere do gravado em `orders` numa OS RECONCILIADA;
+ *  `null` = nada a avisar. `atual` é a linha lida depois do upsert (null = não existe); `desejado` sai de
+ *  `enderecoDaOs`/`turnoDaOs` deste envio; `modalidade` é a que ESTE envio declarou (null = não declarou:
+ *  front antigo ou valor inválido — não há o que comparar). */
+export function avisoEnderecoTurnoOs(
   atual: LocalOs | null,
   desejado: { address: Record<string, string> | null; time_slot: string | null },
   modalidade: string | null,
   cNumOS: string,
-): AtualizacaoLocalOs {
-  if (atual === null) return { acao: "nada" };
-  if (modalidade === null || atual.delivery_option !== modalidade) return { acao: "nada" };
+): string | null {
+  if (atual === null || modalidade === null || atual.delivery_option !== modalidade) return null;
   const mudouEndereco = canonico(atual.address) !== canonico(desejado.address);
   const mudouTurno = canonico(atual.time_slot ?? null) !== canonico(desejado.time_slot);
-  if (!mudouEndereco && !mudouTurno) return { acao: "nada" };
+  if (!mudouEndereco && !mudouTurno) return null;
   const oque = mudouEndereco && mudouTurno ? "o endereço e o turno" : mudouEndereco ? "o endereço" : "o turno";
-  if (atual.status !== STATUS_ATUALIZAVEL) {
-    return {
-      acao: "recusar",
-      aviso: `A OS ${cNumOS} já existia e o pedido está em "${String(atual.status ?? "sem status")}": ` +
-        `${oque} deste envio NÃO foi gravado no app — ajuste a coleta/entrega no roteiro.`,
-    };
-  }
-  return {
-    acao: "atualizar",
-    campos: {
-      ...(mudouEndereco ? { address: desejado.address } : {}),
-      ...(mudouTurno ? { time_slot: desejado.time_slot } : {}),
-    },
-    aviso: `A OS ${cNumOS} já existia: ${oque} deste envio foi atualizado no app (roteirizador). ` +
-      `No Omie a OS não muda${mudouTurno ? " — o turno na observação dela segue o da tentativa anterior" : ""}.`,
-  };
+  return `A OS ${cNumOS} já existia: ${oque} deste envio NÃO entrou — o app manteve o da tentativa anterior ` +
+    `e a OS no Omie não muda. Ajuste a coleta/entrega no roteiro.`;
 }

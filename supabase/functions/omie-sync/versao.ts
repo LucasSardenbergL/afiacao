@@ -55,10 +55,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // v1.17 (2026-11-24) — a OS grava em `orders.delivery_option` a modalidade escolhida no Novo Pedido (`modalidade-os.ts`):
 //   era 'retirada' fixo e nenhuma OS do app entrava no roteirizador. Grava também o endereço e o turno ESCOLHIDOS
 //   (`orders.address`/`time_slot`). Front antigo (sem os campos) segue 'retirada' sem endereço (PR 2.3).
-// v1.18 (2026-11-25) — reenvio que RECONCILIA a OS regrava `orders.address`/`time_slot` deste envio enquanto o pedido
-//   está em `pedido_recebido` (antes o upsert com ignoreDuplicates mantinha os da tentativa anterior em silêncio), e
-//   devolve `aviso_local`; em outra etapa NÃO regrava e avisa. Só com a modalidade DECLARADA pelo envio e igual à gravada
-//   (front antigo não apaga), e só os campos que mudaram (Codex r1 do #4174). Endereço/turno seguem FORA da assinatura da OS (PR 2.5).
+// v1.18 (2026-11-25) — reenvio que RECONCILIA a OS devolve `aviso_local` quando o endereço/turno deste envio difere do
+//   gravado em `orders` (o upsert com ignoreDuplicates mantinha o da tentativa anterior em silêncio). Só AVISA, não
+//   regrava (decisão do founder depois de 2 rodadas do Codex no #4174). Endereço/turno seguem FORA da assinatura (PR 2.5).
 export const VERSAO = "v1.18-reenvio-endereco-turno";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */

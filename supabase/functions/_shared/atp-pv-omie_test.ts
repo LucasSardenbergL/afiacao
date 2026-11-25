@@ -11,6 +11,7 @@ import {
   classificarConsultaExclusao,
   classificarErroConsultaExclusao,
   compararCarrinhoPv,
+  avisoPrevisaoEntregaPv,
   compararPrevisaoEntregaPv,
   edicaoBloqueadaPorPvDivergente,
   payloadDoPvReconciliado,
@@ -197,43 +198,27 @@ Deno.test("previsão: texto ilegível ou dia inexistente = não conferível", ()
   assertEquals(compararPrevisaoEntregaPv("31/02/2026", comFrete({ previsao_entrega: "10/12/2026" })), { estado: "nao_conferivel" }, "enviada ilegível");
 });
 
-Deno.test("aviso: itens iguais e previsão DIVERGENTE LANÇA com a data do Omie", () => {
-  const d = avisoPvReconciliado("igual", { ok: true }, 9401, { estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" });
+Deno.test("previsão: PV sem cabecalho no objeto do frete = não conferível (Codex r2, igual falso)", () => {
+  const soFrete = { pedido_venda_produto: { frete: { previsao_entrega: "10/12/2026" } }, cabecalho: { codigo_pedido: 1 }, frete: { previsao_entrega: "20/12/2026" } };
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", soFrete), { estado: "nao_conferivel" }, "frete sem cabecalho");
+  assertEquals(payloadDoPvReconciliado(soFrete), null, "e o payload também recusa o mesmo objeto");
+});
+
+Deno.test("aviso de previsão: só a divergência PROVADA avisa, com a data do Omie e do envio", () => {
+  const d = avisoPrevisaoEntregaPv({ estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" }, 9401);
   assertMarca(d, "PV 9401", "pid");
-  assertMarca(d, "ficou 05/12/2026", "data do Omie");
+  assertMarca(d, "com previsão de entrega 05/12/2026", "data do Omie");
   assertMarca(d, "(10/12/2026)", "data do envio");
   assertMarca(d, "Corrija a previsão de entrega direto no Omie", "instrução");
-  assertMarca(d, "não reenvie", "não reenvie");
-  const semData = avisoPvReconciliado("igual", { ok: true }, 9402, { estado: "divergente", noOmie: null, enviada: "10/12/2026" });
-  assertMarca(semData, "SEM previsão de entrega", "PV sem data");
+  assertMarca(avisoPrevisaoEntregaPv({ estado: "divergente", noOmie: null, enviada: "10/12/2026" }, 9402), "SEM previsão de entrega", "PV sem data");
+  assertEquals(avisoPrevisaoEntregaPv({ estado: "igual" }, 9403), null, "igual");
+  assertEquals(avisoPrevisaoEntregaPv({ estado: "nao_conferivel" }, 9404), null, "não conferível");
+  assertEquals(avisoPrevisaoEntregaPv(null, 9405), null, "PV não reconciliado");
 });
 
-Deno.test("aviso: previsão NÃO conferível não lança (a OP da Colacor segue, como na main)", () => {
-  assertEquals(avisoPvReconciliado("igual", { ok: true, reserva_ajustada: true }, 9403, { estado: "nao_conferivel" }), null, "igual + não conferível");
-  assertEquals(
-    avisoPvReconciliado("divergente", { ok: true }, 9405, { estado: "nao_conferivel" }),
-    avisoPvReconciliado("divergente", { ok: true }, 9405),
-    "não muda a frase dos itens",
-  );
-});
-
-Deno.test("aviso: itens E data divergentes — uma frase não esconde a outra", () => {
-  const d = avisoPvReconciliado("divergente", { ok: true, ajuste_falhou: "40P01" }, 9404, { estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" });
-  assertMarca(d, "diferentes do carrinho atual", "itens");
-  assertMarca(d, "ficou 05/12/2026", "data");
-  assertMarca(d, "NÃO pôde ser conferida (40P01)", "reserva");
-  assertMarca(d, "Corrija os itens e a previsão de entrega", "instrução");
-  const misto = avisoPvReconciliado("ilegivel", { ok: true }, 9408, { estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" });
-  assertMarca(misto, "Corrija a previsão de entrega e confira os itens direto no Omie", "corrige e confere");
-});
-
-Deno.test("aviso: previsão igual mantém o silêncio e o texto da 3.3", () => {
-  assertEquals(avisoPvReconciliado("igual", { ok: true, reserva_ajustada: true }, 9406, { estado: "igual" }), null, "tudo igual");
-  assertEquals(
-    avisoPvReconciliado("divergente", { ok: true }, 9407, { estado: "igual" }),
-    avisoPvReconciliado("divergente", { ok: true }, 9407),
-    "data igual não muda a frase dos itens",
-  );
+Deno.test("aviso do PV reconciliado (3.3) segue sem saber da data: data divergente com itens iguais NÃO lança", () => {
+  assertEquals(avisoPvReconciliado("igual", { ok: true, reserva_ajustada: true }, 9406), null, "itens iguais");
+  assertEquals(avisoPvReconciliado.length, 3, "a assinatura da 3.3 não ganhou a data");
 });
 
 Deno.test("payload gravado: o PV que o Omie TEM, nunca o recusado", () => {

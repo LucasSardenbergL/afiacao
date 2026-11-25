@@ -12,7 +12,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
 import { enderecoDaOs, MODALIDADE_LEGADA, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
-import { decidirAtualizacaoLocalOs, STATUS_ATUALIZAVEL } from "./reenvio-os-local.ts";
+import { avisoEnderecoTurnoOs } from "./reenvio-os-local.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -1171,41 +1171,23 @@ Deno.serve(async (req) => {
         }
 
         // 3b. Reenvio que RECONCILIOU a OS (PR 2.5): o upsert acima não regrava a linha que já existia,
-        //     e o endereço/turno deste envio se perderia em silêncio. Só local (roteirizador), com aviso
-        //     — ./reenvio-os-local.ts. Falha aqui NÃO derruba o envio (a OS está certa no Omie): vira aviso.
+        //     e o endereço/turno deste envio se perderia em silêncio. Só AVISA (não regrava) —
+        //     ./reenvio-os-local.ts. Falha da leitura NÃO derruba o envio (a OS está certa no Omie): vira aviso.
         let avisoLocal: string | null = null;
         if (osResult.reconciliada) {
           const { data: atual, error: lerErr } = await supabaseAdmin
             .from("orders")
-            .select("address, time_slot, status, delivery_option")
+            .select("address, time_slot, delivery_option")
             .eq("id", orderId)
             .maybeSingle();
-          if (lerErr) {
-            avisoLocal = `A OS ${osResult.cNumOS} já existia e não deu para conferir o endereço/turno gravado no app (${lerErr.message}) — confira no roteiro.`;
-          } else {
-            const decisao = decidirAtualizacaoLocalOs(
+          avisoLocal = lerErr
+            ? `A OS ${osResult.cNumOS} já existia e não deu para conferir o endereço/turno gravado no app (${lerErr.message}) — confira no roteiro.`
+            : avisoEnderecoTurnoOs(
               atual,
               { address: enderecoEnvio, time_slot: turnoEnvio },
               modalidade.valor === MODALIDADE_LEGADA ? null : modalidade.valor,
               osResult.cNumOS,
             );
-            if (decisao.acao === "recusar") {
-              avisoLocal = decisao.aviso;
-            } else if (decisao.acao === "atualizar") {
-              // Guard no WHERE: a etapa pode ter andado entre a leitura e a escrita.
-              const { data: upd, error: updErr } = await supabaseAdmin
-                .from("orders")
-                .update(decisao.campos)
-                .eq("id", orderId)
-                .eq("status", STATUS_ATUALIZAVEL)
-                .select("id");
-              avisoLocal = updErr
-                ? `A OS ${osResult.cNumOS} já existia e o endereço/turno deste envio NÃO pôde ser gravado no app (${updErr.message}) — ajuste no roteiro.`
-                : upd?.length === 1
-                ? decisao.aviso
-                : `A OS ${osResult.cNumOS} já existia e o pedido mudou de etapa durante o envio: o endereço/turno deste envio NÃO foi gravado no app — ajuste no roteiro.`;
-            }
-          }
           if (avisoLocal) console.warn(`[Omie Sync] ${avisoLocal}`);
         }
 

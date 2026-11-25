@@ -20,6 +20,7 @@ import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import {
+  avisoPrevisaoEntregaPv,
   avisoPvReconciliado,
   classificarConsultaExclusao,
   classificarErroConsultaExclusao,
@@ -2393,6 +2394,13 @@ async function criarPedidoVenda(
     payloadGravado = payloadDoPvReconciliado(consulta);
   }
 
+  // PR 2.5: previsão de entrega do PV reconciliado — só AVISA (não lança: lançar pulava a OP da
+  // Colacor). Vai no resultado do criar_pedido; a verdade fica no omie_payload (o PV do Omie).
+  const avisoPrevisao = avisoPrevisaoEntregaPv(comparacaoPrevisao, omie_pedido_id);
+  if (comparacaoPrevisao !== null && comparacaoPrevisao.estado !== "igual" && previsaoEntrega) {
+    console.warn(`[Omie Vendas][${account}] PV ${omie_pedido_id} reconciliado: previsão de entrega ${comparacaoPrevisao.estado} (enviada ${previsaoEntrega})`);
+  }
+
   // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
   // sales_orders E carimba o par (omie_account, omie_pedido_id) nas reservas ativas do pedido
   // NA MESMA TRANSAÇÃO. Esse par é o elo reserva↔PV que sobrevive ao DELETE da linha push
@@ -2436,7 +2444,7 @@ async function criarPedidoVenda(
     if (!wbRows || wbRows.length !== 1) {
       throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
     }
-    return { omie_pedido_id, omie_numero_pedido };
+    return { omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao };
   }
   if (wbError?.code === "P0002") {
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
@@ -2450,16 +2458,12 @@ async function criarPedidoVenda(
   // ATP 3.3 (#1): o PV reconciliado pode ter os itens da tentativa ANTERIOR. A RPC já ajustou a
   // RESERVA a ele (lê o `consulta` dentro do omie_response); aqui o vendedor fica sabendo que o
   // carrinho atual NÃO foi ao Omie. Depois do write-back: o vínculo fica gravado.
-  // PR 2.5: data prometida que não deu para conferir NÃO lança (precisão > recall) — fica a trilha.
-  if (comparacaoPrevisao?.estado === "nao_conferivel" && previsaoEntrega) {
-    console.warn(`[Omie Vendas][${account}] PV ${omie_pedido_id} reconciliado: previsão de entrega não conferível na consulta (enviada ${previsaoEntrega})`);
-  }
   if (comparacaoPv !== null) {
-    const aviso = avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id, comparacaoPrevisao ?? undefined);
+    const aviso = avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id);
     if (aviso) throw new Error(aviso);
   }
 
-  return { omie_pedido_id, omie_numero_pedido };
+  return { omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao };
 }
 
 // ─── Observabilidade do sync em fin_sync_log (best-effort) ───

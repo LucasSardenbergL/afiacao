@@ -59,13 +59,17 @@ export function compararCarrinhoPv(enviados: ItemEnviado[], consulta: unknown): 
 // frete): `previsao_entrega`, string10, "Previsão de entrega do Pedido de Venda", formato NÃO
 // documentado — e não há ConsultarPedido real em prod para conferir (0 `sales_orders` com
 // `omie_response.consulta` em 2026-11-24).
-// Régua (cortada ao núcleo no Codex r1 do #4174 — precisão > recall, money-path §1):
-//   - DIVERGENTE (lança) só com PROVA: este envio leva data legível E o PV traz outra data legível,
-//     ou o campo PRESENTE e vazio (o PV não tem data);
-//   - campo ausente, texto ilegível, ou envio SEM data = NÃO CONFERÍVEL: nunca vira "igual", mas também
-//     não lança — lançar aí pulava a OP da Colacor num pedido que a main concluía (P0 do Codex), e o
-//     envio sem data não afirma nada (a data vencida é descartada antes, e viraria "corrija no Omie");
-//   - comparação e payload gravado leem o MESMO objeto da consulta (`pvDaConsulta`).
+// Régua (cortada ao núcleo em 2 rodadas do Codex no #4174 — precisão > recall, money-path §1):
+//   - DIVERGENTE só com PROVA: este envio leva data legível E o PV traz outra data legível, ou o campo
+//     PRESENTE e vazio (o PV não tem data);
+//   - campo ausente, texto ilegível, envio SEM data, ou PV sem `cabecalho` = NÃO CONFERÍVEL (nunca
+//     "igual");
+//   - comparação e payload gravado leem o MESMO objeto da consulta (`pvDaConsulta`) e exigem o mesmo
+//     `cabecalho` (Codex r2: frete de um objeto sem cabecalho dava "igual" com payload null).
+// O que a divergência FAZ (decisão do founder 2026-11-25, depois do Codex r2): só AVISA — `aviso_previsao`
+// no resultado do `criar_pedido` + log, SEM lançar. Lançar pulava a OP da Colacor (o front não cria a OP
+// num envio com erro, e o clique seguinte cai em "já enviado"); a main concluía. O espelho na tela fica
+// para a Onda 3 com o front do 2.5. A verdade fica gravada: `omie_payload` = o PV do Omie.
 
 /** O PV dentro da resposta do ConsultarPedido: `pedido_venda_produto` quando é objeto, senão a raiz
  *  quando ela tem `cabecalho`; `null` sem forma reconhecível. Única fonte do frete e do payload. */
@@ -103,7 +107,9 @@ export function compararPrevisaoEntregaPv(enviada: string | null | undefined, co
   const envTxt = typeof enviada === "string" ? enviada.trim() : "";
   const diaEnv = envTxt === "" ? null : diaDaPrevisao(envTxt);
   if (diaEnv === null) return { estado: "nao_conferivel" };
-  const frete = pvDaConsulta(consulta)?.frete;
+  const pv = pvDaConsulta(consulta);
+  if (!pv || !pv.cabecalho || typeof pv.cabecalho !== "object" || Array.isArray(pv.cabecalho)) return { estado: "nao_conferivel" };
+  const frete = pv.frete;
   if (!frete || typeof frete !== "object" || Array.isArray(frete)) return { estado: "nao_conferivel" };
   if (!Object.prototype.hasOwnProperty.call(frete, "previsao_entrega")) return { estado: "nao_conferivel" };
   const bruto = (frete as { previsao_entrega?: unknown }).previsao_entrega;
@@ -124,18 +130,25 @@ export function payloadDoPvReconciliado(consulta: unknown): Record<string, unkno
   return pv && pv.cabecalho && typeof pv.cabecalho === "object" && !Array.isArray(pv.cabecalho) ? pv : null;
 }
 
+/** Aviso (NÃO lançado) quando a previsão de entrega do PV reconciliado diverge de forma PROVADA da
+ *  deste envio; `null` em igual/não conferível. Vai em `aviso_previsao` no resultado do `criar_pedido`. */
+export function avisoPrevisaoEntregaPv(previsao: ComparacaoPrevisao | null, omiePedidoId: number): string | null {
+  if (previsao?.estado !== "divergente") return null;
+  const noOmie = previsao.noOmie === null ? "SEM previsão de entrega" : `com previsão de entrega ${previsao.noOmie}`;
+  return `O pedido já existia no Omie (PV ${omiePedidoId}) ${noOmie}, não com a data deste envio ` +
+    `(${previsao.enviada}). Corrija a previsão de entrega direto no Omie — não reenvie.`;
+}
+
 /** Mensagem a LANÇAR depois de um write-back reconciliado, ou `null` quando o PV é o carrinho e a
  *  reserva acompanhou. Lança (não `success` com aviso): caller antigo ignora campo desconhecido e o
  *  vendedor acharia que o carrinho ATUAL foi ao Omie. O vínculo já está gravado, então o reenvio é
  *  recusado pelo guard de reenvio — a mensagem manda conferir, não reenviar.
- *  Frases independentes (Codex 3.3, 2ª rodada): o que houve com o PEDIDO (PV × carrinho), com a
- *  PREVISÃO DE ENTREGA (PR 2.5, só divergência provada) e com a RESERVA (ajustada, não pôde ser conferida, ou nada a dizer) —
- *  uma não esconde a outra. `previsao` ausente = caller que não compara a data (comportamento 3.3). */
+ *  Duas frases independentes (Codex 3.3, 2ª rodada): o que houve com o PEDIDO (PV × carrinho) e o
+ *  que houve com a RESERVA (ajustada, não pôde ser conferida, ou nada a dizer) — uma não esconde a outra. */
 export function avisoPvReconciliado(
   comparacao: "igual" | "divergente" | "ilegivel",
   wb: unknown,
   omiePedidoId: number,
-  previsao?: ComparacaoPrevisao,
 ): string | null {
   const r = (wb ?? {}) as { ajuste_falhou?: unknown; reserva_ajustada?: unknown };
   const falhou = typeof r.ajuste_falhou === "string" && r.ajuste_falhou !== "";
@@ -144,30 +157,20 @@ export function avisoPvReconciliado(
     : comparacao === "ilegivel"
     ? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado, mas não deu para conferir os itens dele.`
     : null;
-  // Só a divergência PROVADA fala da data; "não conferível" não lança (ver a régua acima).
-  const data = previsao?.estado === "divergente"
-    ? (previsao.noOmie === null
-      ? `O PV no Omie ficou SEM previsão de entrega, não com a data deste envio (${previsao.enviada}).`
-      : `A previsão de entrega no Omie ficou ${previsao.noOmie}, não a data deste envio (${previsao.enviada}).`)
-    : null;
   const reserva = falhou
     ? `A reserva de estoque NÃO pôde ser conferida (${r.ajuste_falhou}) — avise o responsável pelo estoque.`
     : r.reserva_ajustada === true
     ? `A reserva de estoque passou a ser a do pedido do Omie.`
     : null;
-  if (pedido === null && data === null && reserva === null) return null;
-  if (pedido === null && data === null && !falhou) return null; // PV igual e reserva ajustada a ele: nada a avisar
-  const corrigir = [comparacao === "divergente" ? "os itens" : null, data !== null ? "a previsão de entrega" : null]
-    .filter(Boolean).join(" e ");
-  const instrucao = corrigir && comparacao === "ilegivel"
-    ? `Corrija ${corrigir} e confira os itens direto no Omie — não reenvie.`
-    : corrigir
-    ? `Corrija ${corrigir} direto no Omie — não reenvie.`
+  if (pedido === null && reserva === null) return null;
+  if (pedido === null && !falhou) return null; // PV igual e reserva ajustada a ele: nada a avisar
+  const instrucao = comparacao === "divergente"
+    ? "Corrija os itens direto no Omie — não reenvie."
     : comparacao === "ilegivel"
     ? "Confira no Omie se os itens batem com o carrinho — não reenvie."
     : "Não reenvie.";
-  const abertura = pedido ?? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado.`;
-  return [abertura, data, reserva, instrucao].filter(Boolean).join(" ");
+  return [pedido ?? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado.`, reserva, instrucao]
+    .filter(Boolean).join(" ");
 }
 
 /** A edição (`alterar_pedido`) não pode partir do carrinho quando o PV vinculado é OUTRO pedido: o
