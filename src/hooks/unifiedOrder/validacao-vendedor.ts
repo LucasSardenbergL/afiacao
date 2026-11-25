@@ -34,12 +34,7 @@ export function interpretarValidacaoVendedor(data: unknown, error: unknown): Res
   return { estado: 'indisponivel', divergencias: [] };
 }
 
-/** Bloqueia o envio? Só `consistente` e `nao_verificado` liberam. */
-export function vendedorBloqueiaEnvio(estado: EstadoVendedor): boolean {
-  return estado === 'validando' || estado === 'divergente' || estado === 'indisponivel';
-}
-
-/** Mensagem do caminho de envio (guard do submit) — mesma fonte dos motivos do botão. */
+/** Guard do caminho de envio: mensagem = bloqueia; `null` = libera (só `consistente` e `nao_verificado`). */
 export function mensagemBloqueioVendedor(estado: EstadoVendedor): string | null {
   switch (estado) {
     case 'validando': return 'Aguarde — ainda validando o vendedor nos Omies.';

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   interpretarValidacaoVendedor,
-  vendedorBloqueiaEnvio,
   mensagemBloqueioVendedor,
   type EstadoVendedor,
 } from '../validacao-vendedor';
@@ -23,7 +22,7 @@ describe('8.1 — validação do vendedor falha fechado (ausente ≠ consistente
   ])('%s → indisponivel (bloqueia)', (_n, data, error) => {
     const r = interpretarValidacaoVendedor(data, error);
     expect(r.estado).toBe('indisponivel');
-    expect(vendedorBloqueiaEnvio(r.estado)).toBe(true);
+    expect(mensagemBloqueioVendedor(r.estado)).not.toBeNull();
   });
 
   it('divergente traz a lista do Omie', () => {
@@ -43,8 +42,7 @@ describe('8.1 — validação do vendedor falha fechado (ausente ≠ consistente
     ['validando', true],
     ['divergente', true],
     ['indisponivel', true],
-  ])('%s bloqueia? %s — e a mensagem do envio acompanha', (estado, bloqueia) => {
-    expect(vendedorBloqueiaEnvio(estado)).toBe(bloqueia);
+  ])('%s bloqueia o envio? %s', (estado, bloqueia) => {
     expect(mensagemBloqueioVendedor(estado) !== null).toBe(bloqueia);
   });
 });
