@@ -178,6 +178,14 @@ export function gerarUniversoGolden(nPedidos = 6_500): UniversoGolden {
         customer_type: i % 2 ? 'industria' : 'revenda',
         cnae: i % 3 ? '2222' : '3101',
       })),
+      // Onda D: o telefone sai da view mascarada; no golden o contato é visível (o golden mede o
+      // CÁLCULO, não a autorização — esta é provada no harness PG17 da fatia 2).
+      v_perfil_contato: clientes.map((cid, i) => ({
+        user_id: cid,
+        contato_visivel: true,
+        phone: i % 7 === 0 ? null : `11 9${pad(i, 4)}-0000`,
+        email: null, document: null, cnpj: null, eh_pj: false,
+      })),
       farmer_calls: chamadas,
       // Exclusão de carteira (fornecedor): sai do universo do scoring ANTES do cálculo.
       cliente_classificacao: [{ user_id: 'cli-007', excluir_da_carteira: true }, { user_id: 'cli-013', excluir_da_carteira: true }],
