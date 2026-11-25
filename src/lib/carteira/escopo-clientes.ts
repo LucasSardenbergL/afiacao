@@ -2,6 +2,7 @@
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { coberturaCustoCliente, valorMedido } from '@/lib/scoring/margin';
 import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
 import { churnConhecido } from '@/lib/scoring/churn';
@@ -190,11 +191,12 @@ export async function fetchCarteiraClientes(opts: {
   const profiles = await coletarEmLotesConcorrente(ids, LOTE_IN, CONCORRENCIA_LOTES, async (lote) => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
+      .select('user_id, name, customer_type, created_at, requires_po')
       .in('user_id', lote)
       .eq('is_employee', false);
     if (error) throw error;
-    return (data ?? []) as Customer[];
+    // Contato pela view MASCARADA (onda D): gestor vê tudo, farmer só a carteira/cobertura.
+    return (await comContatoMascarado(data ?? [])) as Customer[];
   });
 
   const customers = ordenarPorNome(marcarCobertura(profiles, ownerById, opts.baseId));

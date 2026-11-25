@@ -24860,6 +24860,45 @@ export type Database = {
         }
         Relationships: []
       }
+      v_cliente_contatos: {
+        Row: {
+          birthday: string | null
+          cargo: string | null
+          created_at: string | null
+          created_by: string | null
+          customer_user_id: string | null
+          email: string | null
+          id: string | null
+          is_decision_maker: boolean | null
+          is_primary: boolean | null
+          nome: string | null
+          notas: string | null
+          phone: string | null
+          source: string | null
+          updated_at: string | null
+          whatsapp_only: boolean | null
+        }
+        Relationships: []
+      }
+      v_endereco_contato: {
+        Row: {
+          city: string | null
+          complement: string | null
+          contato_visivel: boolean | null
+          created_at: string | null
+          id: string | null
+          is_default: boolean | null
+          is_from_omie: boolean | null
+          label: string | null
+          neighborhood: string | null
+          number: string | null
+          state: string | null
+          street: string | null
+          user_id: string | null
+          zip_code: string | null
+        }
+        Relationships: []
+      }
       v_perfil_contato: {
         Row: {
           cnpj: string | null
@@ -26476,6 +26515,22 @@ export type Database = {
           fonte: string
           fonte_id: string
           saldo_centavos: number
+        }[]
+      }
+      contato_cliente_operacional: {
+        Args: { p_motivo: string; p_objeto_ids: string[]; p_objeto_tipo: string }
+        Returns: {
+          cnpj: string | null
+          customer_user_id: string
+          document: string | null
+          email: string | null
+          enderecos: Json
+          objeto_id: string
+          pedido_documento: string | null
+          pedido_endereco: string | null
+          pedido_telefone: string | null
+          phone: string | null
+          via_excecao: boolean
         }[]
       }
       buscar_clientes_global: {

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -80,10 +81,12 @@ const AdminGamification = () => {
       }
 
       const userIds = scores.map(s => s.user_id);
-      const { data: profiles } = await supabase
+      const { data: identidades } = await supabase
         .from('profiles')
-        .select('user_id, name, document, customer_type')
+        .select('user_id, name, customer_type')
         .in('user_id', userIds);
+      // Documento pela view MASCARADA (onda D).
+      const profiles = await comContatoMascarado(identidades ?? []);
 
       const ranked = scores.map(s => ({
         ...s,

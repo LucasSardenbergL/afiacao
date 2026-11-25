@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { Constants } from '@/integrations/supabase/types';
 import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
 import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
@@ -211,7 +212,7 @@ const FarmerCalls = () => {
       const localPromise = namePat
         ? supabase
             .from('profiles')
-            .select('user_id, name, email, phone')
+            .select('user_id, name')
             .ilike('name', namePat)
             .limit(10)
         : null;
@@ -220,7 +221,8 @@ const FarmerCalls = () => {
       });
 
       const { data: localProfiles } = localPromise ? await localPromise : { data: null };
-      const local: Customer[] = (localProfiles || []).map(p => ({
+      // Telefone/e-mail pela view MASCARADA (onda D).
+      const local: Customer[] = (await comContatoMascarado(localProfiles || [])).map(p => ({
         user_id: p.user_id,
         name: p.name,
         email: p.email,

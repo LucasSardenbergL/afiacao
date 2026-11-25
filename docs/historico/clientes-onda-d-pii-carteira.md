@@ -38,3 +38,40 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   `private.padrao_like_contem(...) ESCAPE '\'` e ordena por `starts_with`; a definição antiga fica na
   baseline como morta. Prova PG17 ganhou S10 (`e_U` não casa `Cliente Um`) e K11 (pattern cru → vermelho):
   93 ok / 0 fail em C e pt_BR.
+
+## Fatia 2 — fontes mascaradas para todos os leitores + exceção operacional auditada
+- Migration `20261124180000_clientes_contato_operacional_ledger.sql`:
+  - `v_perfil_contato` **reescrita** (mesmas colunas) em forma de CONJUNTO: a da fatia 1 chamava o
+    predicado por linha e a carga aberta estourou 30 s em prod (farmer); a de conjunto mediu 215 ms /
+    16.102 linhas. `IN` hasheado e não `EXISTS`: dentro do `OR`, `EXISTS` vira subplano por linha
+    (medido 3,4 s). NULL-safe: alvo NULL nunca visível e o conjunto filtra NULL.
+  - `v_endereco_contato` (cidade/UF sempre; rótulo, rua, número, bairro, CEP só onde visível) e
+    `v_cliente_contatos` (só staff, só cliente visível). Ambas view-gate `invoker=off` + `barrier`.
+  - Ledger `contato_acesso_operacional`: só referência; RLS (gestão vê tudo, staff ATUAL vê as suas);
+    zero escrita para authenticated **e service_role**; vocabulário FECHADO de (tipo, motivo) no CHECK.
+  - RPC `contato_cliente_operacional(tipo, ids[], motivo)`: o cliente sai do OBJETO no servidor
+    (`pedido`→sales_orders, `ordem_servico`→orders, `expedicao`→picking_tasks, `rota`→visitas_agendadas
+    **agendadas por quem chama**, `aprovacao`→cadastro pendente, `novo_pedido`→o próprio cliente);
+    payload mínimo por tipo; teto de 200 objetos (cardinalidade bruta); grava só a EXCEÇÃO, dedupe 10 min
+    serializado por `pg_advisory_xact_lock`; `novo_pedido` = 1 cliente/chamada e ≤ 80 clientes distintos
+    fora da carteira por staff/dia (pico medido: 34 clientes/dia TOTAIS) → 54000.
+- Codex (`gpt-6.2-astra`, high, 79 s): APLICAR COM AJUSTES, sem P0. Integrados: NULL no conjunto
+  entregava PII sem ledger; `novo_pedido` sem freio; payload igual para todo tipo; `label` exposto;
+  `service_role` como 2º writer; ex-employee lendo o próprio histórico; motivo livre; teto antes do
+  DISTINCT; asserts verdes de graça (O5d, alias sem pedido, uuid repetido entre tabelas).
+- Prova: `db/test-clientes-contato-operacional.sh` — 211 ok / 0 fail em `C` **e** `pt_BR.UTF-8`,
+  24 sabotagens (uma por camada; a exclusão de staff tem DUAS camadas, papel e flag, sabotadas à parte).
+- Front: `src/lib/contato-cliente.ts` (as duas portas). Telas → view (`comContatoMascarado`, escopo de
+  clientes, scoring, UTI, Prime, AI Ops, gamificação, demanda, agenda, buscas, Meu dia/rota, 360
+  endereço/contatos, telefonia, MCP). Operacional → RPC (detalhe e impressão de pedido, OS, roteirizador
+  de entrega, visitas agendadas, aprovação de cadastro, novo pedido/proposta). Self → view.
+  Busca que filtrava pela coluna PII agora filtra na view (termo do contato oculto = termo ausente).
+
+## Pré-requisitos da fatia 3 (o que esta fatia NÃO migrou, de propósito)
+- **Diretório de equipe**: `GovernanceUsers/Permissions/Settings`, `useDepartmentsAdmin`,
+  `AdminVendorSipCredentials`, `useExecucaoRaioX` leem `profiles.email` de STAFF. A view mascara colega
+  (sem ramo "alvo é colega", decisão da fatia 1) → o REVOKE quebra essas telas. Decidir a fonte antes.
+- Servidor: `listar_clientes_base`, `customer_metrics_mv`, views de grupo/caça, `resolver_cliente_por_telefone`,
+  `cobranca_regua_hoje`, edges `mcp`/`omie-cliente`/`analyze-unified-order`, snapshot `sales_orders.customer_*`
+  (os leitores do front já saíram dele).
+- Escrita em `customer_contacts` segue na tabela (o `.select()` pós-escrita depende das policies da fatia 3).

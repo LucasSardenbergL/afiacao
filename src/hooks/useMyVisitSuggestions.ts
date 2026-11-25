@@ -15,6 +15,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
@@ -135,9 +136,11 @@ export function useMyVisitSuggestions(opts: {
       const coveredOwners = scores.filter(s => s.farmer_id !== baseId).map(s => s.farmer_id);
       const userIds = [...new Set([...scores.map(s => s.customer_user_id), ...coveredOwners])];
 
-      const { data: profileData } = await supabase.from('profiles')
-        .select('user_id, name, razao_social, phone')
+      const { data: identidades } = await supabase.from('profiles')
+        .select('user_id, name, razao_social')
         .in('user_id', userIds);
+      // Telefone pela view MASCARADA (onda D).
+      const profileData = await comContatoMascarado(identidades ?? []);
 
       const profileMap = new Map<string, { name: string; phone: string | null }>();
       for (const p of (profileData ?? []) as Array<{ user_id: string; name: string | null; razao_social: string | null; phone: string | null }>) {

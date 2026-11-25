@@ -43,20 +43,39 @@ export default defineTool({
     }
     const safe = sanitizeForPostgrestOr(query);
     const sb = supabaseForUser(ctx);
-    const predicado = ["name", "document", "email", "phone"]
-      .map((c) => `${c}.ilike.%${safe}%`)
-      .join(",");
-    const { data, error } = await sb
-      .from("profiles")
-      .select("user_id, name, document, phone, email, customer_type")
-      .or(predicado)
-      .limit(20);
-    if (error) {
-      return { content: [{ type: "text", text: error.message }], isError: true };
+    // Onda D: nome casa em qualquer cliente; documento/e-mail/telefone só casam (e só voltam) onde o
+    // contato é visível — o filtro corre na view MASCARADA v_perfil_contato.
+    const predicado = (cols: string[]) => cols.map((c) => `${c}.ilike.%${safe}%`).join(",");
+    const predicadoContato = predicado(["document", "email", "phone"]);
+    const [porNome, porContato] = await Promise.all([
+      sb.from("profiles").select("user_id").or(predicado(["name"])).limit(20),
+      sb.from("v_perfil_contato").select("user_id").or(predicadoContato).limit(20),
+    ]);
+    const erro = porNome.error ?? porContato.error;
+    if (erro) {
+      return { content: [{ type: "text", text: erro.message }], isError: true };
+    }
+    const ids = [...new Set([...(porNome.data ?? []), ...(porContato.data ?? [])].map((r) => r.user_id as string))].slice(0, 20);
+    let data: Array<Record<string, unknown>> = [];
+    if (ids.length > 0) {
+      const [ident, contato] = await Promise.all([
+        sb.from("profiles").select("user_id, name, customer_type").in("user_id", ids),
+        sb.from("v_perfil_contato").select("user_id, document, phone, email, contato_visivel").in("user_id", ids),
+      ]);
+      const erro2 = ident.error ?? contato.error;
+      if (erro2) {
+        return { content: [{ type: "text", text: erro2.message }], isError: true };
+      }
+      const porId = new Map((contato.data ?? []).map((c) => [c.user_id as string, c]));
+      data = (ident.data ?? []).map((p) => {
+        const c = porId.get(p.user_id as string);
+        return { ...p, document: c?.document ?? null, phone: c?.phone ?? null, email: c?.email ?? null,
+          contato_visivel: c?.contato_visivel === true };
+      });
     }
     return {
-      content: [{ type: "text", text: JSON.stringify(data ?? []) }],
-      structuredContent: { results: data ?? [] },
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      structuredContent: { results: data },
     };
   },
 });

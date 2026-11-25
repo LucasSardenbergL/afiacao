@@ -244,7 +244,7 @@ export function useSalesOrders() {
   const getDetail = (row: Pick<OrderFeedRow, 'origin' | 'id'> & { customer_name?: string | null }) =>
     queryClient.fetchQuery({
       queryKey: orderDetailQueryKey(user?.id, row.origin, row.id),
-      queryFn: () => fetchOrderDetail(row.origin, row.id, row.customer_name),
+      queryFn: () => fetchOrderDetail(row.origin, row.id, row.customer_name, isStaff),
       staleTime: 60_000,
     });
 

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,10 +46,11 @@ export function AgendaTodayList() {
     queryFn: async (): Promise<Record<string, { name: string; phone: string | null }>> => {
        
       const { data } = await supabase.from('profiles')
-        .select('user_id, name, razao_social, phone')
+        .select('user_id, name, razao_social')
         .in('user_id', agenda.map((a) => a.customer_user_id));
       const map: Record<string, { name: string; phone: string | null }> = {};
-      for (const p of (data ?? []) as Array<{ user_id: string; name: string | null; razao_social: string | null; phone: string | null }>) {
+      // Telefone pela view MASCARADA (onda D).
+      for (const p of await comContatoMascarado((data ?? []) as Array<{ user_id: string; name: string | null; razao_social: string | null }>)) {
         map[p.user_id] = { name: p.razao_social || p.name || 'Cliente', phone: p.phone };
       }
       return map;

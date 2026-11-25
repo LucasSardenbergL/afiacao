@@ -129,7 +129,7 @@ SO1=a1000000-0000-0000-0000-0000000000a1 # pedido de C3
 SO2=a2000000-0000-0000-0000-0000000000a2 # pedido de C1
 OS1=a3000000-0000-0000-0000-0000000000a3 # OS de afiação de C3
 PT1=a4000000-0000-0000-0000-0000000000a4 # tarefa de picking do SO1
-RV1=a5000000-0000-0000-0000-0000000000a5 # visita de rota a C3
+RV1=a5000000-0000-0000-0000-0000000000a5 # visita agendada (pela F) a C3
 NADA=a9000000-0000-0000-0000-0000000000a9 # objeto inexistente
 E2=e2000000-0000-0000-0000-0000000000e2  # employee por PAPEL, sem a flag is_employee
 EX2=e3000000-0000-0000-0000-0000000000e3 # flag is_employee sem papel
@@ -160,7 +160,7 @@ CREATE TABLE public.sales_orders (
 );
 CREATE TABLE public.orders (id uuid PRIMARY KEY, user_id uuid, address jsonb);
 CREATE TABLE public.picking_tasks (id uuid PRIMARY KEY, sales_order_id uuid);
-CREATE TABLE public.route_visits (id uuid PRIMARY KEY, customer_user_id uuid);
+CREATE TABLE public.visitas_agendadas (id uuid PRIMARY KEY, customer_user_id uuid, scheduled_by uuid);
 SQL
 
 P -q <<SQL
@@ -193,8 +193,8 @@ INSERT INTO public.sales_orders VALUES
  ('$SO3','$CA','snap-doc-ca','snap-end-ca','snap-fone-ca');  -- pedido no ALIAS (clone sem profiles)
 INSERT INTO public.orders VALUES ('$OS1','$C3',NULL);
 INSERT INTO public.picking_tasks VALUES ('$PT1','$SO1');
-INSERT INTO public.route_visits VALUES ('$RV1','$C3'),
- ('$SO2','$C3');  -- MESMO uuid do pedido SO2 (de C1), noutra tabela e noutro cliente
+INSERT INTO public.visitas_agendadas VALUES ('$RV1','$C3','$F'),
+ ('$SO2','$C3','$B');  -- MESMO uuid do pedido SO2 (de C1), noutra tabela e noutro cliente
 SQL
 
 # como <uid|""> <sql> — authenticated com o JWT pela GUC REAL.
@@ -264,7 +264,8 @@ asserts() {
   eq "O5e master: não é exceção" "$(op $M pedido $SO1)" "$C3:false:fone-c3:snap-fone-c3:rua-c3"
   eq "O5d gestor/master/cobertura não gravam ledger" "$(ledger "WHERE staff_user_id IN ('$G','$K','$M')")" "0"
   eq "O6 expedição deriva o cliente do pedido da tarefa" "$(op $F expedicao $PT1)" "$C3:true:fone-c3:-:rua-c3"
-  eq "O7 rota (visita)" "$(op $F rota $RV1)" "$C3:true:fone-c3:-:rua-c3"
+  eq "O7 rota (visita agendada pela própria farmer)" "$(op $F rota $RV1)" "$C3:true:fone-c3:-:rua-c3"
+  eq "O7b visita agendada por OUTRO staff = sem linha" "$(op $B rota $RV1)" "(vazio)"
   eq "O8 ordem de serviço" "$(op $F ordem_servico $OS1)" "$C3:true:fone-c3:-:rua-c3"
   eq "O9 aprovação de cadastro PENDENTE" "$(op $B aprovacao $PN)" "$PN:true:fone-pn:-:-"
   eq "O9b aprovação de cliente JÁ aprovado = sem linha" "$(op $B aprovacao $C3)" "(vazio)"
@@ -292,7 +293,7 @@ asserts() {
   eq "N3 pedido no ALIAS da raiz da farmer: não é exceção" "$(op $F pedido $SO3)" "$CA:false:(null):snap-fone-ca:-"
   eq "N4 mesmo uuid como rota → cliente da VISITA" "$(op $B rota $SO2)" "$C3:true:fone-c3:-:rua-c3"
   eq "N5 mesmo uuid como pedido → cliente do PEDIDO" "$(op $B pedido $SO2)" "$C1:true:fone-c1:snap-fone-c1:rua-c1"
-  eq "N6 rota não devolve documento" "$(campo $B rota $RV1 document)" "(null)"
+  eq "N6 rota não devolve documento" "$(campo $F rota $RV1 document)" "(null)"
   eq "N7 expedição não devolve documento" "$(campo $B expedicao $PT1 document)" "(null)"
   eq "N8 pedido devolve documento" "$(campo $B pedido $SO1 document)" "doc-c3"
   eq "N9 pedido não devolve e-mail" "$(campo $B pedido $SO1 email)" "(null)"
@@ -446,7 +447,7 @@ P -q -c "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_us
 exige_vermelho "K17 sem teto diário → N15" "$(veredito "$(nega authenticated $B program_limit_exceeded "SELECT * FROM public.contato_cliente_operacional('novo_pedido', ARRAY['$C1']::uuid[], 'novo_pedido')")")" "barrado" "vazou"; restaura
 
 sabota "s/CASE WHEN p_objeto_tipo IN \('pedido', 'ordem_servico', 'aprovacao', 'novo_pedido'\) THEN pr\.document END/pr.document/"
-exige_vermelho "K18 sem minimização → N6" "$(campo $B rota $RV1 document)" "(null)" "doc-c3"; restaura
+exige_vermelho "K18 sem minimização → N6" "$(campo $F rota $RV1 document)" "(null)" "doc-c3"; restaura
 
 sabota "s/OR \(p_objeto_tipo, p_motivo\) NOT IN \(/OR false AND (p_objeto_tipo, p_motivo) NOT IN (/"
 exige_vermelho "K19 motivo sem amarra ao tipo → N12" "$(veredito "$(nega authenticated $F invalid_parameter_value "SELECT * FROM public.contato_cliente_operacional('pedido', ARRAY['$SO2']::uuid[], 'separacao')")")" "barrado" "vazou"; restaura
@@ -458,8 +459,11 @@ exige_vermelho "K20 policy sem staff atual → R8" "$(como $X "SELECT count(*) F
 P -q -c "GRANT INSERT ON public.contato_acesso_operacional TO service_role;"
 exige_vermelho "K21 service_role como 2º writer → R9" "$(veredito "$(nega service_role "" insufficient_privilege "INSERT INTO public.contato_acesso_operacional(staff_user_id,customer_user_id,objeto_tipo,objeto_id,motivo) VALUES ('$B','$C3','pedido','$SO1','detalhe_pedido')")")" "barrado" "vazou"; restaura
 
-sabota "s/WHERE p_objeto_tipo = 'rota' AND rv\.id = ANY \(v_ids\)/WHERE p_objeto_tipo = 'rota' AND rv.id = ANY (v_ids)\n    UNION ALL SELECT so2.id, so2.customer_user_id, NULL, NULL, NULL FROM public.sales_orders so2 WHERE p_objeto_tipo = 'rota' AND so2.id = ANY (v_ids)/"
+sabota "s/AND va\.scheduled_by = v_uid/AND va.scheduled_by = v_uid\n    UNION ALL SELECT so2.id, so2.customer_user_id, NULL, NULL, NULL FROM public.sales_orders so2 WHERE p_objeto_tipo = 'rota' AND so2.id = ANY (v_ids)/"
 exige_vermelho "K13 tipo não amarra a tabela → O12" "$(op $B rota $SO1)" "(vazio)" "$C3:true:fone-c3:-:rua-c3"; restaura
+
+sabota 's/\n       AND va\.scheduled_by = v_uid//'
+exige_vermelho "K22 rota sem amarra a quem agendou → O7b" "$(op $B rota $RV1)" "(vazio)" "$C3:true:fone-c3:-:rua-c3"; restaura
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
 asserts

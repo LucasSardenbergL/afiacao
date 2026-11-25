@@ -186,7 +186,8 @@ GRANT SELECT ON public.contato_acesso_operacional TO authenticated, service_role
 --   pedido         sales_orders.id        customer_user_id             doc/CNPJ, telefone, endereços, snapshot
 --   ordem_servico  orders.id              user_id (OS de afiação)      doc/CNPJ, telefone, endereços
 --   expedicao      picking_tasks.id       pedido da tarefa             telefone, endereços
---   rota           route_visits.id        customer_user_id             telefone, endereços
+--   rota           visitas_agendadas.id   customer_user_id, só a visita AGENDADA POR quem chama
+--                                                                      telefone, endereços
 --   aprovacao      profiles.user_id       só cadastro PENDENTE         doc/CNPJ, telefone, e-mail
 --   novo_pedido    profiles.user_id       pedido/proposta SEM objeto   doc/CNPJ, telefone, endereços
 -- `novo_pedido` é o elo fraco (o "objeto" é o próprio cliente): 1 cliente por chamada e no máximo 80
@@ -272,9 +273,10 @@ BEGIN
       JOIN public.sales_orders so ON so.id = pt.sales_order_id
      WHERE p_objeto_tipo = 'expedicao' AND pt.id = ANY (v_ids)
     UNION ALL
-    SELECT rv.id, rv.customer_user_id, NULL, NULL, NULL
-      FROM public.route_visits rv
-     WHERE p_objeto_tipo = 'rota' AND rv.id = ANY (v_ids)
+    SELECT va.id, va.customer_user_id, NULL, NULL, NULL
+      FROM public.visitas_agendadas va
+     WHERE p_objeto_tipo = 'rota' AND va.id = ANY (v_ids)
+       AND va.scheduled_by = v_uid
     UNION ALL
     SELECT p.user_id, p.user_id, NULL, NULL, NULL
       FROM public.profiles p

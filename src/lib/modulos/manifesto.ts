@@ -1009,6 +1009,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/json-forma.ts",
       "src/lib/logger.ts",
       "src/lib/lotes.ts",
+      // Onda D: as DUAS portas do contato de cliente (view mascarada / RPC operacional por objeto).
+      "src/lib/contato-cliente.ts",
       "src/lib/logger-migration.md",
       "src/lib/offline-cliente-do-dono.ts",
       "src/lib/offline-handlers.ts",

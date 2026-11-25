@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { normalizeCityKey, cityKeyEquals } from '@/lib/whatsapp/route-city';
 import { resolvePrepForWorkday } from '@/lib/whatsapp/route-schedule';
@@ -199,10 +200,11 @@ async function fetchProfiles(ids: string[]): Promise<ProfileRow[]> {
   for (let i = 0; i < ids.length; i += IN_CHUNK) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('user_id, name, razao_social, phone')
+      .select('user_id, name, razao_social')
       .in('user_id', ids.slice(i, i + IN_CHUNK));
     if (error) throw error;
-    out.push(...((data ?? []) as ProfileRow[]));
+    // Telefone pela view MASCARADA (onda D: a lista de contato é da carteira).
+    out.push(...((await comContatoMascarado(data ?? [])) as ProfileRow[]));
   }
   return out;
 }
