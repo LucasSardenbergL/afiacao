@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, Save, Plus, AlertCircle, X } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useSalesOrderEdit } from '@/components/salesOrderEdit/useSalesOrderEdit';
+import { motivoEdicaoBloqueada } from '@/components/salesOrderEdit/types';
 import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentComboboxEdit';
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
@@ -90,7 +91,7 @@ const SalesOrderEdit = () => {
             <CardContent className="p-4 flex items-center gap-2 text-destructive">
               <AlertCircle className="w-5 h-5" />
               <p className="text-sm font-medium">
-                Este pedido está com status "{order.status}" e não pode ser editado.
+                {motivoEdicaoBloqueada(order.status)}
               </p>
             </CardContent>
           </Card>

@@ -12,6 +12,7 @@ import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
 import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
   BLOCKED_STATUSES,
+  motivoEdicaoBloqueada,
   type OrderItem,
   type SalesOrder,
   type FormasPagamentoResponse,
@@ -316,6 +317,11 @@ export function useSalesOrderEdit() {
 
   const handleSave = async () => {
     if (!order) return;
+    // Fail-closed no caminho que grava: o botão some quando bloqueado, mas a trava é aqui.
+    if (BLOCKED_STATUSES.includes(order.status)) {
+      toast.error(motivoEdicaoBloqueada(order.status));
+      return;
+    }
     if (items.length === 0) {
       toast.error('O pedido precisa ter pelo menos 1 item');
       return;
