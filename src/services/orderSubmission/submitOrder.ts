@@ -550,6 +550,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                 produtoAcabadoCount: produtoAcabadoItems.length,
               });
             } else {
+              // Para o aviso de transporte: a edge junta as linhas do mesmo código numa OP só.
+              const itensEnviadosOp = produtoAcabadoItems.map(c => ({
+                descricao: c.product.descricao || c.product.codigo,
+                omie_codigo_produto: c.product.omie_codigo_produto,
+                quantidade: c.quantity,
+              }));
               try {
                 // 8.4: o invoke NÃO lança — antes `error` e o desfecho eram ignorados e a OP recusada pelo
                 // Omie saía como "criada". A edge v1.48 devolve o desfecho por item (./ordemProducao.ts lê também a resposta da v1.47).
@@ -573,7 +579,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                 // Erro de transporte: a edge pode ter criado parte das OPs — cada produto vira "confira antes de criar".
                 const falhasOp = opError
                   ? falhasDeTransporteOp(
-                    produtoAcabadoItems.map(c => c.product.descricao || c.product.codigo),
+                    itensEnviadosOp,
                     (await mensagemDoErroEdge(opError)) || opError.message || 'Falha ao criar a ordem de produção',
                   )
                   : falhasDaOrdemProducao(opData);
@@ -595,7 +601,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                   itemCount: produtoAcabadoItems.length,
                   error: opErr,
                 });
-                for (const m of falhasDeTransporteOp(produtoAcabadoItems.map(c => c.product.descricao || c.product.codigo), opMessage)) {
+                for (const m of falhasDeTransporteOp(itensEnviadosOp, opMessage)) {
                   errors.push({ step: 'create_production_order', message: m });
                 }
               }

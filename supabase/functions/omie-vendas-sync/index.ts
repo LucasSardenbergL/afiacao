@@ -4466,7 +4466,8 @@ Deno.serve(async (req) => {
         // Mesmo produto em duas linhas → UMA OP com a soma (o cCodIntOP é por produto). ./ordem-producao.ts
         const opProdutos = agruparItensOp(opItems as OpItemInput[], prazoDoPedido);
         const createdOPs: CreatedOP[] = [];
-        const desfechosOp: (DesfechoOp & { descricao: string | null })[] = [];
+        // `quantidade` = a da OP agregada (soma das linhas) — a conferência no Omie é por esse total (3ª rodada do Codex).
+        const desfechosOp: (DesfechoOp & { descricao: string | null; quantidade?: number })[] = [];
         for (const opItem of opProdutos) {
           const descricaoOp = opItem.descricao || opItem.codigo || null;
           // Determinística por (sales_order, produto) → o Omie dedup o re-fire da OP.
@@ -4533,13 +4534,16 @@ Deno.serve(async (req) => {
           }).select('id').single();
 
           if (motivoFalha) {
-            desfechosOp.push({ status: "falhou", tipo: "indeterminado", motivo: motivoFalha, chave: chaveOp, descricao: descricaoOp });
+            desfechosOp.push({
+              status: "falhou", tipo: "indeterminado", motivo: motivoFalha, chave: chaveOp, descricao: descricaoOp,
+              quantidade: opItem.quantidade,
+            });
           } else if (insErr) {
             // A OP EXISTE no Omie, mas o app não a guardou: diz qual é, para ninguém criar outra à mão.
             desfechosOp.push({
               status: "falhou",
               tipo: "sem_registro_local",
-              motivo: `${rotuloOp(omieOrdemId as number, omieOrdemNumero)} FOI criada no Omie, mas não ficou registrada no app (${insErr.message})`,
+              motivo: `${rotuloOp(omieOrdemId as number, omieOrdemNumero)} existe no Omie, mas o app não confirmou o registro local (${insErr.message})`,
               chave: chaveOp,
               descricao: descricaoOp,
             });

@@ -119,4 +119,6 @@ Deno.test("fiação: produto inválido NÃO grava linha local executável e cada
   for (const t of ['tipo: "indeterminado"', 'tipo: "sem_registro_local"']) {
     if (!bloco.includes(t)) throw new Error(`desfecho sem tipo: ${t}`);
   }
+  // 3ª rodada do Codex: o indeterminado leva a quantidade da OP AGREGADA (a conferência no Omie é pelo total).
+  if (!/tipo: "indeterminado"[^}]*quantidade: opItem\.quantidade/.test(bloco)) throw new Error("indeterminado sem a quantidade agregada");
 });
