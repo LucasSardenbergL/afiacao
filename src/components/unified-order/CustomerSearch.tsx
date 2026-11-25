@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn, decodeHtmlEntities } from '@/lib/utils';
 import type { OmieCustomer } from '@/hooks/useUnifiedOrder';
+import type { EstadoVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
 
 interface CustomerSearchProps {
   selectedCustomer: OmieCustomer | null;
@@ -21,6 +22,9 @@ interface CustomerSearchProps {
   loadingCustomer: boolean;
   validatingVendedor: boolean;
   vendedorDivergencias: string[];
+  /** 8.1: 'indisponivel' mostra o aviso com "Tentar de novo" (o envio fica bloqueado). */
+  estadoVendedor?: EstadoVendedor;
+  onRevalidarVendedor?: () => void;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -33,7 +37,7 @@ interface CustomerSearchProps {
 export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
-  validatingVendedor, vendedorDivergencias,
+  validatingVendedor, vendedorDivergencias, estadoVendedor, onRevalidarVendedor,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -105,6 +109,20 @@ export function CustomerSearch({
               <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
                 <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                 <p className="text-xs text-muted-foreground">Validando vendedor nos 3 Omies...</p>
+              </div>
+            )}
+            {estadoVendedor === 'indisponivel' && (
+              <div className="bg-status-warning/10 border border-status-warning/30 rounded-lg p-3" role="alert">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold">Não foi possível validar o vendedor</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado até a validação responder.</p>
+                  </div>
+                  {onRevalidarVendedor && (
+                    <Button variant="outline" size="sm" onClick={onRevalidarVendedor}>Tentar de novo</Button>
+                  )}
+                </div>
               </div>
             )}
             {vendedorDivergencias.length > 0 && (

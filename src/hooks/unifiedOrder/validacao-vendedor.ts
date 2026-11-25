@@ -1,0 +1,50 @@
+/**
+ * 8.1 (rodada 3): a validação do vendedor nos Omies falha FECHADO.
+ *
+ * Antes, qualquer falha (rede, 4xx/5xx, resposta sem `consistente`) caía em "sem divergência" e o
+ * envio seguia — ausente ≠ consistente. Agora só `consistente === true` libera; o resto vira
+ * `divergente` (o Omie disse que não bate) ou `indisponivel` (não sabemos), e os dois bloqueiam.
+ *
+ * `nao_verificado` = não houve validação para esta seleção: sem cliente, autoatendimento (a ação
+ * `validar_vendedor` é staff-only) ou cliente sem CPF/CNPJ. Não bloqueia — é o comportamento de antes
+ * para esses casos, e o documento ausente já tem as próprias travas no envio.
+ */
+export type EstadoVendedor = 'nao_verificado' | 'validando' | 'consistente' | 'divergente' | 'indisponivel';
+
+export interface ResultadoValidacaoVendedor {
+  estado: 'consistente' | 'divergente' | 'indisponivel';
+  divergencias: string[];
+}
+
+const DIVERGENCIA_SEM_DETALHE = 'O Omie apontou vendedores diferentes entre as contas (sem detalhe).';
+
+/** Interpreta a resposta de `omie-cliente` → `validar_vendedor`. Puro (testável sem rede). */
+export function interpretarValidacaoVendedor(data: unknown, error: unknown): ResultadoValidacaoVendedor {
+  if (error || !data || typeof data !== 'object') return { estado: 'indisponivel', divergencias: [] };
+  const d = data as { consistente?: unknown; divergencias?: unknown; error?: unknown };
+  if (d.error) return { estado: 'indisponivel', divergencias: [] };
+  if (d.consistente === true) return { estado: 'consistente', divergencias: [] };
+  if (d.consistente === false) {
+    const lista = Array.isArray(d.divergencias)
+      ? d.divergencias.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+      : [];
+    // Divergente sem lista ainda é divergente: a lista vazia NÃO pode reabrir o envio.
+    return { estado: 'divergente', divergencias: lista.length > 0 ? lista : [DIVERGENCIA_SEM_DETALHE] };
+  }
+  return { estado: 'indisponivel', divergencias: [] };
+}
+
+/** Bloqueia o envio? Só `consistente` e `nao_verificado` liberam. */
+export function vendedorBloqueiaEnvio(estado: EstadoVendedor): boolean {
+  return estado === 'validando' || estado === 'divergente' || estado === 'indisponivel';
+}
+
+/** Mensagem do caminho de envio (guard do submit) — mesma fonte dos motivos do botão. */
+export function mensagemBloqueioVendedor(estado: EstadoVendedor): string | null {
+  switch (estado) {
+    case 'validando': return 'Aguarde — ainda validando o vendedor nos Omies.';
+    case 'divergente': return 'Vendedor divergente entre as contas Omie. Corrija no Omie antes de enviar.';
+    case 'indisponivel': return 'Não foi possível validar o vendedor. Toque em "Tentar de novo" antes de enviar.';
+    default: return null;
+  }
+}
