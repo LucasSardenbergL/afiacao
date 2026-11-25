@@ -87,6 +87,7 @@ de `origin/main` a cada tick — nunca um worktree de sessão); estado/log em
   migration → 1 aviso em 2 ticks, sem publicar; `claude` falso com erro → `1/3` e o tick seguinte
   não re-chama; ar em dia → NADA_A_PUBLICAR.
 - **Fora do alcance:** Mac desligado/dormindo = sem Publish (o workflow do GitHub segue sem chave).
+- **Sessão espera sem polling (2026-11-25):** `lovable-publish.sh --esperar <sha-merge>` em background (shell, sem LLM) sai `NO_AR`/`NADA_A_PUBLICAR` (0), `RETIDO=<camada>` (10, lendo `liberar`/`pendencias-<sha>` do vigia), `TIMEOUT` (30) — uso em `docs/agent/deploy.md` Camada 2.
 
 ## 1ª medição em produção (2026-11-22 → 25)
 
