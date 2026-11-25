@@ -9,6 +9,21 @@ export type SnapshotEmpresa = {
   ncg_completa: boolean | null;
   saldo_tesouraria: number | null;
   semanas: SnapshotSemana[];
+  /**
+   * As 6 colunas `ncg_*` da engine v2.5, CRUAS como vieram do banco (a leitura — NULL, faixa, fechamento —
+   * é do `composicaoNcgDoEscopo`). Ausente = não lidas = não medido, nunca 0.
+   */
+  composicao_ncg?: ComposicaoNcgBruta | null;
+};
+
+/** Colunas `ncg_*` de `fin_projecao_snapshots` (contrato: `supabase/functions/fin-cashflow-engine/ncg-composicao.ts`). */
+export type ComposicaoNcgBruta = {
+  ncg_cr_aberto: unknown;
+  ncg_estoque: unknown;
+  ncg_adiantamentos: unknown;
+  ncg_cp_fornecedor: unknown;
+  ncg_folha_30d: unknown;
+  ncg_tributos_a_pagar: unknown;
 };
 
 export type SemanaConsolidada = {

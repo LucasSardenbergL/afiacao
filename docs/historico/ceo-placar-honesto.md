@@ -115,6 +115,24 @@ total. Agora grava as 6 parcelas em colunas dedicadas `ncg_*`
   (`getProjecaoSnapshotsCockpit`) nomeia colunas, e a UI antes da migration derrubaria o placar
   inteiro com 42703.
 
+### Fase 5 — UI "Como a NCG se forma" (2026-11-24, só front)
+
+Card logo depois do da margem: por CNPJ e no consolidado, `+ ativo cíclico` (a receber, estoque,
+adiantamentos) `− passivo cíclico` (fornecedores, folha 30 d, tributos) `= NCG`. A leitura é
+`composicaoNcgDoEscopo` (`src/lib/financeiro/ceo-placar.ts`), sobre o MESMO snapshot e a mesma
+coorte do KPI (`ultimosECoorte`, agora compartilhado com o caixa de 13 semanas).
+
+- **Os 4 sabores na tela.** CR NULL (pré-v2.5 ou composição recusada, as 6 NULL) → linha inteira
+  "—". Estoque NULL com o CR presente → "sem fonte" e NCG "parcial". Adiantamentos NULL com o CR
+  presente → "no CP" (não segregado). Qualquer outra incoerência (PCO NULL, negativo, não-número,
+  Σ ≠ total além de 0,05) → "—". Nenhum snapshot medido → o card diz "composição ainda não medida".
+- **Consolidado:** cada parcela só soma medida em todas as empresas; uma empresa não medida anula a
+  linha do grupo.
+- **Lição da falsificação:** o caso "CR NULL" passava mesmo com a regra do CR sabotada, porque o
+  fechamento também quebrava (CR NULL deixava a soma longe do total). Foi preciso um caso em que o
+  resto fecha com o total, para a camada do CR ser exercitada sozinha. Controle 13/13 verde e 6
+  sabotagens vermelhas na mesma invocação.
+
 ## Fase 4b — confiança do CMV (engine `omie-financeiro` v1.14, 2026-11-22)
 
 Fecha o "em aberto" da Fase 4. A DRE grava, em colunas dedicadas de `fin_dre_snapshots`
@@ -172,5 +190,4 @@ sinal money-path, então segue no jsonb).
 
 ## Fases seguintes (sem sinal de uso ainda, não iniciadas)
 
-UI "Como a NCG se forma" (Fase 5, só depois das colunas `ncg_*` confirmadas na PROD) · vendas por
-empresa em dias úteis. O sensor já existe: `dashboard.ceo.kpi_click`.
+Vendas por empresa em dias úteis. O sensor já existe: `dashboard.ceo.kpi_click`.
