@@ -1119,14 +1119,10 @@ type NCG = {
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
   valor: number;
   parcial: boolean;
-  /** A fonte de cada parcela enxergou a família na empresa? Fonte vazia → composição não medida. */
+  /** A regra de cada parcela achou obrigação aberta (ou recorrente de folha)? `false` = fonte vazia. */
   fontes: { folha: boolean; tributos: boolean };
   projecao_12m: Array<{ mes: string; valor: number }>;
 };
-
-/** Famílias do plano de contas Omie do grupo (`fin_categorias`): 2.03 Pessoal, 2.06 Impostos e Taxas. */
-const FAMILIA_FOLHA_PADRAO = '2.03';
-const FAMILIA_TRIBUTOS = '2.06';
 
 function calcularNCG(dados: DadosBase): NCG {
   const cr_aberto = dados.crs
@@ -1153,34 +1149,20 @@ function calcularNCG(dados: DadosBase): NCG {
   // ERP vence (folha_30d = max(CP folha na janela, recorrente)); os CPs de folha na
   // janela saem de cp_fornecedor (contados uma vez, em folha_30d). Sem categorias de
   // folha configuradas → guard inerte: cp_fornecedor inalterado, folha = recorrente.
-  //
-  // Família de folha/tributo = plano de contas Omie do grupo (`fin_categorias`, igual nas 3 empresas):
-  // 2.03 "Despesas com Pessoal" e 2.06 "Impostos e Taxas". Até a v2.5 os tributos eram lidos de `3.99*`
-  // e a folha só de `folha_categorias_codigos` (vazia nas 3) — `3.99` não existe em nenhuma empresa,
-  // então o 1º snapshot medido (25/11) gravou folha 0 e tributos 0 com a fonte VAZIA (zero fabricado;
-  // os títulos estavam dentro de `cp_fornecedor`). A config, se preenchida, segue mandando na folha.
-  const adiantCats = dados.config.adiantamento_categorias_codigos;
   const folhaCats = dados.config.folha_categorias_codigos ?? [];
-  const daFamilia = (cod: string | null | undefined, familia: string): boolean =>
-    cod != null && (cod === familia || cod.startsWith(familia + '.'));
-  const isAdiantamento = (c: CP): boolean => c.categoria_codigo != null && adiantCats.includes(c.categoria_codigo);
-  const isFolhaCP = (c: CP): boolean =>
-    !isAdiantamento(c) &&
-    (folhaCats.length > 0
-      ? c.categoria_codigo != null && folhaCats.includes(c.categoria_codigo)
-      : daFamilia(c.categoria_codigo, FAMILIA_FOLHA_PADRAO));
-  const isTributo = (c: CP): boolean => !isAdiantamento(c) && daFamilia(c.categoria_codigo, FAMILIA_TRIBUTOS);
   const hojeNcg = hojeSP();
   const limite30 = addDays(hojeNcg, 30);
   const isFolhaCPJanela = (c: CP): boolean =>
-    isFolhaCP(c) && c.data_vencimento != null && c.data_vencimento <= limite30;
+    folhaCats.length > 0 &&
+    c.categoria_codigo != null && folhaCats.includes(c.categoria_codigo) &&
+    c.data_vencimento != null && c.data_vencimento <= limite30;
 
   const cp_fornecedor = dados.cps
     .filter(c =>
       isOpenTitleStatus(c.status_titulo) &&
       c.saldo > 0 &&
-      !isAdiantamento(c) &&
-      !isTributo(c) &&
+      (!c.categoria_codigo || !dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo)) &&
+      !(c.categoria_codigo && c.categoria_codigo.startsWith('3.99')) &&
       !isFolhaCPJanela(c)
     )
     .reduce((s, c) => s + c.saldo, 0);
@@ -1194,15 +1176,23 @@ function calcularNCG(dados: DadosBase): NCG {
   const folha_30d = folhaCP30d > 0 ? Math.max(folhaCP30d, folhaRecorrente) : folhaRecorrente;
 
   const tributos_a_pagar = dados.cps
-    .filter(c => isOpenTitleStatus(c.status_titulo) && c.saldo > 0 && isTributo(c))
+    .filter(c =>
+      isOpenTitleStatus(c.status_titulo) &&
+      c.saldo > 0 &&
+      c.categoria_codigo && c.categoria_codigo.startsWith('3.99')
+    )
     .reduce((s, c) => s + c.saldo, 0);
 
-  // Ausente ≠ zero: a parcela só é MEDIDA se a fonte enxerga a família na empresa (≥1 título carregado,
-  // qualquer status não-cancelado; ou, na folha, um evento recorrente de folha). Fonte vazia = filtro que
-  // não casa com o plano de contas → `colunasComposicaoNcg` grava a composição como NÃO medida.
+  // Ausente ≠ zero (incidente 25/11: 1º snapshot medido da v2.5 gravou folha 0 e tributos 0 nas 3
+  // empresas). As somas acima dão 0 tanto com "nada a pagar" quanto com FILTRO QUE NÃO CASA: `3.99` não
+  // existe no plano Omie do grupo (tributos vivem em 2.06 / op_impostos*) e `folha_categorias_codigos`
+  // está vazia. A parcela só é MEDIDA se a fonte enxerga a obrigação AGORA: ≥1 título ABERTO que a regra
+  // classifica (histórico pago não atesta a janela) ou, na folha, um evento recorrente de folha.
+  // Sem isso, `colunasComposicaoNcg` grava a composição como NÃO medida. Os números (e `saldo_tesouraria`)
+  // seguem os da v2.5 — trocar a fonte para o mapa por empresa é decisão de método à parte.
   const fontes = {
-    folha: dados.eventos_rec.some(e => e.is_folha && e.tipo === 'saida') || dados.cps.some(isFolhaCP),
-    tributos: dados.cps.some(isTributo),
+    folha: folhaRecorrente > 0 || folhaCP30d > 0,
+    tributos: tributos_a_pagar > 0,
   };
 
   const pco = {

@@ -30,12 +30,11 @@ const cp = (n: number, venc: string, saldo: number, categoria: string) => ({
 });
 const CPS_PADRAO = [
   cp(1, somarDias(HOJE, 10), 1234.56, "2.05.01"), // fornecedor
-  cp(2, somarDias(HOJE, 12), 300, "2.06.01"),     // tributo a pagar (2.06 Impostos e Taxas)
+  cp(2, somarDias(HOJE, 12), 300, "3.99.01"),     // tributo a pagar
   cp(3, somarDias(HOJE, 5), 70000, "2.10.01"),    // folha no ERP na janela de 30 d (> recorrente)
   cp(4, somarDias(HOJE, 20), 450, "2.03.01"),     // adiantamento a fornecedor (ACO, segregado pela config)
 ];
 let CPS: Array<ReturnType<typeof cp>> = CPS_PADRAO;
-/** `folha_categorias_codigos` da config; `[]` = sem config → folha pela família padrão 2.03. */
 let FOLHA_CATS: string[] = ["2.10.01"];
 const EVENTOS_PADRAO = [
   { id: "rec-folha", descricao: "Folha", valor: 60000, tipo: "saida", categoria_dre: "pessoal", is_folha: true, dia_do_mes: 5, inicio: "2025-01-01", fim: null },
@@ -144,23 +143,22 @@ async function rodar(estoqueGiro: unknown, cen: Cenario = {}) {
 
 const COMPLETA = await rodar(ESTOQUE_GIRO);
 const PARCIAL = await rodar(null);
-// Plano de contas REAL do grupo e SEM config de folha (o estado das 3 empresas em 25/11): folha vem da
-// família 2.03 e tributos da 2.06, sem evento recorrente de folha.
-const SEM_CONFIG_CPS = [
+// Estado das 3 empresas em 25/11: plano Omie real (tributos em 2.06, folha em 2.03), nenhuma config de
+// folha e nenhum evento recorrente. A regra da engine (tributos = `3.99`) não acha nada.
+const INCIDENTE_CPS = [
   cp(1, somarDias(HOJE, 10), 1234.56, "2.05.01"), // fornecedor
-  cp(2, somarDias(HOJE, 12), 300, "2.06.99"),     // tributo (DAS)
-  cp(3, somarDias(HOJE, 3), 800, "2.06.01"),      // tributo (ICMS)
-  cp(5, somarDias(HOJE, 6), 7000, "2.03.04"),     // folha no ERP, na janela de 30 d
-  cp(6, somarDias(HOJE, 45), 6500, "2.03.04"),    // folha FORA da janela → segue em cp_fornecedor
+  cp(2, somarDias(HOJE, 12), 300, "2.06.99"),     // tributo no plano real (DAS)
+  cp(3, somarDias(HOJE, 6), 7000, "2.03.04"),     // folha no plano real
 ];
-const FONTE_CERTA = await rodar(ESTOQUE_GIRO, { cps: SEM_CONFIG_CPS, folhaCats: [], eventos: [] });
-// Fonte vazia: nenhum título 2.06 na empresa (tributos) / nenhum 2.03 nem recorrente (folha).
-const SEM_TRIBUTO = await rodar(ESTOQUE_GIRO, {
-  cps: SEM_CONFIG_CPS.filter((c) => !c.categoria_codigo.startsWith("2.06")), folhaCats: [], eventos: [],
+const INCIDENTE = await rodar(ESTOQUE_GIRO, { cps: INCIDENTE_CPS, folhaCats: [], eventos: [] });
+// Só a fonte de tributos vazia (folha medida pelo recorrente).
+const SEM_TRIBUTO = await rodar(ESTOQUE_GIRO, { cps: CPS_PADRAO.filter((c) => !c.categoria_codigo.startsWith("3.99")) });
+// Tributo que a regra classifica, mas só PAGO: histórico não atesta obrigação aberta (achado Codex).
+const TRIBUTO_SO_PAGO = await rodar(ESTOQUE_GIRO, {
+  cps: CPS_PADRAO.map((c) => c.categoria_codigo.startsWith("3.99") ? { ...c, status_titulo: "PAGO", saldo: 0 } : c),
 });
-const SEM_FOLHA = await rodar(ESTOQUE_GIRO, {
-  cps: SEM_CONFIG_CPS.filter((c) => !c.categoria_codigo.startsWith("2.03")), folhaCats: [], eventos: [],
-});
+// Só a fonte de folha vazia: sem recorrente e sem CP da categoria configurada (tributo segue medido).
+const SEM_FOLHA = await rodar(ESTOQUE_GIRO, { cps: CPS_PADRAO.filter((c) => c.categoria_codigo !== "2.10.01"), eventos: [] });
 
 type NcgResposta = {
   aco: { cr_aberto: number; estoque: number | null; adiantamentos: number };
@@ -176,7 +174,7 @@ const composicao = (s: Record<string, unknown>) => ({
 Deno.test("controle: a coluna ncg (total) do snapshot = ncg.valor da resposta", () => {
   igual(COMPLETA.snapshot.ncg, ncgDe(COMPLETA).valor, "ncg do snapshot (completa)");
   igual(PARCIAL.snapshot.ncg, ncgDe(PARCIAL).valor, "ncg do snapshot (parcial)");
-  for (const [nome, r] of [["fonte certa", FONTE_CERTA], ["sem tributo", SEM_TRIBUTO], ["sem folha", SEM_FOLHA]] as const) {
+  for (const [nome, r] of [["incidente", INCIDENTE], ["sem tributo", SEM_TRIBUTO], ["tributo só pago", TRIBUTO_SO_PAGO], ["sem folha", SEM_FOLHA]] as const) {
     igual(r.snapshot.ncg, ncgDe(r).valor, `ncg do snapshot (${nome})`);
   }
 });
@@ -255,33 +253,26 @@ Deno.test("helper: sem categoria de adiantamento configurada → ncg_adiantament
   );
 });
 
-// ── Fonte de folha/tributos (incidente: 1º snapshot medido da v2.5, 25/11, folha 0 e tributos 0) ──
-// Linha de base: no código de antes os 3 testes abaixo ficam VERMELHOS — tributos lidos de `3.99`
-// (inexistente) e folha só pela config vazia gravavam 0 afirmado, com os títulos dentro do CP fornecedor.
-Deno.test("sem config de folha: tributos da família 2.06 e folha 2.03 na janela, total da NCG intacto", () => {
-  igual(
-    composicao(FONTE_CERTA.snapshot),
-    { cr_aberto: 90435, estoque: 500000, adiantamentos: 0, cp_fornecedor: 7734.56, folha_30d: 7000, tributos_a_pagar: 1100 },
-    "colunas ncg_* (fonte certa)",
-  );
-  igual(
-    Math.round((FONTE_CERTA.snapshot.ncg as number) * 100),
-    Math.round((90435 + 500000 - 1234.56 - 300 - 800 - 7000 - 6500) * 100),
-    "reclassificar dentro do PCO não muda o total",
-  );
+// ── Fonte vazia de folha/tributos (incidente: 1º snapshot medido da v2.5, 25/11, folha 0 e tributos 0) ──
+// Linha de base: no código de antes estes testes ficam VERMELHOS — a composição saía MEDIDA com folha 0 e
+// tributos 0 afirmados. O controle verde (total `ncg` = resposta) vale nos dois códigos.
+const NAO_MEDIDA = {
+  cr_aberto: null, estoque: null, adiantamentos: null, cp_fornecedor: null, folha_30d: null, tributos_a_pagar: null,
+};
+
+Deno.test("incidente 25/11 (plano real, sem config nem recorrente): composição NÃO medida, PCO igual à v2.5", () => {
+  igual(composicao(INCIDENTE.snapshot), NAO_MEDIDA, "colunas ncg_* (incidente)");
+  // A resposta ao vivo e o total seguem a v2.5: tudo no CP fornecedor, nada reclassificado.
+  igual(ncgDe(INCIDENTE).pco, { cp_fornecedor: 8534.56, folha_30d: 0, tributos_a_pagar: 0, total: 8534.56 }, "pco (incidente)");
 });
 
-Deno.test("fonte vazia de tributos: composição não medida (6 NULL), nunca tributos 0 afirmado", () => {
-  igual(composicao(SEM_TRIBUTO.snapshot), {
-    cr_aberto: null, estoque: null, adiantamentos: null, cp_fornecedor: null, folha_30d: null, tributos_a_pagar: null,
-  }, "colunas ncg_* (sem tributo)");
-  igual(typeof SEM_TRIBUTO.snapshot.ncg, "number", "o total segue gravado");
+Deno.test("fonte vazia de tributos (nenhum título aberto da regra): composição não medida", () => {
+  igual(composicao(SEM_TRIBUTO.snapshot), NAO_MEDIDA, "colunas ncg_* (sem tributo)");
+  igual(composicao(TRIBUTO_SO_PAGO.snapshot), NAO_MEDIDA, "colunas ncg_* (tributo só pago)");
 });
 
-Deno.test("fonte vazia de folha (sem 2.03 nem recorrente): composição não medida (6 NULL)", () => {
-  igual(composicao(SEM_FOLHA.snapshot), {
-    cr_aberto: null, estoque: null, adiantamentos: null, cp_fornecedor: null, folha_30d: null, tributos_a_pagar: null,
-  }, "colunas ncg_* (sem folha)");
+Deno.test("fonte vazia de folha (sem recorrente nem CP da categoria): composição não medida", () => {
+  igual(composicao(SEM_FOLHA.snapshot), NAO_MEDIDA, "colunas ncg_* (sem folha)");
 });
 
 Deno.test("helper: fonte de folha ou de tributos ausente → as 6 NULL", () => {
