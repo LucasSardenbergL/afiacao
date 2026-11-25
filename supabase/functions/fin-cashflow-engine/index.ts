@@ -1119,6 +1119,8 @@ type NCG = {
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
   valor: number;
   parcial: boolean;
+  /** A regra de cada parcela achou obrigação aberta (ou recorrente de folha)? `false` = fonte vazia. */
+  fontes: { folha: boolean; tributos: boolean };
   projecao_12m: Array<{ mes: string; valor: number }>;
 };
 
@@ -1181,6 +1183,18 @@ function calcularNCG(dados: DadosBase): NCG {
     )
     .reduce((s, c) => s + c.saldo, 0);
 
+  // Ausente ≠ zero (incidente 25/11: 1º snapshot medido da v2.5 gravou folha 0 e tributos 0 nas 3
+  // empresas). As somas acima dão 0 tanto com "nada a pagar" quanto com FILTRO QUE NÃO CASA: `3.99` não
+  // existe no plano Omie do grupo (tributos vivem em 2.06 / op_impostos*) e `folha_categorias_codigos`
+  // está vazia. A parcela só é MEDIDA se a fonte enxerga a obrigação AGORA: ≥1 título ABERTO que a regra
+  // classifica (histórico pago não atesta a janela) ou, na folha, um evento recorrente de folha.
+  // Sem isso, `colunasComposicaoNcg` grava a composição como NÃO medida. Os números (e `saldo_tesouraria`)
+  // seguem os da v2.5 — trocar a fonte para o mapa por empresa é decisão de método à parte.
+  const fontes = {
+    folha: folhaRecorrente > 0 || folhaCP30d > 0,
+    tributos: tributos_a_pagar > 0,
+  };
+
   const pco = {
     cp_fornecedor,
     folha_30d,
@@ -1201,7 +1215,7 @@ function calcularNCG(dados: DadosBase): NCG {
     });
   }
 
-  return { aco, pco, valor, parcial: dados.estoque_valor == null, projecao_12m };
+  return { aco, pco, valor, parcial: dados.estoque_valor == null, fontes, projecao_12m };
 }
 
 type Indicadores = {
