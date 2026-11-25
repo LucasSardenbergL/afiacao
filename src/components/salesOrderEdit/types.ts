@@ -45,4 +45,15 @@ export type OmieProduct = Pick<
   | 'account' | 'is_tintometric' | 'tint_type'
 >;
 
-export const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
+/**
+ * Status em que o app NÃO edita o pedido. `importado` = pedido criado direto no Omie por outra
+ * pessoa: salvar aqui chamaria `alterar_pedido` e mudaria item/preço/prazo NO OMIE sem o dono saber
+ * (decisão do founder, 2026-11-25). É o mesmo critério da exclusão: o app espelha, quem altera é o Omie.
+ */
+export const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado', 'importado'];
+
+/** Por que a edição está travada — o importado diz ONDE alterar, em vez de só "não pode". */
+export function motivoEdicaoBloqueada(status: string): string {
+  if (status === 'importado') return 'Pedido importado do Omie: o app só espelha. Para alterar, altere no Omie.';
+  return `Este pedido está com status "${status}" e não pode ser editado.`;
+}

@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { BLOCKED_STATUSES } from '@/components/salesOrderEdit/types';
+import { BLOCKED_STATUSES, motivoEdicaoBloqueada } from '@/components/salesOrderEdit/types';
 import { contagemDoDia, mensagemDoLote, podeEditarPedido, ultimoDiaAberto, type GrupoDia, type OrderFeedRow } from '../types';
 
 describe('podeEditarPedido — a MESMA regra da tela de edição', () => {
   it.each(BLOCKED_STATUSES)('%s: bloqueado (a edição também recusa)', (status) => {
     expect(podeEditarPedido({ status, origin: 'sales' })).toBe(false);
+  });
+  // Literal de propósito: o it.each acima passa vazio se 'importado' sair da lista.
+  it('importado do Omie: bloqueado, e o motivo diz onde alterar', () => {
+    expect(podeEditarPedido({ status: 'importado', origin: 'sales' })).toBe(false);
+    expect(motivoEdicaoBloqueada('importado')).toContain('altere no Omie');
+    expect(motivoEdicaoBloqueada('faturado')).toBe('Este pedido está com status "faturado" e não pode ser editado.');
   });
   it('rascunho/enviado de venda: editável', () => {
     expect(podeEditarPedido({ status: 'rascunho', origin: 'sales' })).toBe(true);
