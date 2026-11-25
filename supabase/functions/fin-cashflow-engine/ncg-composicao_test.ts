@@ -157,6 +157,13 @@ const SEM_TRIBUTO = await rodar(ESTOQUE_GIRO, { cps: CPS_PADRAO.filter((c) => !c
 const TRIBUTO_SO_PAGO = await rodar(ESTOQUE_GIRO, {
   cps: CPS_PADRAO.map((c) => c.categoria_codigo.startsWith("3.99") ? { ...c, status_titulo: "PAGO", saldo: 0 } : c),
 });
+// Tributo PAGO com saldo residual: o status, não o saldo, é que tira a obrigação (achado Codex 2ª rodada).
+const TRIBUTO_PAGO_RESIDUAL = await rodar(ESTOQUE_GIRO, {
+  cps: CPS_PADRAO.map((c) => c.categoria_codigo.startsWith("3.99") ? { ...c, status_titulo: "PAGO" } : c),
+});
+// Folha medida por UMA fonte só (prova o `||`): só o recorrente / só o CP da categoria configurada.
+const SO_RECORRENTE = await rodar(ESTOQUE_GIRO, { cps: CPS_PADRAO.filter((c) => c.categoria_codigo !== "2.10.01") });
+const SO_CP_FOLHA = await rodar(ESTOQUE_GIRO, { eventos: [] });
 // Só a fonte de folha vazia: sem recorrente e sem CP da categoria configurada (tributo segue medido).
 const SEM_FOLHA = await rodar(ESTOQUE_GIRO, { cps: CPS_PADRAO.filter((c) => c.categoria_codigo !== "2.10.01"), eventos: [] });
 
@@ -269,6 +276,12 @@ Deno.test("incidente 25/11 (plano real, sem config nem recorrente): composição
 Deno.test("fonte vazia de tributos (nenhum título aberto da regra): composição não medida", () => {
   igual(composicao(SEM_TRIBUTO.snapshot), NAO_MEDIDA, "colunas ncg_* (sem tributo)");
   igual(composicao(TRIBUTO_SO_PAGO.snapshot), NAO_MEDIDA, "colunas ncg_* (tributo só pago)");
+  igual(composicao(TRIBUTO_PAGO_RESIDUAL.snapshot), NAO_MEDIDA, "colunas ncg_* (tributo pago com saldo residual)");
+});
+
+Deno.test("folha medida por uma fonte só: recorrente sozinho ou CP sozinho bastam", () => {
+  igual(composicao(SO_RECORRENTE.snapshot).folha_30d, 60000, "só recorrente");
+  igual(composicao(SO_CP_FOLHA.snapshot).folha_30d, 70000, "só CP de folha");
 });
 
 Deno.test("fonte vazia de folha (sem recorrente nem CP da categoria): composição não medida", () => {
