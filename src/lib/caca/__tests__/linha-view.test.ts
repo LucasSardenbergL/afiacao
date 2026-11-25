@@ -20,6 +20,7 @@ const comprador = (over: Partial<LinhaComprador> = {}): LinhaComprador => ({
 });
 
 const candidato = (over: Partial<LinhaCandidato> = {}): LinhaCandidato => ({
+  contato_visivel: true,
   documento: '456',
   empresa_alvo: 'colacor_sc',
   cidade_uf: null,

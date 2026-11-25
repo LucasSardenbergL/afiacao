@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { comContatoMascarado } from '@/lib/contato-cliente';
-import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
+import { clientePorDocumento, comContatoMascarado } from '@/lib/contato-cliente';
+import { ilikeContainsPattern } from '@/lib/postgrest';
 import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 
 /** Resultado da busca de cliente (Omie ERP + perfis locais), antes de resolver user_id. */
@@ -70,10 +70,9 @@ export function useBuscaClienteOmie() {
     if (c.user_id) return c.user_id;
     if (c.documento) {
       const docClean = normalizarDocumento(c.documento);
-      const { data: profile } = await supabase.from('profiles').select('user_id')
-        .or(orFilter(eqText('document', docClean), eqText('document', c.documento)))
-        .limit(1).maybeSingle();
-      if (profile?.user_id) return profile.user_id;
+      // Onda D fatia 3: o vínculo por documento sai pela RPC de identidade (erro LANÇA).
+      const uid = await clientePorDocumento([docClean, c.documento]);
+      if (uid) return uid;
     }
     if (c.omie_codigo_cliente) {
       // Fatia 3 (épico-drop): c.omie_codigo_cliente veio da busca OBEN — resolve pela proof fresca

@@ -65,11 +65,12 @@ export default function GovernancePermissions() {
     queryKey: ['gov-perm-employees'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('profiles')
+        .from('v_perfil_equipe')
         .select('user_id, name, email')
         .eq('is_employee', true);
       if (error) throw error;
-      return data || [];
+      // a view devolve user_id anulável no tipo gerado; a linha de staff sempre tem
+      return (data || []).filter((p): p is typeof p & { user_id: string } => p.user_id !== null);
     },
     enabled: isAdmin || isSuperAdmin,
   });

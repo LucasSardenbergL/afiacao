@@ -77,3 +77,36 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 - Signup anônimo (`SignupForm`: `profiles.eq('document')` como anon) — decisão da spec: unicidade no
   servidor e resposta pública uniforme no corte. Filtrar por coluna revogada também dá 42501.
 - Escrita em `customer_contacts` segue na tabela (o `.select()` pós-escrita depende das policies da fatia 3).
+
+## Fatia 3 — `profiles` fecha pela API (3a leitores de servidor · 3b corte)
+- **Escopo (founder, handoff 25/11):** fechar `profiles.email/phone/document/cnpj` pela API. Decisões novas
+  (25/11): Caça **mascara o telefone** fora da carteira (o documento segue projetado como chave da fila);
+  diretório de equipe = **qualquer staff** vê nome+e-mail de staff (papel OU flag `is_employee`, que é como
+  funcionário novo entra antes de ganhar papel).
+- **3a `20261125120000`** (segura antes do corte; corpos do `pg_get_*def` de PROD): `private.v_perfil_chaves_internas`
+  (chave fiscal/telefone CRUA só para JOIN; ramo `service_role` porque a edge de custo lê `v_caca_compradores`
+  sem `sub` — sem ele, zero linhas EM SILÊNCIO; `current_user` em view invoker=off é o do chamador),
+  `v_perfil_equipe`, `cliente_por_documento(text[])` (documento → identidade, só staff), as 4 views invoker
+  (Caça e Grupo) e `listar_clientes_base` lendo contato pela `v_perfil_contato`, `resolver_cliente_por_telefone`
+  SECDEF com gate de staff explícito.
+- **3b `20261125130000`:** `REVOKE SELECT` de tabela + `GRANT SELECT` das 21 colunas de identidade (anon e
+  authenticated); postcondição confere coluna a coluna.
+- **Achado do harness:** o `upsert` do signup (`Auth.tsx`, `ON CONFLICT DO UPDATE … EXCLUDED.email`) quebra com
+  grant de coluna — o PG exige SELECT na coluna lida pelo `EXCLUDED`. Virou `ignoreDuplicates` + `update`.
+  A checagem "documento já cadastrado" do `SignupForm` lia como anon e **nunca disparou** (RLS) — removida.
+- **Prova:** `db/test-clientes-pii-fatia3-corte.sh` — 179 ok / 0 fail em `C` e `pt_BR.UTF-8`; digests linha a
+  linha antes/depois (compradores como service_role, Caça, grupo, lista), opt-out só por telefone, 14
+  sabotagens com o vermelho EXATO do mutante. Camada redundante declarada: o REVOKE de anon nas 4 views é
+  coberto por mais duas (chave interna e `v_perfil_contato` sem anon) — falsifica-se a postcondição, não o A19.
+- **Codex** (`gpt-6.2-astra`, high, 212 s, 117 k tokens): **NÃO APLICAR a 3b** — P0: `customer_metrics_mv`
+  projeta `document` a qualquer employee; `customer_contacts` e os snapshots `sales_orders.customer_*` seguem
+  abertos sem ledger; o UPDATE do próprio perfil é oráculo de unicidade de documento (pré-existente). P1:
+  `v_grupo_contatos` ainda projeta documento/endereço; `cliente_por_documento` é oráculo exato para staff;
+  edge `omie-cliente`; flag de equipe sobrevive ao desligamento; bundle `mcp` defasado. Integrados: digests,
+  opt-out por telefone, persistência das escritas, ledger no B12, vermelho exato, bundle `mcp` regenerado.
+  **Divergência registrada:** a 3b é estritamente REDUTORA (os P0 são superfícies independentes de `profiles`,
+  abertas com ou sem o corte) — então a onda D **não está pronta**; o que falta é a fatia 4 (abaixo).
+- **Fatia 4 (não entra aqui):** `customer_metrics_mv.document`; `sales_orders.customer_document/address/phone`;
+  policies de `customer_contacts` e `addresses`; `cliente_grupo_membros.documento` e
+  `v_grupo_contas_receber_por_doc`; endereço em `v_grupo_contatos`; edges `omie-cliente` (busca de staff e
+  oráculo público) e `analyze-unified-order`; `cobranca_regua_hoje`; unicidade de documento mediada no servidor.

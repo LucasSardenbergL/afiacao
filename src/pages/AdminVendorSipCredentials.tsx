@@ -43,7 +43,7 @@ export default function AdminVendorSipCredentials() {
       try {
         const [credsRes, profilesRes] = await Promise.all([
           supabase.from('vendor_sip_credentials').select('*'),
-          supabase.from('profiles').select('user_id, name, email'),
+          supabase.from('v_perfil_equipe').select('user_id, name, email'),
         ]);
         if (credsRes.error) throw credsRes.error;
         if (profilesRes.error) throw profilesRes.error;

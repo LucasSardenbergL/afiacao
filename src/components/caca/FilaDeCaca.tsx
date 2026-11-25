@@ -211,6 +211,11 @@ function CandidatoCard({ documento, empresasAlvo, display, onOcultar }: Candidat
             onLigar={() => track('caca.acao', { ...eventoBase(display), cta: 'ligar' })}
           />
         )}
+        {!display.telefone && display.telefoneOculto && (
+          <span className="text-xs text-muted-foreground" title="Telefone visível só para a carteira deste cliente">
+            Contato só na carteira
+          </span>
+        )}
         {fichaHref && (
           <Button
             asChild

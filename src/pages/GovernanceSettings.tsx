@@ -30,12 +30,13 @@ export default function GovernanceSettings() {
       const ids = Array.from(new Set((roles || []).map(r => r.user_id)));
       if (ids.length === 0) return [];
       const { data: profiles, error: pErr } = await supabase
-        .from('profiles')
+        .from('v_perfil_equipe')
         .select('user_id, name, email')
         .in('user_id', ids);
       if (pErr) throw pErr;
       const roleMap = new Map((roles || []).map(r => [r.user_id, r.role]));
       return (profiles || [])
+        .filter((p): p is typeof p & { user_id: string } => p.user_id !== null)
         .map(p => ({ ...p, role: roleMap.get(p.user_id) as string }))
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     },
