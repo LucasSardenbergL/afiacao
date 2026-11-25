@@ -17,6 +17,7 @@ import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
 import { somarQuantidade } from '@/lib/pricing/centavos';
+import { reprecificarNaFronteira } from '@/hooks/unifiedOrder/nascimento-item';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
@@ -387,12 +388,10 @@ export function useUnifiedOrder() {
       const next = prev.map(c => {
         if (c.type !== 'product') return c;
         const p = c as ProductCartItem;
-        if (p.tint_formula_id || p.precoNascimento == null) return c;
-        if (p.unit_price !== p.precoNascimento) return c; // vendedor editou → não toca
-        const novo = getProductPrice(p.product);
-        if (novo === p.unit_price) return c;
+        const r = reprecificarNaFronteira(p, () => getProductPrice(p.product));
+        if (!r) return c;
         mudou = true;
-        return { ...p, unit_price: novo, precoNascimento: novo };
+        return r;
       });
       return mudou ? next : prev;
     });

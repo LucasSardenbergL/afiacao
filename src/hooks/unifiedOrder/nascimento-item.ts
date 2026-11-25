@@ -1,4 +1,5 @@
 import type { Product, ProductAccount, ProductCartItem } from './types';
+import { centavos } from '@/lib/pricing/centavos';
 
 /**
  * NASCIMENTO de um item de produto comum no carrinho — UMA função para TODA via que o cria: a lista
@@ -32,4 +33,23 @@ export function nascerItemProduto(
     precoNascimento: preco,
     account: (product.account || 'oben') as ProductAccount,
   };
+}
+
+/**
+ * Reprecificação da FRONTEIRA para UM item (decisão pura, extraída do efeito em useUnifiedOrder).
+ * Corrige o item que o vendedor NÃO editou (`unit_price === precoNascimento`) para o preço de partida firme.
+ * Devolve null quando não há o que mudar.
+ *
+ * PR 2.4 (Codex, P0 da transição): diferença MENOR QUE 1 CENTAVO não reprecifica. Um rascunho salvo antes
+ * da regra de centavos traz 2,675; o preço de partida agora dá 2,68. Trocar mudaria o fingerprint e o id do
+ * envio (#4138) — uma aba antiga e uma nova do MESMO rascunho gerariam dois PVs. O preço cru segue como
+ * estava (o que o pedido antigo já mandava).
+ */
+export function reprecificarNaFronteira(p: ProductCartItem, precoFirme: () => number): ProductCartItem | null {
+  if (p.tint_formula_id || p.precoNascimento == null) return null;
+  if (p.unit_price !== p.precoNascimento) return null; // vendedor editou → não toca
+  const novo = precoFirme();
+  if (novo === p.unit_price) return null;
+  if (centavos(novo) === centavos(p.unit_price)) return null; // só sub-centavo: mantém o id do envio
+  return { ...p, unit_price: novo, precoNascimento: novo };
 }

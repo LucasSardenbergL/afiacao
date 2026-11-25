@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { nascerItemProduto } from '../nascimento-item';
-import type { Product } from '../types';
+import { nascerItemProduto, reprecificarNaFronteira } from '../nascimento-item';
+import type { Product, ProductCartItem } from '../types';
 
 // MONEY-PATH: o preço de nascimento de um item de produto comum tem UM decisor — o getProductPrice
 // (= precoPartida) do wizard. A lista do catálogo e o assistente de IA nascem o item por ESTA função
@@ -41,5 +41,23 @@ describe('nascerItemProduto — o item nasce pelo decisor de preço, e só por e
 
   it('não fabrica nem esconde: o que o decisor devolve é o que o item carrega (≤0 é barrado no submit, não aqui)', () => {
     expect(nascerItemProduto(produto(), 1, () => 0).unit_price).toBe(0);
+  });
+});
+
+describe('reprecificarNaFronteira — só o item não editado, e nunca por menos de 1 centavo (PR 2.4)', () => {
+  const item = (unit: number, nasc: number | undefined) =>
+    ({ type: 'product', product: produto(), quantity: 1, unit_price: unit, precoNascimento: nasc }) as ProductCartItem;
+
+  it('item não editado com preço firme diferente → reprecifica', () => {
+    expect(reprecificarNaFronteira(item(10, 10), () => 12.5)).toMatchObject({ unit_price: 12.5, precoNascimento: 12.5 });
+  });
+  it('rascunho antigo 2,675 com partida 2,68 → NÃO mexe (mantém o fingerprint e o id do envio)', () => {
+    expect(reprecificarNaFronteira(item(2.675, 2.675), () => 2.68)).toBeNull();
+  });
+  it('vendedor editou → não toca', () => {
+    expect(reprecificarNaFronteira(item(11, 10), () => 20)).toBeNull();
+  });
+  it('sem precoNascimento (tint) → não toca', () => {
+    expect(reprecificarNaFronteira(item(10, undefined), () => 20)).toBeNull();
   });
 });
