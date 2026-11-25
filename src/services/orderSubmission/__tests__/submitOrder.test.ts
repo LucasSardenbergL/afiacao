@@ -38,7 +38,7 @@ interface MakeSupabaseOpts {
   preflightError?: unknown;
   /** Linha existente devolvida pelo lookup idempotente de sales_orders
    *  (default null → todo teste vai pro INSERT). */
-  lookupExisting?: { id: string; omie_pedido_id: number | null };
+  lookupExisting?: { id: string; omie_pedido_id: number | null; total?: number };
 }
 function makeSupabase(opts: MakeSupabaseOpts = {}) {
   // ── caminho do INSERT: .from('sales_orders').insert().select('id').single() ──
@@ -64,7 +64,9 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
         }),
       };
     }
-    return { insert };
+    // Conferência do VALOR no skip (PR 2.4): .from('sales_orders').select('total').eq().maybeSingle().
+    const select = (_cols: string) => ({ eq: () => ({ maybeSingle: async () => ({ data: { total: opts.lookupExisting?.total ?? null }, error: null }) }) });
+    return { insert, select };
   });
   const invoke = vi.fn().mockImplementation(async (_name: string, arg: { body: { action?: string } }) =>
     opts.invokeImpl ? opts.invokeImpl(arg.body) : { data: { omie_numero_pedido: '999' }, error: null },

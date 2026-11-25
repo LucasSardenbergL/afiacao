@@ -6,7 +6,7 @@
  * project e é local ao arquivo, então não vira ímã de conflito entre worktrees.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
-import { shareOrderViaWhatsApp } from '../whatsappShare';
+import { itensComLinhaAoCentavo, shareOrderViaWhatsApp } from '../whatsappShare';
 
 let openSpy: MockInstance<typeof window.open>;
 
@@ -229,10 +229,10 @@ describe('shareOrderViaWhatsApp — itens a orçar (B4)', () => {
     expect(msg).not.toContain('Subtotal conhecido');
   });
 
-  it('linha ao centavo, igual ao total do carrinho (1,5 × 2,01 = 3,02, não 3,01) — PR 2.4', () => {
+  it('Novo Pedido: linha ao centavo, igual ao total do carrinho (1,5 × 2,01 = 3,02, não 3,01) — PR 2.4', () => {
     shareOrderViaWhatsApp({
       customerName: 'ACME LTDA',
-      items: [{ description: 'Lixa', quantity: 1.5, unitPrice: 2.01 }],
+      items: itensComLinhaAoCentavo([{ description: 'Lixa', quantity: 1.5, unitPrice: 2.01 }]),
       total: 3.02,
       date: fixedDate,
     });
@@ -240,6 +240,26 @@ describe('shareOrderViaWhatsApp — itens a orçar (B4)', () => {
     const linha = msg.split('\n').find((l) => l.includes('Lixa')) ?? '';
     expect(linha).toContain('3,02');
     expect(linha).not.toContain('3,01');
+  });
+
+  it('/sales (sem lineTotal) NÃO recalcula a linha ao centavo — fica coerente com o total importado (Codex #4164)', () => {
+    shareOrderViaWhatsApp({
+      customerName: 'ACME LTDA',
+      items: [{ description: 'Lixa', quantity: 1.5, unitPrice: 2.01 }],
+      total: 3.01,
+      date: fixedDate,
+    });
+    const linha = decodedMessage().split('\n').find((l) => l.includes('Lixa')) ?? '';
+    expect(linha).not.toContain('3,02');
+  });
+
+  it('itensComLinhaAoCentavo: item sem preço fica sem lineTotal; lineTotal já dado (desconto) é preservado', () => {
+    const [semPreco, comLiquido] = itensComLinhaAoCentavo([
+      { description: 'Afiação', quantity: 1, unitPrice: null },
+      { description: 'Lixa', quantity: 2, unitPrice: 10, lineTotal: 18 },
+    ]);
+    expect(semPreco.lineTotal).toBeUndefined();
+    expect(comLiquido.lineTotal).toBe(18);
   });
 });
 

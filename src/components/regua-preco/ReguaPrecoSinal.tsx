@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { centavoAcima, emCentavos } from '@/lib/centavos';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import type { ReguaPrecoResult } from '@/lib/regua-preco/types';
 
@@ -34,6 +35,11 @@ export function ReguaPrecoSinal({
   // Sem número não há `precoReferencia`, então o botão "Aplicar piso · R$ X" some por construção:
   // aplicá-lo jogaria o piso no campo de preço, revelando o custo em 1 clique.
   const pisoOculto = ehPiso && (readonly || result.pisoMC == null);
+  // PR 2.4: o valor que o botão ANUNCIA é o que ele APLICA, já ao centavo. Piso vai pelo TETO (11,2148 →
+  // 11,22): o half-up daria 11,21, abaixo do piso. Referência vai pelo half-up de sempre.
+  const precoAplicavel = result.precoReferencia == null
+    ? null
+    : ehPiso ? centavoAcima(result.precoReferencia) : emCentavos(result.precoReferencia);
   const pct = result.suggestedGapPct != null ? Math.round(result.suggestedGapPct * 100) : 0;
 
   useEffect(() => {
@@ -50,7 +56,7 @@ export function ReguaPrecoSinal({
   const label = ehPiso
     ? pisoOculto
       ? 'abaixo do piso'
-      : result.precoReferencia != null ? `MC<0 · piso ${fmt(result.precoReferencia)}` : 'MC<0 · confira custo'
+      : result.precoReferencia != null ? `MC<0 · piso ${fmt(precoAplicavel!)}` : 'MC<0 · confira custo'
     : result.precoReferencia != null ? `💰 ${fmt(result.precoReferencia)} (+${pct}%)` : '💰 ⓘ';
 
   return (
@@ -104,9 +110,9 @@ export function ReguaPrecoSinal({
             size="sm"
             variant="outline"
             className="w-full h-7 text-xs"
-            onClick={() => onAplicar!(result.precoReferencia!)}
+            onClick={() => onAplicar!(precoAplicavel!)}
           >
-            {ehPiso ? 'Aplicar piso' : 'Aplicar referência'} · {fmt(result.precoReferencia!)}
+            {ehPiso ? 'Aplicar piso' : 'Aplicar referência'} · {fmt(precoAplicavel!)}
           </Button>
         )}
       </PopoverContent>

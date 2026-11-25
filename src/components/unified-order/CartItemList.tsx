@@ -28,7 +28,7 @@ import { QuantidadeInput } from './QuantidadeInput';
 import { rotuloTotal } from './rotulo-total';
 import { DescontoCoresPedido } from './DescontoCoresPedido';
 import { fmtPct } from './fmt-pct';
-import { centavoAcima, emCentavos, totalDaLinha } from '@/lib/centavos';
+import { totalDaLinha } from '@/lib/centavos';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -216,11 +216,7 @@ export function CartItemList({
                           quantity: item.quantity, precoAtual: item.unit_price,
                           prazoDias: prazoRegua.prazoDias, result: r,
                         })}
-                        onAplicar={(preco) => {
-                          // Piso: o 1º centavo que CUMPRE o piso (11,2148 → 11,22), não o half-up (11,21 fica abaixo).
-                          const p = regua.sinal === 'piso' ? centavoAcima(preco) : emCentavos(preco);
-                          onUpdateProductPrice(cartIdx, p); marcarAplicado(chave, customerUserId!, p);
-                        }}
+                        onAplicar={(preco) => { onUpdateProductPrice(cartIdx, preco); marcarAplicado(chave, customerUserId!, preco); }}
                       />
                     )}
                   </div>

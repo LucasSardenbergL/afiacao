@@ -1,8 +1,5 @@
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
-import { emCentavos } from '@/lib/centavos';
-
-/** Total da linha ao centavo (PR 2.4: o mesmo do carrinho e do crédito); ausente segue ausente. */
-const linhaAoCentavo = (v: number | null): number | null => (v === null ? null : emCentavos(v));
+import { totalDaLinha } from '@/lib/centavos';
 
 interface OrderItem {
   description: string;
@@ -16,6 +13,18 @@ interface OrderItem {
   lineTotal?: number | null;
   tintCorId?: string;
   tintNomeCor?: string;
+}
+
+/**
+ * Itens do NOVO PEDIDO com a linha ao centavo (PR 2.4): o carrinho, o crédito e o resumo somam
+ * `round(q × v, 2)` por linha, então a mensagem leva o MESMO total de linha. Só o Novo Pedido usa —
+ * o compartilhamento de `/sales` segue a conta crua, coerente com o total gravado na importação
+ * (Codex #4164, rodada 2). Linha sem preço segue sem `lineTotal` ("A orçar"/"—" como sempre).
+ */
+export function itensComLinhaAoCentavo<T extends OrderItem>(items: T[]): T[] {
+  return items.map((it) => (it.unitPrice === null || it.lineTotal !== undefined
+    ? it
+    : { ...it, lineTotal: totalDaLinha(it.quantity, it.unitPrice) }));
 }
 
 interface ShareOrderParams {
@@ -57,7 +66,7 @@ export function shareOrderViaWhatsApp({
         // "R$ 0,00" numa mensagem que vai PARA O CLIENTE, afirmando preco que ninguem apurou.
         // `lineTotal` null também não cai na conta bruta: é "não sei o líquido", e sai "—".
         const totalLinha =
-          item.lineTotal !== undefined ? item.lineTotal : linhaAoCentavo(totalLinhaOuAusente(item.quantity, item.unitPrice));
+          item.lineTotal !== undefined ? item.lineTotal : totalLinhaOuAusente(item.quantity, item.unitPrice);
         const valor = itensAOrcar > 0 && item.unitPrice === null ? 'A orçar' : formatPrecoOuAusente(totalLinha);
         return `• ${item.quantity}x ${item.description}${tintInfo} - ${valor}`;
       }

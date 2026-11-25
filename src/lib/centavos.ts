@@ -1,5 +1,5 @@
 /**
- * Centavos no front — a MESMA regra do `centavos()` da edge (`omie-vendas-sync/revisao-credito.ts`) e do
+ * Centavos no front — a regra do `centavos()` da edge (`omie-vendas-sync/revisao-credito.ts`, que lê 6 casas; aqui 9, ver abaixo) e do
  * `round(q × v, 2)` por linha do crédito: half-up na 2ª casa, via texto decimal (`Math.round(1.005 * 100)`
  * dá 100 por ponto flutuante; aqui dá 101).
  *
@@ -15,7 +15,10 @@
 export function centavos(x: number): number {
   if (!Number.isFinite(x)) return Number.NaN;
   if (x < 0) return -centavos(-x);
-  const [inteiro, frac] = x.toFixed(6).split('.');
+  // 9 casas, não 6 (Codex #4164, rodada 2): com 6, 1,1149996 vira "1,115000" ANTES do half-up e sobe para
+  // 1,12 (arredondamento duplo — o round(numeric, 2) do crédito dá 1,11). 9 casas ainda absorvem o ruído
+  // binário de 1,005 / 2,675 (que precisam virar 1,01 / 2,68) e ficam longe do ULP até ~1e6.
+  const [inteiro, frac] = x.toFixed(9).split('.');
   return Number(inteiro) * 100 + Number(frac.slice(0, 2)) + (Number(frac[2]) >= 5 ? 1 : 0);
 }
 

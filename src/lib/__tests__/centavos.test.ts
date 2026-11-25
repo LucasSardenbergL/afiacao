@@ -78,3 +78,14 @@ describe('somarQuantidade — sem resíduo binário (Codex #4164)', () => {
     expect(somarQuantidade(2, -1)).toBe(1);
   });
 });
+
+describe('sem arredondamento duplo (Codex #4164, rodada 2)', () => {
+  it('1,1149996 (tabela 1,0036 × mult 1,111) vai a 1,11, não 1,12', () => {
+    expect(emCentavos(1.0036 * 1.111)).toBe(1.11);
+    expect(totalDaLinha(1.111, 1.0036)).toBe(1.11);
+  });
+  it('o ruído binário do meio exato continua subindo (1,005 → 1,01; 2,675 → 2,68)', () => {
+    expect(emCentavos(1.005)).toBe(1.01);
+    expect(emCentavos(2.675)).toBe(2.68);
+  });
+});

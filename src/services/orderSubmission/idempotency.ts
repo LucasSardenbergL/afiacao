@@ -1,5 +1,6 @@
 import type { SubmitClient } from './types';
 import type { Json } from '@/integrations/supabase/types';
+import { centavos } from '@/lib/centavos';
 
 export type SalesOrderAction = 'insert' | 'reuse' | 'skip';
 
@@ -54,6 +55,21 @@ export function pvReconciliadoConfere(omieResponse: unknown, itens: unknown): bo
     if (!pv.has(sku) || Math.abs((pv.get(sku) ?? 0) - q) > 1e-6) return false;
   }
   return true;
+}
+
+/**
+ * PR 2.4 (Codex #4164, rodada 2): o PV já enviado tem o VALOR que esta conta grava agora? O fingerprint
+ * compara o unitário ao centavo, então um PV enviado a 100 × 7,1249 (R$ 712,49, rascunho de antes da
+ * regra de centavos) e o carrinho atual a 7,12 (R$ 712,00) dão o MESMO envelope — o reenvio pularia o PV
+ * como "já enviado" e o comprovante afirmaria R$ 712,00. Compara o `total` gravado na 1ª tentativa com o
+ * desta, ao centavo. Ausente ≠ igual: total gravado nulo/ilegível → NÃO confere.
+ */
+export function valorGravadoConfere(totalGravado: unknown, totalAtual: number): boolean {
+  if (typeof totalGravado === 'string' && totalGravado.trim() === '') return false;
+  if (typeof totalGravado !== 'number' && typeof totalGravado !== 'string') return false;
+  const g = Number(totalGravado);
+  if (!Number.isFinite(g) || !Number.isFinite(totalAtual)) return false;
+  return centavos(g) === centavos(totalAtual);
 }
 
 export interface EnsureSalesOrderArgs {
@@ -112,7 +128,15 @@ export async function ensureSalesOrderRow(
   // com o carrinho atual — Codex, 2026-11-21).
   const tratarExistente = async (linha: Existente): Promise<{ id: string; alreadySent: boolean; pvDivergente?: boolean }> => {
     if (decideSalesOrderAction(linha) === 'skip') {
-      return { id: linha.id, alreadySent: true, pvDivergente: !pvReconciliadoConfere(linha.omie_response, fields.items) };
+      // `total` é legível por coluna (só omie_response é fechada — por isso a RPC acima). Falha de
+      // leitura aborta o envio, como a da RPC: nunca dar o PV por conferido sem ter lido o valor.
+      const { data: gravado, error: erroTotal } = await supabase
+        .from('sales_orders').select('total').eq('id', linha.id).maybeSingle();
+      if (erroTotal) throw erroTotal;
+      if (!gravado) throw new Error(`sales_orders ${linha.id} não pôde ser lida ao conferir o valor do PV já enviado`);
+      const confere = pvReconciliadoConfere(linha.omie_response, fields.items)
+        && valorGravadoConfere((gravado as { total?: unknown }).total, fields.total);
+      return { id: linha.id, alreadySent: true, pvDivergente: !confere };
     }
     const { error } = await supabase.from('sales_orders').update({
       items: fields.items, subtotal: fields.subtotal, total: fields.total, notes: fields.notes,

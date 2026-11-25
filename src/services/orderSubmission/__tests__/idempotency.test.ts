@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideSalesOrderAction, ensureSalesOrderRow, pvReconciliadoConfere } from '../idempotency';
+import { decideSalesOrderAction, ensureSalesOrderRow, pvReconciliadoConfere, valorGravadoConfere } from '../idempotency';
 import type { SubmitClient } from '../types';
 
 describe('decideSalesOrderAction', () => {
@@ -18,13 +18,18 @@ describe('decideSalesOrderAction', () => {
 // direto dava 403). O fake devolve o que a RPC devolveria: a consulta do PV só quando
 // `reconciled === true`. `.from().select()` direto PROÍBE a leitura (era o vetor do 403).
 function makeFakeSupabase(opts: {
-  existing?: { id: string; omie_pedido_id: number | null; omie_response?: unknown } | null;
+  existing?: { id: string; omie_pedido_id: number | null; omie_response?: unknown; total?: unknown } | null;
   insertResult?: { data: { id: string } | null; error: { code?: string } | null };
 }) {
-  const calls = { inserted: false, updated: false, rpc: [] as Array<[string, unknown]> };
+  const calls = { inserted: false, updated: false, leuTotal: false, rpc: [] as Array<[string, unknown]> };
   const fake = {
     from() { return this; },
-    select() { throw new Error('leitura direta de sales_orders — use a RPC pedido_por_checkout'); },
+    // Só o `total` é lido direto (coluna aberta) — omie_response continua pela RPC pedido_por_checkout.
+    select(cols: string) {
+      if (cols !== 'total') throw new Error('leitura direta de sales_orders — use a RPC pedido_por_checkout');
+      calls.leuTotal = true;
+      return { eq: () => ({ maybeSingle: async () => ({ data: { total: opts.existing && 'total' in opts.existing ? opts.existing.total : 0 }, error: null }) }) };
+    },
     rpc: async (nome: string, args: unknown) => {
       calls.rpc.push([nome, args]);
       const e = opts.existing;
@@ -100,6 +105,8 @@ describe('ensureSalesOrderRow', () => {
     const fake = {
       from() { return this; },
       rpc: async () => (++n === 1 ? { data: [], error: null } : { data: [{ id: 'RACED2', omie_pedido_id: 77, pv_reconciliado: false, pv_consulta: null }], error: null }),
+      // total gravado = o desta tentativa (0): a corrida não muda o valor (PR 2.4).
+      select() { return { eq: () => ({ maybeSingle: async () => ({ data: { total: 0 }, error: null }) }) }; },
       insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
       update() { return { eq: async () => ({ error: null }) }; },
     } as unknown as SubmitClient;
@@ -111,6 +118,8 @@ describe('ensureSalesOrderRow', () => {
     const fake = {
       from() { return this; },
       rpc: async () => (++n === 1 ? { data: [], error: null } : { data: [{ id: 'RACED3', omie_pedido_id: 78, pv_reconciliado: true, pv_consulta: consulta }], error: null }),
+      // total gravado = o desta tentativa (0): a corrida não muda o valor (PR 2.4).
+      select() { return { eq: () => ({ maybeSingle: async () => ({ data: { total: 0 }, error: null }) }) }; },
       insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
       update() { throw new Error('não deve atualizar linha já no Omie'); },
     } as unknown as SubmitClient;
@@ -157,3 +166,33 @@ describe('pvReconciliadoConfere (ATP 3.3 — reenvio de PV vinculado por duplici
     expect(r).toEqual({ id: 'X', alreadySent: true, pvDivergente: true });
   });
 });
+
+describe('valorGravadoConfere — o PV já enviado tem o valor desta tentativa? (PR 2.4)', () => {
+  it('mesmo valor ao centavo → confere (3,015 gravado pelo build antigo ≈ 3,02 por linha)', () => {
+    expect(valorGravadoConfere(712, 712)).toBe(true);
+    expect(valorGravadoConfere('712.00', 712)).toBe(true);
+  });
+  it('R$ 712,49 gravado × R$ 712,00 agora → NÃO confere', () => {
+    expect(valorGravadoConfere(712.49, 712)).toBe(false);
+  });
+  it('ausente ≠ igual: null, "" ou lixo → NÃO confere', () => {
+    expect(valorGravadoConfere(null, 0)).toBe(false);
+    expect(valorGravadoConfere('', 0)).toBe(false);
+    expect(valorGravadoConfere('abc', 0)).toBe(false);
+  });
+});
+
+describe('ensureSalesOrderRow — skip confere o VALOR gravado (PR 2.4)', () => {
+  it('PV já no Omie com outro total → pvDivergente=true (nunca "já enviado" calado)', async () => {
+    const { fake, calls } = makeFakeSupabase({ existing: { id: 'Y', omie_pedido_id: 99, total: 712.49 } });
+    const r = await ensureSalesOrderRow(fake, { ...baseArgs, fields: { ...baseArgs.fields, total: 712 } });
+    expect(r).toEqual({ id: 'Y', alreadySent: true, pvDivergente: true });
+    expect(calls.leuTotal).toBe(true);
+  });
+  it('mesmo total → pvDivergente=false', async () => {
+    const { fake } = makeFakeSupabase({ existing: { id: 'Y', omie_pedido_id: 99, total: 712 } });
+    const r = await ensureSalesOrderRow(fake, { ...baseArgs, fields: { ...baseArgs.fields, total: 712 } });
+    expect(r).toEqual({ id: 'Y', alreadySent: true, pvDivergente: false });
+  });
+});
+

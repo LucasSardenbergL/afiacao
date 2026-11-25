@@ -56,7 +56,7 @@ import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
 import { BarraEnvioPedido } from '@/components/unified-order/BarraEnvioPedido';
 import { motivosEnvioBloqueado, envioBloqueado, type EntradaMotivosEnvio } from '@/components/unified-order/motivos-envio';
-import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
+import { itensComLinhaAoCentavo, shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 
 function OrderStepper({ step, isCustomerMode }: { step: number; isCustomerMode: boolean }) {
@@ -815,7 +815,7 @@ const UnifiedOrder = () => {
           onShare={() => {
             shareOrderViaWhatsApp({
               customerName: h.lastOrderData!.customerName,
-              items: h.lastOrderData!.items,
+              items: itensComLinhaAoCentavo(h.lastOrderData!.items),
               total: h.lastOrderData!.total,
               itensAOrcar: h.lastOrderData!.itensAOrcar,
               orderNumbers: h.lastOrderData!.orderNumbers,

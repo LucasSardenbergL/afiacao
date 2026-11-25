@@ -77,4 +77,15 @@ describe('ReguaPrecoSinal', () => {
     abrir();
     expect(screen.getByText(/Último preço: 06\/06\/2026/)).toBeInTheDocument();
   });
+
+  it('piso 11,2148: o botão anuncia E aplica 11,22 (teto — nunca abaixo do piso) — PR 2.4', () => {
+    const onAplicar = vi.fn();
+    render(<ReguaPrecoSinal result={{ ...piso, precoReferencia: 11.2148 }} precoAtual={9} contexto={ctx} onAplicar={onAplicar} />);
+    abrir();
+    const botao = screen.getByText(/Aplicar piso/);
+    expect(botao.textContent).toMatch(/11,22/);
+    fireEvent.click(botao);
+    expect(onAplicar).toHaveBeenCalledWith(11.22);
+  });
 });
+

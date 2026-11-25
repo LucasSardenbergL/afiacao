@@ -307,7 +307,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       // ATP 3.3: o PV foi vinculado por duplicidade e tem OUTROS itens — o carrinho atual NÃO
       // está no Omie. Nunca "já enviado" (limparia o carrinho e imprimiria itens que o ERP não tem).
       results.push('PV Oben (já no Omie com itens diferentes)');
-      errors.push({ step: 'pv_divergente_oben', message: 'O pedido Oben já existe no Omie com os itens de uma tentativa anterior, diferentes do carrinho atual. Corrija os itens direto no Omie — não reenvie.' });
+      errors.push({ step: 'pv_divergente_oben', message: 'O pedido Oben já existe no Omie com os itens ou o valor de uma tentativa anterior, diferentes do carrinho atual. Corrija direto no Omie — não reenvie.' });
     } else if (alreadySent) {
       results.push('PV Oben (já enviado)');
     } else {
@@ -477,7 +477,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       // ATP 3.3: o PV foi vinculado por duplicidade e tem OUTROS itens — o carrinho atual NÃO
       // está no Omie. Nunca "já enviado" (limparia o carrinho e imprimiria itens que o ERP não tem).
       results.push('PV Colacor (já no Omie com itens diferentes)');
-      errors.push({ step: 'pv_divergente_colacor', message: 'O pedido Colacor já existe no Omie com os itens de uma tentativa anterior, diferentes do carrinho atual. Corrija os itens direto no Omie — não reenvie.' });
+      errors.push({ step: 'pv_divergente_colacor', message: 'O pedido Colacor já existe no Omie com os itens ou o valor de uma tentativa anterior, diferentes do carrinho atual. Corrija direto no Omie — não reenvie.' });
     } else if (alreadySent) {
       results.push('PV Colacor (já enviado)');
     } else {
