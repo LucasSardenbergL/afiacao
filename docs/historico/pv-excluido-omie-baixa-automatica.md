@@ -37,3 +37,13 @@ coordenar `ConsultarPedido` na trava numa leva de deploy própria.
 ## Onde olhar
 - Revisão humana: `SELECT * FROM omie_pv_conferencia WHERE contradicao IS NOT NULL` (inclui as pós-baixa: `reapareceu_apos_baixa`, `pid_atribuido_apos_baixa`, `terminal_apos_baixa`, que nascem com `aplicado_em`).
 - Cobertura: `omie_pv_triagem_log` (semanas registradas × recusadas) e `omie_pv_execucao.resumo`.
+
+## Primeiras horas em prod (2026-11-25) e decisões do founder
+- 8 execuções por conta (00:17–07:17), identidade confirmada e triagem limpa em todas, zero 425. Baixas automáticas:
+  PV 13707 da Oben (PID 12215743052, o PV de teste: 1ª ausência 00:17, baixa 01:17) e PID 5191024775 da Colacor.
+- **PV 13600 da Oben** (PID 12212025516, R$ 2.157,50): provado excluído (consultas 3 e 5), parado em `teto_valor_pv`.
+  Decisão: **baixa manual só deste PV, teto mantido** → `db/2026-11-25-baixa-manual-pv13600-oben.sql` (recibo #1362;
+  `prova.origem_historica` = não consome o teto diário da automática). 2ª testemunha psql-ro: 0 vivas, ledger aplicado.
+- **PV 7 da Colacor** (PID 403829462, faturado em 2020-04-08, R$ 750, ausente do Omie): **não mexer**. Faturado = venda real
+  com nota; sumir do Omie 6 anos depois é arquivamento, não exclusão de venda. O cursor da triagem para em 2024-01-01, então
+  ele não volta a aparecer como suspeito.
