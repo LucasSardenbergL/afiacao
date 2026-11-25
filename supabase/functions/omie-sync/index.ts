@@ -11,7 +11,7 @@ import { montarParcelasOS, parcelasComValor } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
-import { enderecoDaOs, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
+import { enderecoDaOs, MODALIDADE_LEGADA, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
 import { decidirAtualizacaoLocalOs, STATUS_ATUALIZAVEL } from "./reenvio-os-local.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
@@ -1177,13 +1177,18 @@ Deno.serve(async (req) => {
         if (osResult.reconciliada) {
           const { data: atual, error: lerErr } = await supabaseAdmin
             .from("orders")
-            .select("address, time_slot, status")
+            .select("address, time_slot, status, delivery_option")
             .eq("id", orderId)
             .maybeSingle();
           if (lerErr) {
             avisoLocal = `A OS ${osResult.cNumOS} já existia e não deu para conferir o endereço/turno gravado no app (${lerErr.message}) — confira no roteiro.`;
           } else {
-            const decisao = decidirAtualizacaoLocalOs(atual, { address: enderecoEnvio, time_slot: turnoEnvio }, osResult.cNumOS);
+            const decisao = decidirAtualizacaoLocalOs(
+              atual,
+              { address: enderecoEnvio, time_slot: turnoEnvio },
+              modalidade.valor === MODALIDADE_LEGADA ? null : modalidade.valor,
+              osResult.cNumOS,
+            );
             if (decisao.acao === "recusar") {
               avisoLocal = decisao.aviso;
             } else if (decisao.acao === "atualizar") {

@@ -2450,6 +2450,10 @@ async function criarPedidoVenda(
   // ATP 3.3 (#1): o PV reconciliado pode ter os itens da tentativa ANTERIOR. A RPC já ajustou a
   // RESERVA a ele (lê o `consulta` dentro do omie_response); aqui o vendedor fica sabendo que o
   // carrinho atual NÃO foi ao Omie. Depois do write-back: o vínculo fica gravado.
+  // PR 2.5: data prometida que não deu para conferir NÃO lança (precisão > recall) — fica a trilha.
+  if (comparacaoPrevisao?.estado === "nao_conferivel" && previsaoEntrega) {
+    console.warn(`[Omie Vendas][${account}] PV ${omie_pedido_id} reconciliado: previsão de entrega não conferível na consulta (enviada ${previsaoEntrega})`);
+  }
   if (comparacaoPv !== null) {
     const aviso = avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id, comparacaoPrevisao ?? undefined);
     if (aviso) throw new Error(aviso);

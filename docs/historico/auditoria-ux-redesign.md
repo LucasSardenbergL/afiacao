@@ -350,17 +350,21 @@ o front fica para depois do #4138, que toca os mesmos arquivos). (A) O reenvio q
 vincula o PV da tentativa anterior e só comparava SKU e quantidade: a data prometida trocada saía
 como sucesso. `compararPrevisaoEntregaPv` (`_shared/atp-pv-omie.ts`) confere
 `frete.previsao_entrega` — na doc do Omie é string10 SEM formato documentado, e não há
-ConsultarPedido real em prod (0 `sales_orders` com `omie_response.consulta`). Régua fail-closed:
-campo ausente = não conferível (nunca "igual"), vazio = PV sem data, data legível compara o DIA. Data
-divergente ou não conferível LANÇA depois do write-back, com "a previsão de entrega no Omie ficou
-DD/MM/AAAA". O `omie_payload` gravava o payload que o Omie RECUSOU como duplicata; passa a gravar o PV
+ConsultarPedido real em prod (0 `sales_orders` com `omie_response.consulta`). Régua: só
+LANÇA (depois do write-back) na divergência PROVADA — este envio leva data legível e o PV traz outra
+data legível ou o campo vazio — com "a previsão de entrega no Omie ficou DD/MM/AAAA". Campo ausente,
+ilegível ou envio sem data = não conferível: nunca "igual", mas só log. O `omie_payload` gravava o payload que o Omie RECUSOU como duplicata; passa a gravar o PV
 que o Omie tem (`pedido_venda_produto` da consulta, mesma forma; `null` sem forma legível, como na
 reconciliação pela exclusão), no write-back atômico e no legado. (B) No reenvio que reconcilia a OS,
 o upsert `ignoreDuplicates` de `orders` mantinha o endereço/turno da tentativa anterior.
 `decidirAtualizacaoLocalOs` (`omie-sync/reenvio-os-local.ts`) regrava só local, só em
-`pedido_recebido` (guard também no WHERE do UPDATE), e devolve `aviso_local`; em outra etapa NÃO
-regrava e avisa. Endereço/turno seguem FORA da assinatura da OS: o id do #4138 não muda. `orders`
-segue vazia em prod; os triggers de `orders` só agem em mudança de status. Falsificação 18/18
-vermelha (9 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacunas: o front
+`pedido_recebido` (guard também no WHERE do UPDATE), só com a modalidade declarada pelo envio e
+igual à gravada, só os campos que mudaram, e devolve `aviso_local`; em outra etapa NÃO regrava e avisa. Endereço/turno seguem FORA da assinatura da OS: o id do #4138 não muda. `orders`
+segue vazia em prod; os triggers de `orders` só agem em mudança de status. Codex r1 (P0 3, todos
+nas bordas da própria correção) → cortado ao núcleo: a 1ª versão lançava também no "não conferível" e
+pulava a OP da Colacor num pedido que a main concluía; regravava `null` quando o front antigo não
+mandava a modalidade; e o UPDATE dos dois campos desfazia um reenvio concorrente. P1s absorvidos: frete
+e payload lidos do MESMO objeto da consulta; envio sem data (data vencida é descartada antes) não vira
+"corrija no Omie". Falsificação refeita depois do corte, controle verde na mesma invocação. Lacunas: o front
 ainda não mostra o `aviso_local`, e o ramo skip do front (`pvReconciliadoConfere`) não compara a data;
 os dois entram depois do #4138.

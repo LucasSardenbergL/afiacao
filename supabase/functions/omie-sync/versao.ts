@@ -57,7 +57,8 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 //   (`orders.address`/`time_slot`). Front antigo (sem os campos) segue 'retirada' sem endereço (PR 2.3).
 // v1.18 (2026-11-25) — reenvio que RECONCILIA a OS regrava `orders.address`/`time_slot` deste envio enquanto o pedido
 //   está em `pedido_recebido` (antes o upsert com ignoreDuplicates mantinha os da tentativa anterior em silêncio), e
-//   devolve `aviso_local`; em outra etapa NÃO regrava e avisa. Endereço/turno seguem FORA da assinatura da OS (PR 2.5).
+//   devolve `aviso_local`; em outra etapa NÃO regrava e avisa. Só com a modalidade DECLARADA pelo envio e igual à gravada
+//   (front antigo não apaga), e só os campos que mudaram (Codex r1 do #4174). Endereço/turno seguem FORA da assinatura da OS (PR 2.5).
 export const VERSAO = "v1.18-reenvio-endereco-turno";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */

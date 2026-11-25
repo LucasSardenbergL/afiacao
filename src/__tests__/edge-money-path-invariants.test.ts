@@ -5156,6 +5156,12 @@ describe('guardrail money-path: reenvio da OS regrava endereço/turno só local 
       /\.update\(decisao\.campos\)\s*\.eq\("id", orderId\)\s*\.eq\("status", STATUS_ATUALIZAVEL\)/,
     );
   });
+  it('só com a modalidade DECLARADA (front antigo não apaga endereço/turno) e lida junto da linha', () => {
+    expect(passo, 'REGRESSÃO: front sem modalidade vira retirada e apaga o endereço').toMatch(
+      /modalidade\.valor === MODALIDADE_LEGADA \? null : modalidade\.valor,/,
+    );
+    expect(passo).toContain('.select("address, time_slot, status, delivery_option")');
+  });
   it('o aviso volta no resultado de sucesso', () => {
     expect(src).toContain('aviso_local: avisoLocal,');
   });

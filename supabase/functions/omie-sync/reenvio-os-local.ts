@@ -9,16 +9,22 @@
 //
 // Régua: só atualiza enquanto o pedido está em `pedido_recebido` — dali em diante a coleta/rota já pode
 // ter sido montada com o endereço velho, e trocar por baixo seria pior que avisar. Sempre com aviso.
+// Cortes do Codex r1 do #4174 (P0s nas bordas desta correção):
+//   - só com a MODALIDADE DECLARADA por este envio e igual à gravada: o front anterior ao PR 2.3 não
+//     manda modalidade/turno, e a edge calcularia null e APAGARIA o endereço/turno válidos;
+//   - só os campos que MUDARAM: dois reenvios concorrentes (um troca o endereço, outro o turno) não
+//     desfazem a mudança um do outro regravando o campo que não tocaram.
 
 export interface LocalOs {
   address: unknown;
   time_slot: unknown;
   status?: unknown;
+  delivery_option?: unknown;
 }
 
 export type AtualizacaoLocalOs =
   | { acao: "nada" }
-  | { acao: "atualizar"; campos: { address: Record<string, string> | null; time_slot: string | null }; aviso: string }
+  | { acao: "atualizar"; campos: { address?: Record<string, string> | null; time_slot?: string | null }; aviso: string }
   | { acao: "recusar"; aviso: string };
 
 /** Status em que a coleta/rota ainda não foi montada: o único em que o reenvio regrava endereço/turno. */
@@ -36,13 +42,16 @@ function canonico(v: unknown): string {
 }
 
 /** O que fazer com `orders` depois do upsert de uma OS RECONCILIADA. `atual` é a linha lida depois do
- *  upsert (null = não existe); `desejado` sai de `enderecoDaOs`/`turnoDaOs` deste envio. */
+ *  upsert (null = não existe); `desejado` sai de `enderecoDaOs`/`turnoDaOs` deste envio, e
+ *  `modalidade` é a que ESTE envio declarou (null = não declarou: front antigo ou valor inválido). */
 export function decidirAtualizacaoLocalOs(
   atual: LocalOs | null,
   desejado: { address: Record<string, string> | null; time_slot: string | null },
+  modalidade: string | null,
   cNumOS: string,
 ): AtualizacaoLocalOs {
   if (atual === null) return { acao: "nada" };
+  if (modalidade === null || atual.delivery_option !== modalidade) return { acao: "nada" };
   const mudouEndereco = canonico(atual.address) !== canonico(desejado.address);
   const mudouTurno = canonico(atual.time_slot ?? null) !== canonico(desejado.time_slot);
   if (!mudouEndereco && !mudouTurno) return { acao: "nada" };
@@ -56,7 +65,10 @@ export function decidirAtualizacaoLocalOs(
   }
   return {
     acao: "atualizar",
-    campos: { address: desejado.address, time_slot: desejado.time_slot },
+    campos: {
+      ...(mudouEndereco ? { address: desejado.address } : {}),
+      ...(mudouTurno ? { time_slot: desejado.time_slot } : {}),
+    },
     aviso: `A OS ${cNumOS} já existia: ${oque} deste envio foi atualizado no app (roteirizador). ` +
       `No Omie a OS não muda${mudouTurno ? " — o turno na observação dela segue o da tentativa anterior" : ""}.`,
   };
