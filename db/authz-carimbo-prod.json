@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-20T23:20:13.602Z",
-  "sourceHead": "8abec0d10df7d59b397ad0c1e2bdc1c887cfdce4",
+  "medidoEm": "2026-11-25T20:52:15.482Z",
+  "sourceHead": "654e9acffb56cde47c7e51a754ab3bdcd3460b18",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,62 +48,74 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 1,
-      "resumo": "audit-rls — 7 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
+      "resumo": "audit-rls — 9 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
       "denominador": null,
       "contratoFingerprint": "8b2ed46571616bc3bf9287fa3d5d5f77a560d3cb27555c342ef7b36d011b56ec",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
       "achados": [
         {
+          "id": "9d5e64cf9a1d1940",
+          "linha": "❌ [POLICY_SUMIU] public.sales_orders » sales_orders_delete_staff: declarada no contrato e AUSENTE em prod. Um DROP POLICY não deixa rastro em migration nenhuma quando é colado no SQL Editor; e numa tabela onde o acesso vem de VÁRIAS policies permissivas, remover uma FECHA um caminho legítimo em silêncio.",
+          "primeiraVez": "2026-11-25",
+          "ultimaVez": "2026-11-25"
+        },
+        {
           "id": "76565bac7ea470f0",
           "linha": "❌ [POLICY_ALTERADA] public.farmer_client_scores » fcs_select_carteira: divergente do contrato em 1 campo(s) — USING 184cfe6a578c8f43caae82a675508c5f (contrato: 4ce46ee9bbc5966f54317f7e446a452e).",
           "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
         },
         {
           "id": "3a4f6f1885c01f17",
           "linha": "❌ [POLICY_ALTERADA] public.farmer_calls » fcall_select_carteira: divergente do contrato em 1 campo(s) — USING 757ca14d46c9690529917c1363fd418a (contrato: 3e6d44046f30e603a5068b5028e53e60).",
           "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
         },
         {
           "id": "6908dfcb6e6c560f",
           "linha": "❌ [PREDICADO_NAO_DECLARADO] private.carteira_clientes_visiveis: função referenciada DIRETAMENTE por uma policy curada e NÃO declarada em AUTHZ_RLS_PREDICADOS (secdef=true, cfg=search_path=public, md5=8adee7e0f97d8745d5ea56344df4bb3c). É onde a autorização real pode morar sem que o md5 da policy mude — declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.",
           "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
         },
         {
           "id": "e89e27fc755addf3",
           "linha": "❌ [PREDICADO_NAO_DECLARADO] private.carteira_ve_tudo: função referenciada DIRETAMENTE por uma policy curada e NÃO declarada em AUTHZ_RLS_PREDICADOS (secdef=true, cfg=search_path=public, md5=a514d1340b4292afb877748fb270b082). É onde a autorização real pode morar sem que o md5 da policy mude — declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.",
           "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
         },
         {
           "id": "2fe6b6ed50d8a922",
           "linha": "❌ [PREDICADO_SUMIU] private.carteira_visivel_para: declarada em AUTHZ_RLS_PREDICADOS e o fecho das policies curadas não a alcança mais. Ou a policy que a usava mudou de predicado (veja os achados de POLICY_*), ou a função que a CHAMAVA parou de chamá-la (veja PREDICADO_ALTERADO no chamador — sair do grafo é mudança de autorização tanto quanto entrar), ou a entrada envelheceu. Entrada que não vigia nada é cobertura só no papel.",
           "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
         },
         {
           "id": "ca5146a5523c4724",
           "linha": "❌ [LACUNA_GRUPO_MUDOU] private.carteira_visivel_para: o grupo ENCOLHEU — 0 tabela(s) em prod contra 8 declarada(s) (medido em 2026-08-28). 0 curada(s), 0 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: .",
           "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
+        },
+        {
+          "id": "22239733bf533413",
+          "linha": "❌ [LACUNA_GRUPO_MUDOU] fin_*: o grupo CRESCEU — 46 tabela(s) em prod contra 44 declarada(s) (medido em 2026-11-03). 5 curada(s), 41 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: fin_alertas, fin_antecipacoes, fin_audit_log, fin_balanco_inputs, fin_categoria_dre_mapping, fin_categoria_fluxo_mapping, fin_categorias, fin_conciliacao, fin_confiabilidade, fin_config_cashflow, fin_contas_correntes, fin_contas_pagar, fin_contas_receber, fin_contas_receber_excluidos, fin_custo_rateio, fin_divida_completude, fin_divida_parcelas, fin_dividas, fin_dre_custo_tipo, fin_dre_snapshots, fin_eliminacoes_intercompany, fin_eliminacoes_log, fin_estoque_valor, fin_eventos_eventuais, fin_eventos_recorrentes, fin_fechamento_log, fin_fechamentos, fin_forecast, fin_funding_inputs, fin_ic_contrapartes, fin_ic_matches, fin_ic_reconcile_rodadas, fin_kpi_tributario, fin_movimentacoes, fin_orcamento, fin_period_overrides, fin_permissoes, fin_projecao_snapshots, fin_regime_inputs, fin_saldo_conta_diario, fin_sync_checkpoint, fin_sync_cursor, fin_sync_kick_retry, fin_sync_lease, fin_sync_log, fin_valor_inputs.",
+          "primeiraVez": "2026-11-25",
+          "ultimaVez": "2026-11-25"
         },
         {
           "id": "b3390e844228bed0",
           "linha": "❌ [LACUNA_GRUPO_MUDOU] private.cap_compras_ler: o grupo CRESCEU — 19 tabela(s) em prod contra 18 declarada(s) (medido em 2026-11-19). 1 curada(s), 18 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: pedido_compra_item, pedido_sugerido_evento, reposicao_alerta_pedido_minimo, reposicao_auto_aprovacao_log, reposicao_cold_start_log, reposicao_compra_suspensa, reposicao_compra_suspensa_log, reposicao_depara_auto_log, reposicao_estoque_nao_confirmado_log, reposicao_motor_run, reposicao_param_auto_log, reposicao_param_auto_run, reposicao_param_fila_log, reposicao_param_pin, reposicao_pedidos_compra_run, reposicao_po_a_baixar_decisao, reposicao_po_a_baixar_episodio, reposicao_po_last_seen, reposicao_teto_cobertura_log.",
           "primeiraVez": "2026-11-20",
-          "ultimaVez": "2026-11-20"
+          "ultimaVez": "2026-11-25"
         }
       ]
     },
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 598 identidade(s) batem com o repo (520 em dia, 65 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 598 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@026059ca4 (fetch ok) · prod 2026-11-20 23:20:44.230054Z",
-      "contratoFingerprint": "4243a14825376b5053104b01074ed80be3bef325628041fd534ada298a610487",
-      "auditorFingerprint": "3b1f38be117c2aafd7804b36b20e2de39cee5565430fc752349d4ddddcb76fd0",
+      "resumo": "✅ deriva-corpo — 650 identidade(s) batem com o repo (572 em dia, 65 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 650 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@cefef8e20 (fetch ok) · prod 2026-11-25 20:52:52.80058Z",
+      "contratoFingerprint": "42ad931bc284527118f591bd800cecab009f0d62356d75553ed7c99ea2cb7ef5",
+      "auditorFingerprint": "8d4ea2c387293550cfdd3f97c41f32803d5d7353ab92928bb4b4d01eac85ccf4",
       "achados": []
     }
   }
