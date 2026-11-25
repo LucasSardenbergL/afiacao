@@ -2118,6 +2118,36 @@ export type Database = {
         }
         Relationships: []
       }
+      contato_acesso_operacional: {
+        Row: {
+          acessado_em: string
+          customer_user_id: string
+          id: number
+          motivo: string
+          objeto_id: string
+          objeto_tipo: string
+          staff_user_id: string
+        }
+        Insert: {
+          acessado_em?: string
+          customer_user_id: string
+          id?: never
+          motivo: string
+          objeto_id: string
+          objeto_tipo: string
+          staff_user_id: string
+        }
+        Update: {
+          acessado_em?: string
+          customer_user_id?: string
+          id?: never
+          motivo?: string
+          objeto_id?: string
+          objeto_tipo?: string
+          staff_user_id?: string
+        }
+        Relationships: []
+      }
       conversao_unidades: {
         Row: {
           cnpj_fornecedor: string
@@ -16031,6 +16061,13 @@ export type Database = {
             referencedRelation: "addresses"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "recurring_schedules_address_id_fkey"
+            columns: ["address_id"]
+            isOneToOne: false
+            referencedRelation: "v_endereco_contato"
+            referencedColumns: ["id"]
+          },
         ]
       }
       referrals: {
@@ -24510,6 +24547,26 @@ export type Database = {
         }
         Relationships: []
       }
+      v_cliente_contatos: {
+        Row: {
+          birthday: string | null
+          cargo: string | null
+          created_at: string | null
+          created_by: string | null
+          customer_user_id: string | null
+          email: string | null
+          id: string | null
+          is_decision_maker: boolean | null
+          is_primary: boolean | null
+          nome: string | null
+          notas: string | null
+          phone: string | null
+          source: string | null
+          updated_at: string | null
+          whatsapp_only: boolean | null
+        }
+        Relationships: []
+      }
       v_cliente_interacoes: {
         Row: {
           at: string | null
@@ -24779,6 +24836,25 @@ export type Database = {
           urgencia?: never
           volume_minimo_condicional?: number | null
           volume_minimo_unidade?: string | null
+        }
+        Relationships: []
+      }
+      v_endereco_contato: {
+        Row: {
+          city: string | null
+          complement: string | null
+          contato_visivel: boolean | null
+          created_at: string | null
+          id: string | null
+          is_default: boolean | null
+          is_from_omie: boolean | null
+          label: string | null
+          neighborhood: string | null
+          number: string | null
+          state: string | null
+          street: string | null
+          user_id: string | null
+          zip_code: string | null
         }
         Relationships: []
       }
@@ -25145,45 +25221,6 @@ export type Database = {
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
-        }
-        Relationships: []
-      }
-      v_cliente_contatos: {
-        Row: {
-          birthday: string | null
-          cargo: string | null
-          created_at: string | null
-          created_by: string | null
-          customer_user_id: string | null
-          email: string | null
-          id: string | null
-          is_decision_maker: boolean | null
-          is_primary: boolean | null
-          nome: string | null
-          notas: string | null
-          phone: string | null
-          source: string | null
-          updated_at: string | null
-          whatsapp_only: boolean | null
-        }
-        Relationships: []
-      }
-      v_endereco_contato: {
-        Row: {
-          city: string | null
-          complement: string | null
-          contato_visivel: boolean | null
-          created_at: string | null
-          id: string | null
-          is_default: boolean | null
-          is_from_omie: boolean | null
-          label: string | null
-          neighborhood: string | null
-          number: string | null
-          state: string | null
-          street: string | null
-          user_id: string | null
-          zip_code: string | null
         }
         Relationships: []
       }
@@ -26805,22 +26842,6 @@ export type Database = {
           saldo_centavos: number
         }[]
       }
-      contato_cliente_operacional: {
-        Args: { p_motivo: string; p_objeto_ids: string[]; p_objeto_tipo: string }
-        Returns: {
-          cnpj: string | null
-          customer_user_id: string
-          document: string | null
-          email: string | null
-          enderecos: Json
-          objeto_id: string
-          pedido_documento: string | null
-          pedido_endereco: string | null
-          pedido_telefone: string | null
-          phone: string | null
-          via_excecao: boolean
-        }[]
-      }
       buscar_clientes_global: {
         Args: { p_limite?: number; p_termo: string }
         Returns: {
@@ -27178,6 +27199,26 @@ export type Database = {
       consolidar_demanda_sku: {
         Args: { p_empresa: string; p_sku_antigo: string; p_sku_novo: string }
         Returns: undefined
+      }
+      contato_cliente_operacional: {
+        Args: {
+          p_motivo: string
+          p_objeto_ids: string[]
+          p_objeto_tipo: string
+        }
+        Returns: {
+          cnpj: string
+          customer_user_id: string
+          document: string
+          email: string
+          enderecos: Json
+          objeto_id: string
+          pedido_documento: string
+          pedido_endereco: string
+          pedido_telefone: string
+          phone: string
+          via_excecao: boolean
+        }[]
       }
       converter_sugestao_em_campanha_flat: {
         Args: {
