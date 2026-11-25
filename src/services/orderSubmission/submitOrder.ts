@@ -28,7 +28,7 @@ import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
 import type { BloqueioAtpPedido } from './atp';
 import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } from './prazoDecisao';
 import { assinaturaServicosAfiacao, avisoOsAfiacaoDesatualizada } from './checkout-envelope';
-import { falhasDaOrdemProducao } from './ordemProducao';
+import { falhasDaOrdemProducao, falhasDeTransporteOp } from './ordemProducao';
 // O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
 import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 
@@ -570,8 +570,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                     })),
                   },
                 });
+                // Erro de transporte: a edge pode ter criado parte das OPs — cada produto vira "confira antes de criar".
                 const falhasOp = opError
-                  ? [(await mensagemDoErroEdge(opError)) || opError.message || 'Falha ao criar a ordem de produção']
+                  ? falhasDeTransporteOp(
+                    produtoAcabadoItems.map(c => c.product.descricao || c.product.codigo),
+                    (await mensagemDoErroEdge(opError)) || opError.message || 'Falha ao criar a ordem de produção',
+                  )
                   : falhasDaOrdemProducao(opData);
                 for (const m of falhasOp) errors.push({ step: 'create_production_order', message: m });
                 logger[falhasOp.length ? 'warn' : 'info']('Production orders', {
@@ -591,7 +595,9 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                   itemCount: produtoAcabadoItems.length,
                   error: opErr,
                 });
-                errors.push({ step: 'create_production_order', message: opMessage });
+                for (const m of falhasDeTransporteOp(produtoAcabadoItems.map(c => c.product.descricao || c.product.codigo), opMessage)) {
+                  errors.push({ step: 'create_production_order', message: m });
+                }
               }
             }
           }

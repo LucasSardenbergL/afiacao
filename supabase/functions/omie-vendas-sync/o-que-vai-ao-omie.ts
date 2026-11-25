@@ -86,7 +86,7 @@ export function infoAdicionalItemAninhada(
 const DIA_ISO_ESTRITO = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** `YYYY-MM-DD` que existe no calendário (rejeita 2026-02-30, 2026-13-01, "2026-1-5", hora junto). */
-function diaIsoValido(v: unknown): v is string {
+export function diaIsoValido(v: unknown): v is string {
   if (typeof v !== "string") return false;
   const m = DIA_ISO_ESTRITO.exec(v);
   if (!m) return false;

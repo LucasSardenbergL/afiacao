@@ -4483,33 +4483,39 @@ Deno.serve(async (req) => {
             cObservacao: `Gerado automaticamente via App - Pedido ${opSalesId.substring(0, 8)}`,
           };
 
+          if (opItem.invalido) {
+            // Nem foi ao Omie: sem linha local executável (uma linha `pending` com a soma parcial ofereceria
+            // "Iniciar Produção" da quantidade errada — 2ª rodada do Codex). O vendedor vê a falha por produto.
+            console.error(`[Omie Vendas][${account}] OP não enviada (${opItem.invalido}):`, descricaoOp);
+            desfechosOp.push({ status: "falhou", tipo: "invalido", motivo: opItem.invalido, chave: null, descricao: descricaoOp });
+            continue;
+          }
+
           let omieOrdemId: number | null = null;
           let omieOrdemNumero: string | null = null;
-          let motivoFalha: string | null = opItem.invalido;
-          if (motivoFalha === null) {
-            try {
-              const opResult = await callOmieVendasApi(
-                "manufatura/ordemproducao/",
-                "IncluirOrdemProducao",
-                opPayload,
-                account
-              );
-              const lida = lerRespostaOp(opResult);
-              if (lida) {
-                omieOrdemId = lida.id;
-                omieOrdemNumero = lida.numero;
-                console.log(`[Omie Vendas][${account}] OP criada: ${rotuloOp(lida.id, lida.numero)}`);
-              } else {
-                motivoFalha = "o Omie respondeu sem o id da OP";
-              }
-            } catch (opErr) {
-              // Recusa OU resultado indeterminado (timeout depois de gravar): o front manda procurar pela chave.
-              motivoFalha = opErr instanceof Error ? opErr.message : String(opErr);
+          let motivoFalha: string | null = null;
+          try {
+            const opResult = await callOmieVendasApi(
+              "manufatura/ordemproducao/",
+              "IncluirOrdemProducao",
+              opPayload,
+              account
+            );
+            const lida = lerRespostaOp(opResult);
+            if (lida) {
+              omieOrdemId = lida.id;
+              omieOrdemNumero = lida.numero;
+              console.log(`[Omie Vendas][${account}] OP criada: ${rotuloOp(lida.id, lida.numero)}`);
+            } else {
+              motivoFalha = "o Omie respondeu sem o id da OP";
             }
+          } catch (opErr) {
+            // Recusa OU resultado indeterminado (timeout depois de gravar): o front manda conferir no Omie.
+            motivoFalha = opErr instanceof Error ? opErr.message : String(opErr);
           }
           if (motivoFalha) console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, motivoFalha);
 
-          // Linha local, mesmo sem OP no Omie: a produção vê o item (comportamento de antes).
+          // Linha local, mesmo sem OP confirmada no Omie: a produção vê o item (comportamento de antes).
           const { data: insertedOP, error: insErr } = await supabaseAdmin.from("production_orders").insert({
             sales_order_id: opSalesId,
             product_id: opItem.product_id || null,
@@ -4527,11 +4533,12 @@ Deno.serve(async (req) => {
           }).select('id').single();
 
           if (motivoFalha) {
-            desfechosOp.push({ status: "falhou", motivo: motivoFalha, chave: chaveOp, descricao: descricaoOp });
+            desfechosOp.push({ status: "falhou", tipo: "indeterminado", motivo: motivoFalha, chave: chaveOp, descricao: descricaoOp });
           } else if (insErr) {
             // A OP EXISTE no Omie, mas o app não a guardou: diz qual é, para ninguém criar outra à mão.
             desfechosOp.push({
               status: "falhou",
+              tipo: "sem_registro_local",
               motivo: `${rotuloOp(omieOrdemId as number, omieOrdemNumero)} FOI criada no Omie, mas não ficou registrada no app (${insErr.message})`,
               chave: chaveOp,
               descricao: descricaoOp,

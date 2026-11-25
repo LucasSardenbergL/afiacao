@@ -76,9 +76,21 @@ Deno.test("agrupar não muta a entrada", () => {
 Deno.test("uma falha já tira o success (antes era true incondicional)", () => {
   igual(resumoOps([
     { status: "criada", omie_ordem_id: 1, omie_ordem_numero: "1" },
-    { status: "falhou", motivo: "Omie recusou", chave: "OP_x_5" },
+    { status: "falhou", tipo: "indeterminado", motivo: "Omie recusou", chave: "OP_x_5" },
   ]), { success: false, falhas: 1 }, "com falha");
   igual(resumoOps([{ status: "criada", omie_ordem_id: 1, omie_ordem_numero: null }]), { success: true, falhas: 0 }, "sem falha");
+});
+
+Deno.test("data impossível não vence o prazo válido (2ª rodada do Codex)", () => {
+  const [p] = agruparItensOp([
+    { omie_codigo_produto: 9, quantidade: 1, ready_by_date: "2027-03-04" },
+    { omie_codigo_produto: 9, quantidade: 1, ready_by_date: "2027-02-30" },
+  ], null);
+  igual(p.ready_by_date, "2027-03-04", "dia que não existe é ignorado");
+  const [q] = agruparItensOp([{ omie_codigo_produto: 9, quantidade: 1, ready_by_date: "2027-02-30" }], "2027-05-01");
+  igual(q.ready_by_date, "2027-05-01", "linha com dia impossível herda o prazo do pedido");
+  const [r] = agruparItensOp([{ omie_codigo_produto: 9, quantidade: 1, ready_by_date: "2027-05-02T10:00:00Z" }], null);
+  igual(r.ready_by_date, "2027-05-02", "timestamp vale pelo dia");
 });
 
 // ── fiação no index.ts (a action não é executável fora do runtime da edge) ─────────────────────
@@ -94,4 +106,17 @@ Deno.test("fiação: criar_ordem_producao agrupa, lê a resposta e resume — se
   }
   if (/result\s*=\s*\{\s*success:\s*true/.test(bloco)) throw new Error("success:true incondicional voltou");
   if (bloco.includes("String(omieOrdemId)")) throw new Error("número \"null\" fabricado voltou");
+});
+
+Deno.test("fiação: produto inválido NÃO grava linha local executável e cada falha diz o tipo (2ª rodada do Codex)", async () => {
+  const fonte = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const bloco = fonte.slice(fonte.indexOf('case "criar_ordem_producao"'), fonte.indexOf('case "finalizar_ordem_producao"'));
+  const iInvalido = bloco.indexOf("if (opItem.invalido) {");
+  const iInsert = bloco.indexOf('from("production_orders").insert(');
+  if (iInvalido < 0 || iInsert < 0 || iInvalido > iInsert) throw new Error("o desvio do inválido tem de vir ANTES do insert");
+  const desvio = bloco.slice(iInvalido, iInsert);
+  if (!/tipo: "invalido"[\s\S]*continue;/.test(desvio)) throw new Error("inválido sem desfecho tipado ou sem pular o insert");
+  for (const t of ['tipo: "indeterminado"', 'tipo: "sem_registro_local"']) {
+    if (!bloco.includes(t)) throw new Error(`desfecho sem tipo: ${t}`);
+  }
 });

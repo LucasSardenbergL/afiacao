@@ -11,8 +11,13 @@
 //   • o mesmo produto em duas linhas vira UMA OP com a soma (o `cCodIntOP` é por produto: a 2ª chamada era
 //     recusada e a quantidade dela sumia da produção). Linha com quantidade inválida derruba o produto inteiro
 //     (nunca soma parcial); a data prometida mais CEDO vale, já resolvida com o prazo do pedido.
+//   • a falha diz o TIPO (2ª rodada do Codex): `invalido` (nem foi ao Omie — não grava linha local executável),
+//     `indeterminado` (recusa ou timeout depois de gravar — conferir no Omie antes de criar outra) e
+//     `sem_registro_local` (a OP EXISTE no Omie, só o app não a guardou — não criar outra).
 //
 // Testado em ./ordem-producao_test.ts.
+
+import { diaIsoValido } from "./o-que-vai-ao-omie.ts";
 
 export interface ItemOp {
   product_id?: string | null;
@@ -30,9 +35,11 @@ export interface ProdutoOp extends ItemOp {
   invalido: string | null;
 }
 
+export type TipoFalhaOp = "invalido" | "indeterminado" | "sem_registro_local";
+
 export type DesfechoOp =
   | { status: "criada"; omie_ordem_id: number; omie_ordem_numero: string | null }
-  | { status: "falhou"; motivo: string; chave: string | null };
+  | { status: "falhou"; tipo: TipoFalhaOp; motivo: string; chave: string | null };
 
 /** Chave do produto no Omie — a mesma do `cCodIntOP`. Ausente/0 = sem chave (não fabricar). */
 function chaveProduto(item: ItemOp): number | null {
@@ -44,9 +51,13 @@ function quantidadeValida(q: unknown): q is number {
   return typeof q === "number" && Number.isFinite(q) && q > 0;
 }
 
-/** Data prometida da linha: a dela, senão a do pedido. Só `YYYY-MM-DD` conta (não fabricar). */
+/** Data prometida da linha: a dela, senão a do pedido. Só dia que EXISTE no calendário conta (2027-02-30
+ *  não vence um prazo válido — não fabricar). */
 function prazoDaLinha(item: ItemOp, prazoDoPedido: unknown): string | null {
-  const ok = (d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : null;
+  const ok = (d: unknown) => {
+    const dia = typeof d === "string" ? d.slice(0, 10) : null;
+    return diaIsoValido(dia) ? dia : null;
+  };
   return ok(item.ready_by_date) ?? ok(prazoDoPedido);
 }
 

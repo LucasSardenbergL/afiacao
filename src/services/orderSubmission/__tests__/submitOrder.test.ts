@@ -325,6 +325,8 @@ describe('submitOrder', () => {
       defaultProductionAssigneeId: 'assignee-1',
     }));
     expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('edge caiu'))).toBe(true);
+    // Transporte = resultado indeterminado (a edge pode ter criado): manda conferir, nunca só o erro bruto.
+    expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('antes de criar outra'))).toBe(true);
   });
 
   it('Modo cliente (autoatendimento): OS de afiação NÃO é bloqueada pelo preflight (cliente sintético code 0)', async () => {
