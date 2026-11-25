@@ -365,6 +365,7 @@ nas bordas da própria correção) → cortado ao núcleo: a 1ª versão lançav
 pulava a OP da Colacor num pedido que a main concluía; regravava `null` quando o front antigo não
 mandava a modalidade; e o UPDATE dos dois campos desfazia um reenvio concorrente. P1s absorvidos: frete
 e payload lidos do MESMO objeto da consulta; envio sem data (data vencida é descartada antes) não vira
-"corrija no Omie". Falsificação refeita depois do corte, controle verde na mesma invocação. Lacunas: o front
+"corrija no Omie". Falsificação refeita depois do corte: 30/30 vermelha (15 sabotagens, uma por
+camada e uma por P0/P1 absorvido, × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacunas: o front
 ainda não mostra o `aviso_local`, e o ramo skip do front (`pvReconciliadoConfere`) não compara a data;
 os dois entram depois do #4138.
