@@ -365,4 +365,5 @@ envio com erro, e o clique seguinte cai em "já enviado"); regravar `orders` apa
 o front mandava `null` (bundle antigo ou consulta de endereço que falhou) e dois reenvios concorrentes
 se desfaziam mesmo gravando só o campo que mudou. Sem lançar e sem escrever, os 6 somem por construção.
 Lacuna: o front ainda não mostra `aviso_previsao`/`aviso_local` (Onda 3); até lá, a trilha é o log e o
-`omie_payload`. Falsificação com controle verde na mesma invocação, `C` e `pt_BR.UTF-8`.
+`omie_payload`. Falsificação 26/26 vermelha (13 sabotagens, uma por camada e uma por P0/P1 do Codex, × `C`
+e `pt_BR.UTF-8`), controle verde na mesma invocação.
