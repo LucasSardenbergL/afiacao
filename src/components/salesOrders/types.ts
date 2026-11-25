@@ -272,7 +272,8 @@ export function ultimoDiaAberto(ultimoCarregado: string): string | null {
   const d = new Date(ultimoCarregado);
   if (Number.isNaN(d.getTime())) return null;
   const local = format(d, 'yyyy-MM-dd');
-  const utc = d.toISOString().slice(0, 10);
+  // UTC de propósito (data-pura do Omie É dia UTC), montado como em `diaDoPedido`.
+  const utc = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   return local > utc ? local : utc;
 }
 
