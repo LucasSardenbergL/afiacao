@@ -11,7 +11,9 @@ import {
   classificarConsultaExclusao,
   classificarErroConsultaExclusao,
   compararCarrinhoPv,
+  compararPrevisaoEntregaPv,
   edicaoBloqueadaPorPvDivergente,
+  payloadDoPvReconciliado,
   vereditoExclusaoNoOmie,
 } from "./atp-pv-omie.ts";
 
@@ -146,4 +148,93 @@ Deno.test("exclusão no Omie: pedido do app só sai com a canônica CANCELADA", 
     assertMarca(v.permitido ? null : v.motivo, "Cancele direto no Omie", String(st));
     assertMarca(v.permitido ? null : v.motivo, "avise o suporte", String(st));
   }
+});
+
+// ── PR 2.5 (rodada 3, "reenvio honesto"): a previsão de entrega do PV reconciliado ──
+const comFrete = (frete: unknown) => ({ pedido_venda_produto: { cabecalho: { codigo_pedido: 1 }, frete } });
+
+Deno.test("previsão: campo AUSENTE na resposta = não conferível, nunca igual", () => {
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", { pedido_venda_produto: { cabecalho: {} } }), { estado: "nao_conferivel" }, "sem frete");
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", comFrete({ modalidade: "0" })), { estado: "nao_conferivel" }, "frete sem a chave");
+  assertEquals(compararPrevisaoEntregaPv(null, comFrete({ modalidade: "0" })), { estado: "nao_conferivel" }, "sem data dos dois lados e chave ausente");
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", comFrete({ previsao_entrega: null })), { estado: "nao_conferivel" }, "null");
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", null), { estado: "nao_conferivel" }, "consulta nula");
+});
+
+Deno.test("previsão: data legível compara o DIA (dd/mm/aaaa e aaaa-mm-dd)", () => {
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", comFrete({ previsao_entrega: "10/12/2026" })), { estado: "igual" }, "mesmo dia");
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", comFrete({ previsao_entrega: "2026-12-10" })), { estado: "igual" }, "ISO");
+  assertEquals(compararPrevisaoEntregaPv("10/12/2026", { frete: { previsao_entrega: "10/12/2026" } }), { estado: "igual" }, "forma sem pedido_venda_produto");
+  assertEquals(
+    compararPrevisaoEntregaPv("10/12/2026", comFrete({ previsao_entrega: "05/12/2026" })),
+    { estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" },
+    "outro dia",
+  );
+});
+
+Deno.test("previsão: vazio no Omie = PV sem data (igual sem data, divergente com data)", () => {
+  assertEquals(compararPrevisaoEntregaPv(null, comFrete({ previsao_entrega: "" })), { estado: "igual" }, "nenhum dos dois");
+  assertEquals(compararPrevisaoEntregaPv("", comFrete({ previsao_entrega: "  " })), { estado: "igual" }, "vazios");
+  assertEquals(
+    compararPrevisaoEntregaPv("10/12/2026", comFrete({ previsao_entrega: "" })),
+    { estado: "divergente", noOmie: null, enviada: "10/12/2026" },
+    "envio com data, PV sem",
+  );
+  assertEquals(
+    compararPrevisaoEntregaPv(null, comFrete({ previsao_entrega: "05/12/2026" })),
+    { estado: "divergente", noOmie: "05/12/2026", enviada: null },
+    "envio sem data, PV com",
+  );
+});
+
+Deno.test("previsão: texto ilegível ou dia inexistente = não conferível", () => {
+  for (const v of ["10-12-2026", "31/02/2026", "amanhã", "10/12/26", "00/12/2026"]) {
+    assertEquals(compararPrevisaoEntregaPv("10/12/2026", comFrete({ previsao_entrega: v })), { estado: "nao_conferivel" }, v);
+  }
+  assertEquals(compararPrevisaoEntregaPv("31/02/2026", comFrete({ previsao_entrega: "10/12/2026" })), { estado: "nao_conferivel" }, "enviada ilegível");
+});
+
+Deno.test("aviso: itens iguais e previsão DIVERGENTE LANÇA com a data do Omie", () => {
+  const d = avisoPvReconciliado("igual", { ok: true }, 9401, { estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" });
+  assertMarca(d, "PV 9401", "pid");
+  assertMarca(d, "ficou 05/12/2026", "data do Omie");
+  assertMarca(d, "(10/12/2026)", "data do envio");
+  assertMarca(d, "Corrija a previsão de entrega direto no Omie", "instrução");
+  assertMarca(d, "não reenvie", "não reenvie");
+  const semData = avisoPvReconciliado("igual", { ok: true }, 9402, { estado: "divergente", noOmie: null, enviada: "10/12/2026" });
+  assertMarca(semData, "SEM previsão de entrega", "PV sem data");
+});
+
+Deno.test("aviso: previsão não conferível LANÇA (ausente ≠ igual)", () => {
+  const d = avisoPvReconciliado("igual", { ok: true, reserva_ajustada: true }, 9403, { estado: "nao_conferivel" });
+  assertMarca(d, "Não deu para conferir a previsão de entrega", "frase");
+  assertMarca(d, "Confira no Omie a previsão de entrega", "instrução");
+});
+
+Deno.test("aviso: itens E data divergentes — uma frase não esconde a outra", () => {
+  const d = avisoPvReconciliado("divergente", { ok: true, ajuste_falhou: "40P01" }, 9404, { estado: "divergente", noOmie: "05/12/2026", enviada: "10/12/2026" });
+  assertMarca(d, "diferentes do carrinho atual", "itens");
+  assertMarca(d, "ficou 05/12/2026", "data");
+  assertMarca(d, "NÃO pôde ser conferida (40P01)", "reserva");
+  assertMarca(d, "Corrija os itens e a previsão de entrega", "instrução");
+  const misto = avisoPvReconciliado("divergente", { ok: true }, 9405, { estado: "nao_conferivel" });
+  assertMarca(misto, "Corrija os itens e confira a previsão de entrega direto no Omie", "corrige e confere");
+});
+
+Deno.test("aviso: previsão igual mantém o silêncio e o texto da 3.3", () => {
+  assertEquals(avisoPvReconciliado("igual", { ok: true, reserva_ajustada: true }, 9406, { estado: "igual" }), null, "tudo igual");
+  assertEquals(
+    avisoPvReconciliado("divergente", { ok: true }, 9407, { estado: "igual" }),
+    avisoPvReconciliado("divergente", { ok: true }, 9407),
+    "data igual não muda a frase dos itens",
+  );
+});
+
+Deno.test("payload gravado: o PV que o Omie TEM, nunca o recusado", () => {
+  const pvp = { cabecalho: { codigo_pedido: 7, codigo_parcela: "001" }, det: [], frete: { previsao_entrega: "05/12/2026" } };
+  assertEquals(payloadDoPvReconciliado({ pedido_venda_produto: pvp }), pvp, "pedido_venda_produto");
+  assertEquals(payloadDoPvReconciliado({ cabecalho: { codigo_pedido: 7 } }), { cabecalho: { codigo_pedido: 7 } }, "forma plana");
+  assertEquals(payloadDoPvReconciliado({ algo: 1 }), null, "sem forma");
+  assertEquals(payloadDoPvReconciliado(null), null, "nulo");
+  assertEquals(payloadDoPvReconciliado({ pedido_venda_produto: [1] }), null, "array");
 });

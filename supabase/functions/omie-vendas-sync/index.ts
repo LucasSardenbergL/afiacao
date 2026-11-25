@@ -24,8 +24,11 @@ import {
   classificarConsultaExclusao,
   classificarErroConsultaExclusao,
   compararCarrinhoPv,
+  compararPrevisaoEntregaPv,
+  type ComparacaoPrevisao,
   type ConsultaExclusao,
   edicaoBloqueadaPorPvDivergente,
+  payloadDoPvReconciliado,
   vereditoExclusaoNoOmie,
 } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
@@ -2330,6 +2333,10 @@ async function criarPedidoVenda(
   let omie_numero_pedido: string | number;
   let omie_response: unknown = null;
   let comparacaoPv: "igual" | "divergente" | "ilegivel" | null = null;
+  let comparacaoPrevisao: ComparacaoPrevisao | null = null;
+  // O que `sales_orders.omie_payload` guarda: o que FOI ao Omie. Reconciliado ⇒ o PV que o Omie TEM
+  // (PR 2.5): o payload deste envio foi recusado como duplicata e gravá-lo faria o local mentir.
+  let payloadGravado: Record<string, unknown> | null = payload;
   try {
     const result = await callOmieVendasApi(
       "produtos/pedido/",
@@ -2382,6 +2389,8 @@ async function criarPedidoVenda(
     omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
     omie_response = { reconciled: true, consulta };
     comparacaoPv = compararCarrinhoPv(items, consulta);
+    comparacaoPrevisao = compararPrevisaoEntregaPv(previsaoEntrega, consulta);
+    payloadGravado = payloadDoPvReconciliado(consulta);
   }
 
   // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
@@ -2398,7 +2407,7 @@ async function criarPedidoVenda(
     p_account: account,
     p_omie_pedido_id: omie_pedido_id,
     p_omie_numero_pedido: String(omie_numero_pedido),
-    p_omie_payload: payload,
+    p_omie_payload: payloadGravado,
     p_omie_response: omie_response,
   });
   if (wbError?.code === "PGRST202") {
@@ -2414,7 +2423,7 @@ async function criarPedidoVenda(
       .update({
         omie_pedido_id,
         omie_numero_pedido: String(omie_numero_pedido),
-        omie_payload: payload,
+        omie_payload: payloadGravado,
         omie_response,
         status: "enviado",
       })
@@ -2442,7 +2451,7 @@ async function criarPedidoVenda(
   // RESERVA a ele (lê o `consulta` dentro do omie_response); aqui o vendedor fica sabendo que o
   // carrinho atual NÃO foi ao Omie. Depois do write-back: o vínculo fica gravado.
   if (comparacaoPv !== null) {
-    const aviso = avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id);
+    const aviso = avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id, comparacaoPrevisao ?? undefined);
     if (aviso) throw new Error(aviso);
   }
 

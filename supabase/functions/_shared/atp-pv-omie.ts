@@ -53,16 +53,85 @@ export function compararCarrinhoPv(enviados: ItemEnviado[], consulta: unknown): 
   return "igual";
 }
 
+// PR 2.5 (rodada 3, "reenvio honesto") — a PREVISÃO DE ENTREGA. A data prometida vai em
+// `frete.previsao_entrega` (PR 2.3). Se o carrinho do reenvio trocou a data, o PV vinculado ficou com a
+// da tentativa anterior e o vendedor acharia que a data nova foi. Doc do Omie (pedido_venda_produto →
+// frete): `previsao_entrega`, string10, "Previsão de entrega do Pedido de Venda", formato NÃO
+// documentado — e não há ConsultarPedido real em prod para conferir (0 `sales_orders` com
+// `omie_response.consulta` em 2026-11-24). Por isso a régua é fail-closed:
+//   - campo AUSENTE na resposta (sem `frete`, ou `frete` sem a chave) = NÃO CONFERÍVEL, nunca "igual";
+//   - presente e vazio ("") = o PV não tem data — igual se este envio também não tem, divergente se tem;
+//   - data legível (dd/mm/aaaa ou aaaa-mm-dd, dia de calendário válido) = compara o DIA;
+//   - qualquer outro texto = não conferível.
+
+/** Dia de calendário `aaaa-mm-dd` de um texto dd/mm/aaaa ou aaaa-mm-dd; `null` se ilegível. */
+function diaDaPrevisao(v: string): string | null {
+  const s = v.trim();
+  let a: number, m: number, d: number;
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (br) [d, m, a] = [Number(br[1]), Number(br[2]), Number(br[3])];
+  else if (iso) [a, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  else return null;
+  const dt = new Date(Date.UTC(a, m - 1, d));
+  if (dt.getUTCFullYear() !== a || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return `${String(a).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+export type ComparacaoPrevisao =
+  | { estado: "igual" }
+  /** `noOmie` null = o PV não tem previsão de entrega; `enviada` null = este envio não tem. */
+  | { estado: "divergente"; noOmie: string | null; enviada: string | null }
+  | { estado: "nao_conferivel" };
+
+/** A previsão de entrega do PV vinculado é a deste envio? `enviada` é o valor que foi no payload
+ *  (`previsaoEntregaOmie`, dd/mm/aaaa) ou null/"" quando este envio não promete data. */
+export function compararPrevisaoEntregaPv(enviada: string | null | undefined, consulta: unknown): ComparacaoPrevisao {
+  const c = consulta as { pedido_venda_produto?: { frete?: unknown }; frete?: unknown } | null;
+  const frete = c?.pedido_venda_produto?.frete ?? c?.frete;
+  if (!frete || typeof frete !== "object" || Array.isArray(frete)) return { estado: "nao_conferivel" };
+  if (!Object.prototype.hasOwnProperty.call(frete, "previsao_entrega")) return { estado: "nao_conferivel" };
+  const bruto = (frete as { previsao_entrega?: unknown }).previsao_entrega;
+  if (typeof bruto !== "string") return { estado: "nao_conferivel" };
+  const envTxt = typeof enviada === "string" ? enviada.trim() : "";
+  const diaEnv = envTxt === "" ? null : diaDaPrevisao(envTxt);
+  if (envTxt !== "" && diaEnv === null) return { estado: "nao_conferivel" };
+  const pvTxt = bruto.trim();
+  if (pvTxt === "") {
+    return diaEnv === null ? { estado: "igual" } : { estado: "divergente", noOmie: null, enviada: envTxt };
+  }
+  const diaPv = diaDaPrevisao(pvTxt);
+  if (diaPv === null) return { estado: "nao_conferivel" };
+  if (diaPv === diaEnv) return { estado: "igual" };
+  return { estado: "divergente", noOmie: pvTxt, enviada: diaEnv === null ? null : envTxt };
+}
+
+/** O que gravar em `sales_orders.omie_payload` quando o PV foi RECONCILIADO: o pedido que o Omie TEM
+ *  (`pedido_venda_produto` do ConsultarPedido — mesma forma do IncluirPedido: cabecalho/det/frete),
+ *  nunca o payload deste envio, que o Omie recusou como duplicata. Sem forma legível ⇒ `null`
+ *  (o mesmo da reconciliação pela exclusão): o `omie_response.consulta` guarda a resposta crua. */
+export function payloadDoPvReconciliado(consulta: unknown): Record<string, unknown> | null {
+  const c = consulta as { pedido_venda_produto?: unknown; cabecalho?: unknown } | null;
+  const pvp = c?.pedido_venda_produto;
+  if (pvp && typeof pvp === "object" && !Array.isArray(pvp)) return pvp as Record<string, unknown>;
+  if (c && typeof c === "object" && !Array.isArray(c) && c.cabecalho && typeof c.cabecalho === "object") {
+    return c as Record<string, unknown>;
+  }
+  return null;
+}
+
 /** Mensagem a LANÇAR depois de um write-back reconciliado, ou `null` quando o PV é o carrinho e a
  *  reserva acompanhou. Lança (não `success` com aviso): caller antigo ignora campo desconhecido e o
  *  vendedor acharia que o carrinho ATUAL foi ao Omie. O vínculo já está gravado, então o reenvio é
  *  recusado pelo guard de reenvio — a mensagem manda conferir, não reenviar.
- *  Duas frases independentes (Codex 3.3, 2ª rodada): o que houve com o PEDIDO (PV × carrinho) e o
- *  que houve com a RESERVA (ajustada, não pôde ser conferida, ou nada a dizer) — uma não esconde a outra. */
+ *  Frases independentes (Codex 3.3, 2ª rodada): o que houve com o PEDIDO (PV × carrinho), com a
+ *  PREVISÃO DE ENTREGA (PR 2.5) e com a RESERVA (ajustada, não pôde ser conferida, ou nada a dizer) —
+ *  uma não esconde a outra. `previsao` ausente = caller que não compara a data (comportamento 3.3). */
 export function avisoPvReconciliado(
   comparacao: "igual" | "divergente" | "ilegivel",
   wb: unknown,
   omiePedidoId: number,
+  previsao?: ComparacaoPrevisao,
 ): string | null {
   const r = (wb ?? {}) as { ajuste_falhou?: unknown; reserva_ajustada?: unknown };
   const falhou = typeof r.ajuste_falhou === "string" && r.ajuste_falhou !== "";
@@ -71,20 +140,37 @@ export function avisoPvReconciliado(
     : comparacao === "ilegivel"
     ? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado, mas não deu para conferir os itens dele.`
     : null;
+  const dataDiverge = previsao?.estado === "divergente";
+  const dataSemConferir = previsao?.estado === "nao_conferivel";
+  const data = previsao?.estado === "divergente"
+    ? (previsao.noOmie === null
+      ? `O PV no Omie ficou SEM previsão de entrega, não com a data deste envio (${previsao.enviada}).`
+      : `A previsão de entrega no Omie ficou ${previsao.noOmie}, não a data deste envio (${previsao.enviada ?? "sem data"}).`)
+    : dataSemConferir
+    ? `Não deu para conferir a previsão de entrega do PV no Omie.`
+    : null;
   const reserva = falhou
     ? `A reserva de estoque NÃO pôde ser conferida (${r.ajuste_falhou}) — avise o responsável pelo estoque.`
     : r.reserva_ajustada === true
     ? `A reserva de estoque passou a ser a do pedido do Omie.`
     : null;
-  if (pedido === null && reserva === null) return null;
-  if (pedido === null && !falhou) return null; // PV igual e reserva ajustada a ele: nada a avisar
-  const instrucao = comparacao === "divergente"
-    ? "Corrija os itens direto no Omie — não reenvie."
-    : comparacao === "ilegivel"
+  if (pedido === null && data === null && reserva === null) return null;
+  if (pedido === null && data === null && !falhou) return null; // PV igual e reserva ajustada a ele: nada a avisar
+  const corrigir = [comparacao === "divergente" ? "os itens" : null, dataDiverge ? "a previsão de entrega" : null]
+    .filter(Boolean).join(" e ");
+  const conferir = [comparacao === "ilegivel" ? "os itens" : null, dataSemConferir ? "a previsão de entrega" : null]
+    .filter(Boolean).join(" e ");
+  const instrucao = corrigir && conferir
+    ? `Corrija ${corrigir} e confira ${conferir} direto no Omie — não reenvie.`
+    : corrigir
+    ? `Corrija ${corrigir} direto no Omie — não reenvie.`
+    : conferir === "os itens"
     ? "Confira no Omie se os itens batem com o carrinho — não reenvie."
+    : conferir
+    ? `Confira no Omie ${conferir} — não reenvie.`
     : "Não reenvie.";
-  return [pedido ?? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado.`, reserva, instrucao]
-    .filter(Boolean).join(" ");
+  const abertura = pedido ?? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado.`;
+  return [abertura, data, reserva, instrucao].filter(Boolean).join(" ");
 }
 
 /** A edição (`alterar_pedido`) não pode partir do carrinho quando o PV vinculado é OUTRO pedido: o
