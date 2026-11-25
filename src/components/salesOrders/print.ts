@@ -49,8 +49,9 @@ export function buildSalesOrderPrintRow(
     customer_user_id: order.customer_user_id,
     // valor_total por item recalculado quando vem zerado (rascunhos).
     items: (order.items ?? []).map((it) => ({ ...it, valor_total: itemTotal(it) })),
-    subtotal: order.subtotal ?? 0,
-    total: order.total ?? 0,
+    // Sem `?? 0`: `sales_orders.subtotal/total` são NOT NULL (o tipo já é `number`).
+    subtotal: order.subtotal,
+    total: order.total,
     desconto: order.discount ?? 0,
     status: order.status,
     omie_numero_pedido: order.omie_numero_pedido,
