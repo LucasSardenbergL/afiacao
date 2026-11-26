@@ -177,6 +177,17 @@ const SalesQuotes = () => {
         });
         return;
       }
+      if ((omieData as { blocked?: string } | null)?.blocked === 'itens_divergentes') {
+        // Claim conferido (edge v1.53): este orçamento foi salvo em outra aba/por outra pessoa depois
+        // que esta lista o leu — converter mandaria ao Omie os itens VELHOS. Recarrega a lista para a
+        // próxima conversão já sair com os itens que estão no banco.
+        queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
+        toast.error('Conversão recusada: o orçamento mudou', {
+          description: 'Ele foi alterado depois que esta tela o abriu. A lista foi recarregada — confira os itens e converta de novo. O Omie NÃO foi atualizado.',
+          duration: 12000,
+        });
+        return;
+      }
       const blockedDesconhecido = (omieData as { success?: boolean; blocked?: string } | null);
       if (blockedDesconhecido?.success === false || blockedDesconhecido?.blocked) {
         // Fail-closed p/ gate FUTURO do edge que esta versão não conhece: tratar como

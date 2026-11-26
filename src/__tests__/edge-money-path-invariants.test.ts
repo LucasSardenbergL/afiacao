@@ -5233,13 +5233,19 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(rpcDel, 'a intenção de orçamento chega à RPC').toMatch(/p_somente_orcamento: somenteOrcamento/);
     expect(rpcDel, 'linha que deixou de ser orçamento RECUSA').toMatch(/"nao_e_orcamento"[\s\S]{0,40}throw new Error\(/);
     const criar = removerComentarios(src.slice(src.indexOf('case "criar_pedido": {'), src.indexOf('case "excluir_pedido": {')));
-    const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio"');
+    // v1.53: o claim é o CONFERIDO pelos itens (migration 20261126190127); o antigo fica só para a v1.51.
+    const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio_conferido"');
     const envio = criar.indexOf('await criarPedidoVenda(');
     expect(claim, 'REGRESSÃO: criar_pedido sem claim do envio').toBeGreaterThan(-1);
     expect(claim, 'o claim precede o envio ao Omie').toBeLessThan(envio);
     const entre = criar.slice(claim, envio);
     expect(entre, 'falha da RPC de claim RECUSA').toMatch(/if \(claimErr\) \{\s*throw new Error\(/);
-    expect(entre, 'claim negado RECUSA').toMatch(/if \(reivindicou !== true\) \{\s*throw new Error\(/);
+    expect(entre, 'o claim confere os itens QUE VÃO ao Omie (itensEnvio), não os do body cru').toMatch(/p_itens: itensEnvio\.map\(/);
+    expect(entre, 'itens divergentes RECUSA estruturado, sem chegar ao IncluirPedido').toMatch(
+      /if \(claimVeredito === "itens_divergentes"\) \{\s*result = \{\s*success: false,\s*blocked: "itens_divergentes"[\s\S]{0,400}?break;\s*\}/,
+    );
+    expect(entre, 'qualquer outro veredito que não "reivindicado" RECUSA').toMatch(/if \(claimVeredito !== "reivindicado"\) \{\s*throw new Error\(/);
+    expect(criar, 'REGRESSÃO: a v1.53 voltou ao claim sem conferência').not.toMatch(/\.rpc\("sales_order_reivindicar_envio",/);
   });
 
   // Codex 2026-11-20 (P1): sem rastro ATP a consulta indeterminada SEGUIA para o DELETE físico.
@@ -5384,7 +5390,7 @@ describe('omie-vendas-sync — gate v2 efetivo (6b)', () => {
     // passava verde): a recusa tem de sair antes do claim e do IncluirPedido.
     const parada = criar.indexOf('if (!creditoV2.segue) throw new Error(creditoV2.mensagem);');
     expect(parada, 'a parada do v2 sumiu do criar_pedido').toBeGreaterThan(v2);
-    for (const depois of ['"sales_order_reivindicar_envio"', 'await criarPedidoVenda(']) {
+    for (const depois of ['"sales_order_reivindicar_envio_conferido"', 'await criarPedidoVenda(']) {
       const i = criar.indexOf(depois);
       expect(i, `${depois} sumiu do criar_pedido`).toBeGreaterThan(-1);
       expect(parada, `a parada do v2 vem depois de ${depois} — chegaria tarde`).toBeLessThan(i);

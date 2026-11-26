@@ -3211,13 +3211,34 @@ Deno.serve(async (req) => {
         // carimba o pedido SÓ se ele não está marcado para exclusão. A leitura de deleted_at lá em
         // cima é só o atalho; esta é a disputa de verdade com o excluir_pedido (lock de linha).
         // Falha da RPC RECUSA: sem o carimbo a exclusão concorrente apagaria o pedido com o PV vivo.
-        const { data: reivindicou, error: claimErr } = await supabaseAdmin
-          .rpc("sales_order_reivindicar_envio", { p_sales_order_id: sales_order_id });
+        // CONFERIDO (migration 20261126190127): o carimbo só sai se os itens da LINHA forem os que vão
+        // ao Omie. Uma tela aberta antes de outra salvar o orçamento mandaria a foto velha: o PV
+        // nasceria com os itens/total antigos e a linha (e a reserva ATP, que lê a linha) com os novos.
+        const { data: claimVeredito, error: claimErr } = await supabaseAdmin
+          .rpc("sales_order_reivindicar_envio_conferido", {
+            p_sales_order_id: sales_order_id,
+            p_itens: itensEnvio.map((it) => ({
+              omie_codigo_produto: it.omie_codigo_produto,
+              quantidade: it.quantidade,
+              valor_unitario: it.valor_unitario,
+            })),
+          });
         if (claimErr) {
           throw new Error(`Envio recusado: não consegui reservar o pedido ${sales_order_id} para o envio (${claimErr.message}).`);
         }
-        if (reivindicou !== true) {
-          throw new Error(`Envio recusado: o pedido ${sales_order_id} está sendo excluído.`);
+        if (claimVeredito === "itens_divergentes") {
+          result = {
+            success: false,
+            blocked: "itens_divergentes",
+            contexto: "criacao",
+            motivo:
+              "o pedido foi alterado (em outra aba ou por outra pessoa) depois que esta tela o abriu — " +
+              "recarregue e confira os itens antes de enviar. O Omie NÃO foi atualizado.",
+          };
+          break;
+        }
+        if (claimVeredito !== "reivindicado") {
+          throw new Error(`Envio recusado: o pedido ${sales_order_id} está sendo excluído (${String(claimVeredito)}).`);
         }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,

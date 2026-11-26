@@ -169,6 +169,22 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     expect(h.updateSalesOrder).not.toHaveBeenCalled();
   });
 
+  it('orçamento mudou depois que a tela o leu (claim conferido, edge v1.53) → toast próprio, sem sucesso', async () => {
+    h.quotes = [makeQuote('oben')];
+    h.invoke.mockResolvedValueOnce({
+      data: { success: false, blocked: 'itens_divergentes', contexto: 'criacao', motivo: 'o pedido foi alterado' },
+      error: null,
+    });
+    renderPage();
+    await clickEnviar();
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith(
+      'Conversão recusada: o orçamento mudou',
+      expect.objectContaining({ description: expect.stringContaining('O Omie NÃO foi atualizado') }),
+    ));
+    expect(h.toastSuccess).not.toHaveBeenCalled();
+    expect(h.updateSalesOrder).not.toHaveBeenCalled();
+  });
+
   it('edge bloqueou por crédito → aviso e NÃO marca rascunho (não foi criado PV)', async () => {
     h.quotes = [makeQuote('colacor')];
     h.invoke.mockResolvedValueOnce({ data: { blocked: 'credito' }, error: null });
