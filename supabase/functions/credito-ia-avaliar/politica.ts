@@ -11,10 +11,10 @@
 
 export const VERSAO_POLITICA = "credito-ia-v1";
 
-export const DEGRAUS_PRAZO = [7, 14, 21, 28, 35, 42, 56, 63, 70, 84, 90, 120] as const;
+const DEGRAUS_PRAZO = [7, 14, 21, 28, 35, 42, 56, 63, 70, 84, 90, 120] as const;
 
-export const RISCOS = ["baixo", "medio", "alto", "sem_evidencia"] as const;
-export type Risco = typeof RISCOS[number];
+const RISCOS = ["baixo", "medio", "alto", "sem_evidencia"] as const;
+type Risco = typeof RISCOS[number];
 
 /** Campos da ficha que a IA enxerga (e os únicos que ela pode citar). */
 export const CAMPOS_IA = [
@@ -147,7 +147,7 @@ export function validarSaidaIA(bruto: unknown): { ok: true; saida: SaidaIA } | {
   return { ok: true, saida: { limite_brl: lim, prazo_max_dias: prazo, risco: risco as Risco, confianca: conf, motivos: ms } };
 }
 
-export type Corte = { trava: string; campo: "limite_brl" | "prazo_max_dias" | "risco" | "confianca"; antes: number | string; depois: number | string };
+type Corte = { trava: string; campo: "limite_brl" | "prazo_max_dias" | "risco" | "confianca"; antes: number | string; depois: number | string };
 export type Proposta = { limite_brl: number; prazo_max_dias: number; risco: Risco; confianca: number; travas: Corte[] };
 
 function numeroFicha(ficha: Ficha, campo: string): number | null {

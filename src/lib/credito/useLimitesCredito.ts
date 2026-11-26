@@ -41,7 +41,7 @@ export function useSouAprovador() {
   });
 }
 
-export type Progresso = {
+type Progresso = {
   carteira: number; vigentes: number; pendentes: number; em_retry: number; nunca_avaliadas: number;
   ultima_avaliacao_em: string | null;
 };

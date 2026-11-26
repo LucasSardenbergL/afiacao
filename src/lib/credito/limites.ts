@@ -6,8 +6,8 @@
 
 export type Risco = "baixo" | "medio" | "alto" | "sem_evidencia";
 
-export type MotivoIA = { campo: string; leitura: string };
-export type CorteTrava = { trava: string; campo: string; antes: number | string; depois: number | string };
+type MotivoIA = { campo: string; leitura: string };
+type CorteTrava = { trava: string; campo: string; antes: number | string; depois: number | string };
 
 export type PropostaFila = {
   id: string;
