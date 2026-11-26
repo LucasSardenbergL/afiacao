@@ -1,5 +1,5 @@
 // Fila de crédito (crédito-IA PR 6a) — núcleo puro da tela /credito/fila.
-// Banco: supabase/migrations/20261125200000_credito_fila_enforcement_dormente.sql (view credito_fila_v).
+// Banco: supabase/migrations/20261125230000_credito_fila_enforcement_dormente.sql (view credito_fila_v).
 // Ausente ≠ zero: número que o banco não mediu chega como null e é exibido como "—", nunca "R$ 0".
 
 export type OrigemFila = 'efetivo' | 'sombra';
@@ -126,10 +126,16 @@ export function faceRecomendacao(i: Pick<ItemFila, 'recomendacao_status' | 'reco
   };
 }
 
-/** Decidir contra a recomendação da IA exige motivo explícito (spec §5.7). */
-export function discordaDaIa(face: FaceRecomendacao, autorizar: boolean): boolean {
+/**
+ * Decidir contra a recomendação da IA exige motivo explícito (spec §5.7). Autorizar libera o prazo
+ * DA REVISÃO (a fila não troca parcela): IA "aprovar" com prazo sugerido menor que o pedido — ou com
+ * prazo pedido desconhecido — e o Lucas autorizando = discordância.
+ */
+export function discordaDaIa(face: FaceRecomendacao, autorizar: boolean, prazoRevisao: number | null): boolean {
   if (face.tipo !== 'pronta') return false;
-  return (face.recomendacao === 'aprovar') !== autorizar;
+  if ((face.recomendacao === 'aprovar') !== autorizar) return true;
+  if (autorizar && face.prazo !== null && (prazoRevisao === null || face.prazo < prazoRevisao)) return true;
+  return false;
 }
 
 export function motivoValido(m: string): boolean {

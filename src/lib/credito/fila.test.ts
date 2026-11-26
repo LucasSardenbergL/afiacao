@@ -61,9 +61,16 @@ describe('fila de crédito — recomendação', () => {
 
   it('discordar da IA exige motivo; sem recomendação não há discordância', () => {
     const aprovar = faceRecomendacao({ ...base, recomendacao_status: 'ok', recomendacao: 'aprovar', recomendacao_confianca: 0.8 });
-    expect(discordaDaIa(aprovar, false)).toBe(true);
-    expect(discordaDaIa(aprovar, true)).toBe(false);
-    expect(discordaDaIa(faceRecomendacao(base), false)).toBe(false);
+    expect(discordaDaIa(aprovar, false, 28)).toBe(true);
+    expect(discordaDaIa(aprovar, true, 28)).toBe(false);
+    expect(discordaDaIa(faceRecomendacao(base), false, 28)).toBe(false);
+  });
+
+  it('autorizar o prazo integral quando a IA sugeriu prazo menor é discordância', () => {
+    const curto = faceRecomendacao({ ...base, recomendacao_status: 'ok', recomendacao: 'aprovar', recomendacao_confianca: 0.8, prazo_sugerido_dias: 28 });
+    expect(discordaDaIa(curto, true, 90)).toBe(true);
+    expect(discordaDaIa(curto, true, 28)).toBe(false);
+    expect(discordaDaIa(curto, true, null)).toBe(true);
     expect(motivoValido('  ok ')).toBe(false);
     expect(motivoValido('cliente antigo')).toBe(true);
   });

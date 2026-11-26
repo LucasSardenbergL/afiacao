@@ -114,7 +114,8 @@ function CartaoItem({ item, nome, podeDecidir, onDecidir }: {
   );
 }
 
-function PainelEmpresa({ company, ligado, aprovador }: { company: Empresa; ligado: boolean; aprovador: boolean }) {
+// ligado = null: o estado do flag NÃO foi lido — nunca afirmar "desligado" (Codex diff P1).
+function PainelEmpresa({ company, ligado, aprovador }: { company: Empresa; ligado: boolean | null; aprovador: boolean }) {
   const { data: p, isLoading, error } = useProntidao(company);
   const definir = useDefinirEnforcement();
   const [aberto, setAberto] = useState(false);
@@ -124,9 +125,11 @@ function PainelEmpresa({ company, ligado, aprovador }: { company: Empresa; ligad
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between text-base">
           <span>{EMPRESA_ROTULO[company]}</span>
-          {ligado
-            ? <Badge className="bg-status-error/10 text-status-error"><ShieldAlert className="mr-1 h-3 w-3" />enforcement LIGADO</Badge>
-            : <Badge variant="outline"><ShieldCheck className="mr-1 h-3 w-3" />desligado (caminho atual)</Badge>}
+          {ligado === null
+            ? <Badge variant="outline" className="text-status-warning">estado ilegível</Badge>
+            : ligado
+              ? <Badge className="bg-status-error/10 text-status-error"><ShieldAlert className="mr-1 h-3 w-3" />enforcement LIGADO</Badge>
+              : <Badge variant="outline"><ShieldCheck className="mr-1 h-3 w-3" />desligado (caminho atual)</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-1 text-sm">
@@ -139,19 +142,20 @@ function PainelEmpresa({ company, ligado, aprovador }: { company: Empresa; ligad
           </div>
         ))}
         {aprovador && (
-          <Button size="sm" variant={ligado ? 'destructive' : 'outline'} className="mt-2"
-                  disabled={!ligado && !p?.pronto} onClick={() => { setMotivo(''); setAberto(true); }}>
-            {ligado ? 'Desligar enforcement' : 'Ligar enforcement'}
+          <Button size="sm" variant={ligado !== false ? 'destructive' : 'outline'} className="mt-2"
+                  disabled={ligado === false && !p?.pronto} onClick={() => { setMotivo(''); setAberto(true); }}>
+            {/* estado ilegível → só o kill switch (desligar já desligado só volta "já está desligado") */}
+            {ligado !== false ? 'Desligar enforcement' : 'Ligar enforcement'}
           </Button>
         )}
       </CardContent>
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{ligado ? 'Desligar' : 'Ligar'} o enforcement na {EMPRESA_ROTULO[company]}?</DialogTitle>
+            <DialogTitle>{ligado !== false ? 'Desligar' : 'Ligar'} o enforcement na {EMPRESA_ROTULO[company]}?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            {ligado
+            {ligado !== false
               ? 'Os pedidos voltam ao caminho atual (só o piso de vencidos). As solicitações abertas desta empresa são canceladas.'
               : 'A partir de agora, pedido 🔴 é bloqueado e 🟡 espera a sua aprovação nesta fila.'}
           </p>
@@ -159,7 +163,7 @@ function PainelEmpresa({ company, ligado, aprovador }: { company: Empresa; ligad
           <DialogFooter>
             <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
             <Button disabled={!motivoValido(motivo) || definir.isPending}
-                    onClick={() => definir.mutate({ company, ligar: !ligado, motivo }, { onSuccess: () => setAberto(false) })}>
+                    onClick={() => definir.mutate({ company, ligar: ligado === false, motivo }, { onSuccess: () => setAberto(false) })}>
               Confirmar
             </Button>
           </DialogFooter>
@@ -183,13 +187,18 @@ export default function CreditoFila() {
   const sombra = itens.filter((i) => i.origem === 'sombra');
   const ids = useMemo(() => [...new Set(itens.map((i) => i.customer_user_id).filter((x): x is string => !!x))], [itens]);
   const nomes = useNomesClientes(ids);
-  const algumLigado = (flags.data ?? []).some((f) => f.ligado);
+  // estado do flag só vale com leitura OK e UMA linha conhecida por empresa
+  const flagsOk = flags.isSuccess && EMPRESAS.every((c) => (flags.data ?? []).some((f) => f.company === c));
+  const ligadoDe = (c: Empresa): boolean | null =>
+    flagsOk ? ((flags.data ?? []).find((f) => f.company === c)?.ligado ?? null) : null;
+  const algumLigado = flagsOk && (flags.data ?? []).some((f) => f.ligado);
+  const filaOk = fila.isSuccess;
   const podeDecidir = aprovador.data === true;
 
   if (fila.isLoading || flags.isLoading) return <PageSkeleton variant="list" />;
 
   const face = dialogo ? faceRecomendacao(dialogo.item) : null;
-  const discorda = dialogo && face ? discordaDaIa(face, dialogo.autorizar) : false;
+  const discorda = dialogo && face ? discordaDaIa(face, dialogo.autorizar, dialogo.item.prazo_dias) : false;
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4">
@@ -202,7 +211,15 @@ export default function CreditoFila() {
         <Card><CardContent className="p-4 text-status-error">Não consegui ler a fila. Recarregue em instantes.</CardContent></Card>
       )}
 
-      {!algumLigado && (
+      {!flagsOk && (
+        <Card className="border-status-warning">
+          <CardContent className="p-4 text-sm text-status-warning">
+            Não consegui ler o estado do enforcement. Não assuma que está desligado — confira na aba Ligar por empresa.
+          </CardContent>
+        </Card>
+      )}
+
+      {flagsOk && !algumLigado && (
         <Card className="border-status-info">
           <CardContent className="flex gap-2 p-4 text-sm">
             <AlertTriangle className="h-4 w-4 shrink-0 text-status-info" />
@@ -216,12 +233,12 @@ export default function CreditoFila() {
 
       <Tabs value={filtros.aba} onValueChange={(aba) => setFiltros({ aba })}>
         <TabsList>
-          <TabsTrigger value="efetivo">Pedidos reais ({efetivos.filter((i) => i.status === 'aberta').length})</TabsTrigger>
-          <TabsTrigger value="sombra">Sombra ({sombra.length})</TabsTrigger>
+          <TabsTrigger value="efetivo">Pedidos reais ({filaOk ? efetivos.filter((i) => i.status === 'aberta').length : '?'})</TabsTrigger>
+          <TabsTrigger value="sombra">Sombra ({filaOk ? sombra.length : '?'})</TabsTrigger>
           <TabsTrigger value="ligar">Ligar por empresa</TabsTrigger>
         </TabsList>
         <TabsContent value="efetivo" className="space-y-3">
-          {efetivos.length === 0
+          {!filaOk ? null : efetivos.length === 0
             ? <EmptyState tone="operational" icon={Inbox} title="Nenhum pedido esperando" description="Quando o enforcement estiver ligado, os pedidos 🟡 aparecem aqui." />
             : efetivos.map((i) => (
               <CartaoItem key={i.item_id} item={i} nome={i.customer_user_id ? nomes.data?.get(i.customer_user_id) : undefined}
@@ -229,7 +246,7 @@ export default function CreditoFila() {
             ))}
         </TabsContent>
         <TabsContent value="sombra" className="space-y-3">
-          {sombra.length === 0
+          {!filaOk ? null : sombra.length === 0
             ? <EmptyState tone="operational" icon={Inbox} title="Sombra sem itens" description="Nenhum pedido dos últimos 14 dias teria ido para a fila (ou a sombra ainda não rodou)." />
             : sombra.map((i) => (
               <CartaoItem key={i.item_id} item={i} nome={i.customer_user_id ? nomes.data?.get(i.customer_user_id) : undefined}
@@ -238,8 +255,7 @@ export default function CreditoFila() {
         </TabsContent>
         <TabsContent value="ligar" className="grid gap-3 sm:grid-cols-3">
           {EMPRESAS.map((c) => (
-            <PainelEmpresa key={c} company={c} aprovador={podeDecidir}
-                           ligado={(flags.data ?? []).find((f) => f.company === c)?.ligado ?? false} />
+            <PainelEmpresa key={c} company={c} aprovador={podeDecidir} ligado={ligadoDe(c)} />
           ))}
         </TabsContent>
       </Tabs>
@@ -250,7 +266,12 @@ export default function CreditoFila() {
             <DialogTitle>{dialogo?.autorizar ? 'Autorizar' : 'Recusar'} {dialogo && brl(dialogo.item.valor_brl)}?</DialogTitle>
           </DialogHeader>
           {discorda && <p className="text-sm text-status-warning">Você está decidindo contra a recomendação da IA — explique no motivo.</p>}
-          {dialogo?.autorizar && <p className="text-sm text-muted-foreground">A autorização vale 24 h para esta revisão do pedido; editar total ou prazo reabre a fila.</p>}
+          {dialogo?.autorizar && (
+            <p className="text-sm text-muted-foreground">
+              Autoriza <strong>{brl(dialogo.item.valor_brl)} com prazo de {dias(dialogo.item.prazo_dias)}</strong> (o prazo desta revisão —
+              a fila não troca a condição de pagamento). Vale 24 h; editar total ou prazo reabre a fila.
+            </p>
+          )}
           <Textarea placeholder="Motivo (obrigatório)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogo(null)}>Cancelar</Button>

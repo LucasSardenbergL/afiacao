@@ -3,6 +3,9 @@
 -- Spec: docs/superpowers/specs/2026-11-20-credito-ia-design.md §5.5/§5.7/§9.10/§10.
 -- Plano: docs/superpowers/plans/2026-11-25-credito-ia-pr6-fila.md (Codex desenho incorporado).
 --
+-- DEPENDE DO PR 5 (20261125200000_credito_gate_v2_sombra.sql): a aba Sombra lê credito_sombra_decisao.
+-- A postcondição aborta se o PR 5 não estiver aplicado.
+--
 -- Só objetos NOVOS + 1 troca de ACL: a autorização da fila passa a ter UM caminho
 -- (credito_decidir_fila), que confere se o item ainda é o atual. Não toca o núcleo
 -- private.credito_avaliar_reservar nem venda_gate_credito_grupo (o PR 5 é dono deles).
@@ -54,8 +57,10 @@ CREATE TABLE IF NOT EXISTS public.credito_enforcement_log (
 
 -- Recomendação por decisão. Ciclo: em_andamento → ok | erro → (em_andamento …) → esgotada.
 CREATE TABLE IF NOT EXISTS public.credito_fila_recomendacao (
-  decisao_id uuid PRIMARY KEY REFERENCES public.credito_decisao_pedido(id),
+  decisao_id uuid PRIMARY KEY,   -- credito_decisao_pedido.id (efetivo) ou credito_sombra_decisao.id (PR 5)
+  origem text NOT NULL CHECK (origem IN ('efetivo','sombra')),
   status text NOT NULL CHECK (status IN ('em_andamento','ok','erro','esgotada')),
+  reivindicada_em timestamptz NOT NULL DEFAULT now(),   -- orçamento GLOBAL de chamadas pagas
   claim_id uuid,
   claim_expira_em timestamptz,
   recomendacao text CHECK (recomendacao IN ('aprovar','recusar','sem_recomendacao')),
@@ -75,9 +80,10 @@ CREATE TABLE IF NOT EXISTS public.credito_fila_recomendacao (
   CHECK ((status = 'em_andamento') = (claim_id IS NOT NULL AND claim_expira_em IS NOT NULL)),
   CHECK ((status = 'ok') = (recomendacao IS NOT NULL)),
   CHECK (status NOT IN ('erro','esgotada') OR erro IS NOT NULL),
-  -- coerência: só 'aprovar' sugere prazo; aprovar/recusar exigem confiança
+  -- coerência: aprovar/recusar exigem confiança; prazo sugerido é informativo (o aprovador NÃO troca o
+  -- prazo na fila: autorizar libera o prazo da revisão — Codex diff P1)
   CHECK (recomendacao IS DISTINCT FROM 'aprovar' OR confianca IS NOT NULL),
-  CHECK (recomendacao IS DISTINCT FROM 'recusar' OR (confianca IS NOT NULL AND prazo_sugerido_dias IS NULL)),
+  CHECK (recomendacao IS DISTINCT FROM 'recusar' OR confianca IS NOT NULL),
   CHECK (recomendacao IS DISTINCT FROM 'sem_recomendacao' OR (prazo_sugerido_dias IS NULL AND confianca IS NULL))
 );
 
@@ -128,7 +134,7 @@ BEGIN
       ('credito_enforcement',       'company',        'ligado,versao,alterado_por,alterado_em,motivo', NULL),
       ('credito_enforcement_log',   'id',             NULL, NULL),
       ('credito_fila_recomendacao', 'decisao_id',
-         'status,claim_id,claim_expira_em,recomendacao,prazo_sugerido_dias,confianca,codigos,modelo,versao_prompt,entrada,erro,tentativas,atualizado_em',
+         'status,claim_id,claim_expira_em,reivindicada_em,recomendacao,prazo_sugerido_dias,confianca,codigos,modelo,versao_prompt,entrada,erro,tentativas,atualizado_em',
          NULL),
       ('credito_fila_alerta',       'solicitacao_id',
          'status,destinatarios,motivo_sem_canal,tentativas,ultima_tentativa_em,enfileirado_em', 'sem_canal')
@@ -195,6 +201,8 @@ DECLARE
     'h_ensaio_real_de_push_e_retomada_na_versao_publicada',
     'i_recusa_encerra_a_revisao_no_nucleo',
     'j_backtest_e_prova_2_sessoes_registrados',
+    'k_nucleo_efetivo_herda_da_sombra_sync_titulo_do_pv_e_transferencia',
+    'l_primeira_leva_identificada_cobertura_do_sync_e_reconciliacao',
     '6b_edge_omie_vendas_sync_chama_o_gate_efetivo'];
   v_cond jsonb := '[]'::jsonb;
   v_n_lim integer;
@@ -224,12 +232,12 @@ BEGIN
     'criterio', '≥ 1 limite vigente e 0 propostas pendentes');
 
   -- 2) 2+ semanas de sombra COM denominador (dias com decisão)
-  SELECT min(d.created_at),
-         count(DISTINCT (d.created_at AT TIME ZONE 'America/Sao_Paulo')::date)
-           FILTER (WHERE (d.created_at AT TIME ZONE 'America/Sao_Paulo')::date > v_hoje - 14)
+  SELECT min(d.avaliado_em),
+         count(DISTINCT (d.avaliado_em AT TIME ZONE 'America/Sao_Paulo')::date)
+           FILTER (WHERE (d.avaliado_em AT TIME ZONE 'America/Sao_Paulo')::date > v_hoje - 14)
     INTO v_prim, v_dias
-    FROM public.credito_decisao_pedido d
-   WHERE d.modo = 'sombra' AND d.company = p_company;
+    FROM public.credito_sombra_decisao d
+   WHERE d.company = p_company AND NOT d.carga_inicial;
   v_cond := v_cond || jsonb_build_object('chave', 'sombra_14d',
     'ok', v_prim IS NOT NULL AND v_prim <= now() - interval '14 days' AND COALESCE(v_dias, 0) >= 10,
     'valor', jsonb_build_object('primeira_sombra', v_prim, 'dias_com_sombra_ult_14', COALESCE(v_dias, 0)),
@@ -238,20 +246,14 @@ BEGIN
   -- 3) o lote da sombra RODA (última execução < 1 h) e sem erro em 3 d. Ledger do PR 5;
   --    ausente ou ilegível ≠ ok (cron parado também mostraria "0 erros").
   BEGIN
-    IF to_regclass('public.credito_sombra_avaliacao') IS NULL
-       OR to_regclass('public.credito_sombra_lote_execucao') IS NULL THEN
-      v_erros := NULL; v_ult := NULL;
-    ELSE
-      EXECUTE 'SELECT count(*) FROM public.credito_sombra_avaliacao
-                WHERE company = $1 AND erro IS NOT NULL AND avaliado_em > now() - interval ''3 days'''
-        INTO v_erros USING p_company;
-      EXECUTE 'SELECT max(fim) FROM public.credito_sombra_lote_execucao' INTO v_ult;
-    END IF;
+    SELECT count(*) INTO v_erros FROM public.credito_sombra_tentativa t
+     WHERE t.company = p_company AND t.resultado = 'erro' AND t.criada_em > now() - interval '3 days';
+    SELECT max(l.terminado_em) INTO v_ult FROM public.credito_sombra_lote l;
   EXCEPTION WHEN OTHERS THEN
     v_erros := NULL; v_ult := NULL;
   END;
   v_cond := v_cond || jsonb_build_object('chave', 'sombra_rodando_sem_erro',
-    'ok', v_erros IS NOT DISTINCT FROM 0 AND v_ult > now() - interval '1 hour',
+    'ok', COALESCE(v_erros = 0 AND v_ult > now() - interval '1 hour', false),
     'valor', jsonb_build_object('erros_3d', v_erros, 'ultimo_lote_fim', v_ult),
     'criterio', 'ledger da sombra legível, último lote há < 1 h e 0 erros em 3 dias');
 
@@ -263,11 +265,11 @@ BEGIN
     'criterio', 'o aprovador ativou o push em ≥ 1 aparelho');
 
   -- 5) prazo legível: ≥ 1 parcela resolvível e nenhuma revisão recente da conta com prazo NULL
-  SELECT (SELECT count(*) FROM public.omie_condicao_pagamento_catalogo c
-           WHERE lower(c.empresa) = p_company AND c.ativo IS NOT FALSE AND c.codigo <> '999')
-       + (SELECT count(*) FROM public.credito_prazo_override o
-           WHERE o.company = p_company AND o.prazo_dias IS NOT NULL)
-    INTO v_cat;
+  -- pelo RESOLVEDOR real (descrição ilegível e override revogado não contam)
+  SELECT count(*) INTO v_cat
+    FROM (SELECT c.codigo FROM public.omie_condicao_pagamento_catalogo c WHERE lower(c.empresa) = p_company
+          UNION SELECT o.codigo_parcela FROM public.credito_prazo_override o WHERE o.company = p_company) k
+   WHERE (public.credito_prazo_resolver(k.codigo, p_company) ->> 'prazo_dias') IS NOT NULL;
   SELECT count(*) INTO v_sem_prazo FROM public.credito_operacao_revisao r
    WHERE r.company = p_company AND r.prazo_dias IS NULL AND r.criada_em > now() - interval '30 days';
   v_cond := v_cond || jsonb_build_object('chave', 'catalogo_prazo', 'ok', v_cat >= 1 AND v_sem_prazo = 0,
@@ -279,7 +281,8 @@ BEGIN
     'valor', jsonb_build_object('pendentes', to_jsonb(v_prereq)),
     'criterio', 'todos os pré-requisitos de código e ensaio entregues');
 
-  SELECT bool_and((c ->> 'ok')::boolean) INTO v_ok FROM jsonb_array_elements(v_cond) c;
+  -- ok só com TRUE explícito (NULL some no bool_and — Codex diff)
+  SELECT bool_and(COALESCE((c ->> 'ok')::boolean, false)) INTO v_ok FROM jsonb_array_elements(v_cond) c;
   RETURN jsonb_build_object('company', p_company, 'pronto', COALESCE(v_ok, false),
                             'medido_em', now(), 'condicoes', v_cond);
 END;
@@ -358,7 +361,7 @@ END;
 $$;
 
 -- ── 5. Gate efetivo (DORMENTE: só a edge 6b chama; só morde com o flag ligado) ─────────────
--- resultado ∈ desligado | avaliado | revisao_inexistente | revisao_superada | conta_divergente.
+-- resultado ∈ desligado | avaliado | pedido_inexistente | revisao_inexistente | revisao_superada | conta_divergente.
 -- Só 'avaliado' traz faixa. As outras NÃO são "gate indisponível": a edge segura e revalida.
 CREATE OR REPLACE FUNCTION public.credito_gate_v2_efetivo(p_sales_order_id uuid, p_company text, p_revisao uuid)
 RETURNS jsonb
@@ -375,20 +378,25 @@ DECLARE
   v_res jsonb;
   v_s record;
 BEGIN
-  IF p_sales_order_id IS NULL OR p_company IS NULL OR p_revisao IS NULL THEN
-    RAISE EXCEPTION 'credito_gate_v2_efetivo: pedido, empresa e revisão obrigatórios' USING ERRCODE = '22023';
+  IF p_sales_order_id IS NULL OR p_company IS NULL THEN
+    RAISE EXCEPTION 'credito_gate_v2_efetivo: pedido e empresa obrigatórios' USING ERRCODE = '22023';
+  END IF;
+  -- a conta é a do PEDIDO (autoritativa): a declarada nunca escolhe o flag (Codex diff P0)
+  SELECT so.account INTO v_conta FROM public.sales_orders so WHERE so.id = p_sales_order_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('resultado', 'pedido_inexistente', 'ligado', NULL, 'company', p_company);
   END IF;
   -- FOR SHARE: um "desligar" concorrente espera esta avaliação terminar (e vice-versa).
-  SELECT e.ligado INTO v_ligado FROM public.credito_enforcement e WHERE e.company = p_company FOR SHARE;
+  SELECT e.ligado INTO v_ligado FROM public.credito_enforcement e WHERE e.company = v_conta FOR SHARE;
   IF NOT COALESCE(v_ligado, false) THEN
-    RETURN jsonb_build_object('resultado', 'desligado', 'ligado', false, 'company', p_company);
+    RETURN jsonb_build_object('resultado', 'desligado', 'ligado', false, 'company', v_conta);
   END IF;
-
-  -- a conta é a do PEDIDO (autoritativa), nunca a que o chamador declara
-  SELECT so.account INTO v_conta FROM public.sales_orders so WHERE so.id = p_sales_order_id;
   IF v_conta IS DISTINCT FROM p_company THEN
     RETURN jsonb_build_object('resultado', 'conta_divergente', 'ligado', true, 'company', p_company,
                               'conta_pedido', v_conta);
+  END IF;
+  IF p_revisao IS NULL THEN
+    RETURN jsonb_build_object('resultado', 'revisao_inexistente', 'ligado', true, 'company', p_company);
   END IF;
 
   -- mesmo lock do registrador de revisão (PR 3): nenhuma r2 nasce entre a leitura e a avaliação
@@ -428,45 +436,64 @@ $$;
 CREATE OR REPLACE VIEW public.credito_fila_v
 WITH (security_invoker = on) AS
 WITH sombra AS (
-  -- 1º a última avaliação de sombra por pedido×empresa (qualquer faixa); só depois o filtro:
+  -- 1º a ÚLTIMA avaliação de sombra por pedido×empresa (qualquer faixa); só depois o filtro:
   -- amarelo de ontem não ressuscita se hoje deu verde, vermelho ou pendência cadastral.
   SELECT DISTINCT ON (d.sales_order_id, d.company) d.*
-    FROM public.credito_decisao_pedido d
-   WHERE d.modo = 'sombra' AND d.created_at > now() - interval '14 days'
-   ORDER BY d.sales_order_id, d.company, d.created_at DESC, d.id DESC
+    FROM public.credito_sombra_decisao d
+   WHERE d.avaliado_em > now() - interval '14 days'
+   ORDER BY d.sales_order_id, d.company, d.avaliado_em DESC, d.id DESC
 ),
-ultima_efetiva AS (
-  SELECT DISTINCT ON (d.sales_order_id, d.company) d.sales_order_id, d.company, d.id
-    FROM public.credito_decisao_pedido d
-   WHERE d.modo = 'efetivo'
-   ORDER BY d.sales_order_id, d.company, d.created_at DESC, d.id DESC
+efetivo AS (
+  -- UMA regra de vigência para view, contador, alerta, IA e ação (Codex diff P1): a solicitação é
+  -- acionável só se a revisão dela é a de maior seq REGISTRADA, a última decisão efetiva é amarela
+  -- DESSA revisão, o pedido segue vivo e o flag da empresa está ligado. Retry do mesmo amarelo
+  -- (D2 reusando S) continua acionável e com o relógio de S.
+  SELECT s.*, d.id AS decisao_original, ld.id AS ld_id, ld.revisao AS ld_revisao, ld.faixa AS ld_faixa,
+         ld.limite_brl AS ld_limite, ld.prazo_max_dias AS ld_prazo_max,
+         ld.exposicao_titulos_brl AS ld_tit, ld.exposicao_reservas_brl AS ld_res,
+         rv.id AS rv_id, so.id AS so_id, so.deleted_at AS so_deleted, so.status AS so_status,
+         so.customer_user_id, so.omie_numero_pedido, so.vendedor_user_id, so.created_by,
+         COALESCE(e.ligado, false) AS flag_ligado
+    FROM public.credito_solicitacao s
+    JOIN public.credito_decisao_pedido d ON d.id = s.decisao_id
+    LEFT JOIN LATERAL (
+      SELECT d2.* FROM public.credito_decisao_pedido d2
+       WHERE d2.sales_order_id = s.sales_order_id AND d2.company = s.company AND d2.modo = 'efetivo'
+       ORDER BY d2.created_at DESC, d2.id DESC LIMIT 1) ld ON true
+    LEFT JOIN LATERAL (
+      SELECT r.id FROM public.credito_operacao_revisao r
+       WHERE r.sales_order_id = s.sales_order_id AND r.company = s.company
+       ORDER BY r.seq DESC LIMIT 1) rv ON true
+    LEFT JOIN public.sales_orders so ON so.id = s.sales_order_id
+    LEFT JOIN public.credito_enforcement e ON e.company = s.company
+   WHERE s.status = 'aberta' OR s.decidida_em > now() - interval '48 hours'
 )
-SELECT 'efetivo'::text AS origem, s.id AS item_id, s.id AS solicitacao_id, d.id AS decisao_id,
-       s.sales_order_id, s.company, s.revisao, s.valor_brl, s.prazo_dias, s.motivo, d.faixa,
-       d.limite_brl, d.prazo_max_dias, d.exposicao_titulos_brl, d.exposicao_reservas_brl,
-       CASE WHEN s.status <> 'aberta' THEN s.status
-            WHEN ue.id IS DISTINCT FROM d.id THEN 'superada'
-            WHEN NOT COALESCE(e.ligado, false) THEN 'congelada'
+SELECT 'efetivo'::text AS origem, f.id AS item_id, f.id AS solicitacao_id,
+       COALESCE(f.ld_id, f.decisao_original) AS decisao_id,
+       f.sales_order_id, f.company, f.revisao, f.valor_brl, f.prazo_dias, f.motivo,
+       COALESCE(f.ld_faixa, 'amarelo') AS faixa,
+       f.ld_limite AS limite_brl, f.ld_prazo_max AS prazo_max_dias,
+       f.ld_tit AS exposicao_titulos_brl, f.ld_res AS exposicao_reservas_brl,
+       CASE WHEN f.status <> 'aberta' THEN f.status
+            WHEN f.so_id IS NULL OR f.so_deleted IS NOT NULL OR f.so_status = 'cancelado' THEN 'superada'
+            WHEN f.rv_id::text IS DISTINCT FROM f.revisao THEN 'superada'
+            WHEN f.ld_revisao IS DISTINCT FROM f.revisao OR f.ld_faixa IS DISTINCT FROM 'amarelo' THEN 'superada'
+            WHEN NOT f.flag_ligado THEN 'congelada'
             ELSE 'aberta' END AS status,
-       s.created_at AS criado_em, s.decidida_em,
-       so.customer_user_id, so.omie_numero_pedido, so.status AS pedido_status, so.vendedor_user_id,
-       CASE WHEN so.created_by IS NOT NULL THEN 'app' ELSE 'omie' END AS origem_pedido,
+       f.created_at AS criado_em, f.decidida_em,
+       f.customer_user_id, f.omie_numero_pedido, f.so_status AS pedido_status, f.vendedor_user_id,
+       CASE WHEN f.created_by IS NOT NULL THEN 'app' ELSE 'omie' END AS origem_pedido,
        r.status AS recomendacao_status, r.recomendacao, r.prazo_sugerido_dias,
        r.confianca AS recomendacao_confianca, r.codigos AS recomendacao_codigos
-  FROM public.credito_solicitacao s
-  JOIN public.credito_decisao_pedido d ON d.id = s.decisao_id
-  LEFT JOIN ultima_efetiva ue ON ue.sales_order_id = s.sales_order_id AND ue.company = s.company
-  LEFT JOIN public.credito_enforcement e ON e.company = s.company
-  LEFT JOIN public.sales_orders so ON so.id = s.sales_order_id
-  LEFT JOIN public.credito_fila_recomendacao r ON r.decisao_id = d.id
- WHERE s.status = 'aberta' OR s.decidida_em > now() - interval '48 hours'
+  FROM efetivo f
+  LEFT JOIN public.credito_fila_recomendacao r ON r.decisao_id = COALESCE(f.ld_id, f.decisao_original)
 UNION ALL
 SELECT 'sombra', d.id, NULL::uuid, d.id,
-       d.sales_order_id, d.company, d.revisao, d.valor_brl, d.prazo_dias, d.motivo, d.faixa,
+       d.sales_order_id, d.company, d.versao, d.valor_brl, d.prazo_dias, d.motivo, d.faixa,
        d.limite_brl, d.prazo_max_dias, d.exposicao_titulos_brl, d.exposicao_reservas_brl,
-       'simulada', d.created_at, NULL::timestamptz,
+       'simulada', d.avaliado_em, NULL::timestamptz,
        so.customer_user_id, so.omie_numero_pedido, so.status, so.vendedor_user_id,
-       CASE WHEN so.created_by IS NOT NULL THEN 'app' ELSE 'omie' END,
+       d.origem,
        r.status, r.recomendacao, r.prazo_sugerido_dias, r.confianca, r.codigos
   FROM sombra d
   JOIN public.sales_orders so ON so.id = d.sales_order_id
@@ -476,6 +503,16 @@ SELECT 'sombra', d.id, NULL::uuid, d.id,
    AND so.deleted_at IS NULL AND COALESCE(so.status, '') <> 'cancelado';
 
 REVOKE ALL ON public.credito_fila_v FROM PUBLIC, anon;
+DO $acl_view$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT DISTINCT a.grantee::regrole::text AS papel
+             FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+            WHERE c.oid = 'public.credito_fila_v'::regclass AND a.grantee <> 0 AND a.grantee <> c.relowner LOOP
+    EXECUTE format('REVOKE ALL ON public.credito_fila_v FROM %s', r.papel);
+  END LOOP;
+END
+$acl_view$;
 GRANT SELECT ON public.credito_fila_v TO authenticated, service_role;
 
 -- ── 7. Decidir item da fila (o ÚNICO caminho de autorização) ───────────────────────────────
@@ -493,7 +530,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_s public.credito_solicitacao%ROWTYPE;
-  v_ultima uuid;
+  v_estado text;
   v_ligado boolean;
 BEGIN
   IF NOT public.credito_sou_aprovador() THEN
@@ -508,11 +545,11 @@ BEGIN
     RAISE EXCEPTION 'credito_decidir_fila: enforcement desligado nesta empresa (item congelado)' USING ERRCODE = 'P0001';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('credito_revisao:' || v_s.sales_order_id::text || ':' || v_s.company, 0));
-  SELECT d.id INTO v_ultima FROM public.credito_decisao_pedido d
-   WHERE d.sales_order_id = v_s.sales_order_id AND d.company = v_s.company AND d.modo = 'efetivo'
-   ORDER BY d.created_at DESC, d.id DESC LIMIT 1;
-  IF v_ultima IS DISTINCT FROM v_s.decisao_id THEN
-    RAISE EXCEPTION 'credito_decidir_fila: item superado por avaliação mais nova' USING ERRCODE = 'P0001';
+  SELECT f.status INTO v_estado FROM public.credito_fila_v f
+   WHERE f.origem = 'efetivo' AND f.solicitacao_id = p_solicitacao_id;
+  IF v_estado IS DISTINCT FROM 'aberta' THEN
+    RAISE EXCEPTION 'credito_decidir_fila: item não é mais acionável (%)', COALESCE(v_estado, 'fora da fila')
+      USING ERRCODE = 'P0001';
   END IF;
   RETURN public.credito_autorizar_solicitacao(p_solicitacao_id, p_autorizar, p_motivo, p_validade_horas);
 END;
@@ -528,6 +565,17 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+  WITH d AS (
+    SELECT x.company, x.modo, x.faixa, x.motivo, x.valor_brl, x.prazo_dias, x.limite_brl, x.prazo_max_dias,
+           x.exposicao_titulos_brl, x.exposicao_reservas_brl, x.limite_versao, x.grupo_user_id, x.piso,
+           x.created_at AS em
+      FROM public.credito_decisao_pedido x WHERE x.id = p_decisao_id
+    UNION ALL
+    SELECT y.company, 'sombra', y.faixa, y.motivo, y.valor_brl, y.prazo_dias, y.limite_brl, y.prazo_max_dias,
+           y.exposicao_titulos_brl, y.exposicao_reservas_brl, y.limite_versao, y.grupo_user_id, y.piso,
+           y.avaliado_em
+      FROM public.credito_sombra_decisao y WHERE y.id = p_decisao_id
+  )
   SELECT jsonb_strip_nulls(jsonb_build_object(
       'company', d.company, 'modo', d.modo, 'faixa', d.faixa, 'motivo', d.motivo,
       'valor_brl', d.valor_brl, 'prazo_dias', d.prazo_dias,
@@ -540,16 +588,16 @@ AS $$
       'risco', CASE WHEN l.versao = d.limite_versao THEN l.risco END,
       'limite_mudou', CASE WHEN d.limite_versao IS NOT NULL THEN l.versao IS DISTINCT FROM d.limite_versao END,
       'limite_idade_dias', CASE WHEN l.versao = d.limite_versao
-                                THEN floor(extract(epoch FROM d.created_at - l.ficha_calculada_em) / 86400)::integer END,
+                                THEN floor(extract(epoch FROM d.em - l.ficha_calculada_em) / 86400)::integer END,
       'piso_bloqueado', CASE WHEN jsonb_typeof(d.piso -> 'bloqueado') = 'boolean'
                              THEN (d.piso ->> 'bloqueado')::boolean END,
       'piso_titulos_vencidos', CASE WHEN jsonb_typeof(d.piso -> 'titulos') = 'number'
                                     THEN (d.piso ->> 'titulos')::numeric END,
       'piso_vencido_brl', CASE WHEN jsonb_typeof(d.piso -> 'vencido') = 'number'
                                THEN (d.piso ->> 'vencido')::numeric END))
-  FROM public.credito_decisao_pedido d
+  FROM d
   LEFT JOIN public.credito_limite l ON l.grupo_user_id = d.grupo_user_id
-  WHERE d.id = p_decisao_id;
+  LIMIT 1;
 $$;
 
 -- defesa em profundidade: string só em chave de enum, e só [a-z_]; objeto/array recusado
@@ -584,10 +632,18 @@ DECLARE
   v_claim uuid;
   v_ant public.credito_fila_recomendacao%ROWTYPE;
   v_n integer := 0;
-  v_max integer := greatest(1, least(COALESCE(p_max, 20), 100));
+  v_max integer;
 BEGIN
+  -- 1 reivindicação por vez no banco inteiro: o orçamento é global, não por invocação (Codex diff P1)
+  PERFORM pg_advisory_xact_lock(hashtextextended('credito_recomendacao:orcamento', 0));
+  SELECT 5 - count(*) INTO v_max FROM public.credito_fila_recomendacao r
+   WHERE r.reivindicada_em > now() - interval '10 minutes';
+  v_max := least(greatest(v_max, 0), greatest(1, least(COALESCE(p_max, 5), 5)));
+  IF v_max = 0 THEN
+    RETURN;
+  END IF;
   FOR v_i IN
-    SELECT f.decisao_id AS id
+    SELECT f.decisao_id AS id, f.origem
       FROM public.credito_fila_v f
       LEFT JOIN public.credito_fila_recomendacao r ON r.decisao_id = f.decisao_id
      WHERE f.status IN ('aberta','simulada')
@@ -601,18 +657,28 @@ BEGIN
     SELECT * INTO v_ant FROM public.credito_fila_recomendacao r WHERE r.decisao_id = v_i.id;
     CONTINUE WHEN FOUND AND NOT (v_ant.status = 'erro'
                                  OR (v_ant.status = 'em_andamento' AND v_ant.claim_expira_em < now()));
+    -- toda retomada (erro OU claim vencido — a IA pode ter cobrado) conta tentativa; 3 → esgotada
+    IF v_ant.decisao_id IS NOT NULL AND v_ant.tentativas >= 3 THEN
+      PERFORM public.credito_portao(v_i.id::text);
+      UPDATE public.credito_fila_recomendacao
+         SET status = 'esgotada', claim_id = NULL, claim_expira_em = NULL,
+             erro = COALESCE(v_ant.erro, 'claim vencido sem resposta'), atualizado_em = now()
+       WHERE decisao_id = v_i.id;
+      PERFORM public.credito_portao(NULL);
+      CONTINUE;
+    END IF;
     v_ent := private.credito_fila_entrada_ia(v_i.id);
     CONTINUE WHEN NOT private.credito_entrada_so_escalares(v_ent);
     v_claim := gen_random_uuid();
     PERFORM public.credito_portao(v_i.id::text);
     IF v_ant.decisao_id IS NULL THEN
-      INSERT INTO public.credito_fila_recomendacao (decisao_id, status, claim_id, claim_expira_em, entrada)
-      VALUES (v_i.id, 'em_andamento', v_claim, now() + interval '5 minutes', v_ent);
+      INSERT INTO public.credito_fila_recomendacao (decisao_id, origem, status, claim_id, claim_expira_em, entrada)
+      VALUES (v_i.id, v_i.origem, 'em_andamento', v_claim, now() + interval '5 minutes', v_ent);
     ELSE
       UPDATE public.credito_fila_recomendacao
          SET status = 'em_andamento', claim_id = v_claim, claim_expira_em = now() + interval '5 minutes',
-             entrada = v_ent, erro = NULL, atualizado_em = now(),
-             tentativas = CASE WHEN v_ant.status = 'erro' THEN v_ant.tentativas + 1 ELSE v_ant.tentativas END
+             reivindicada_em = now(), entrada = v_ent, erro = NULL, atualizado_em = now(),
+             tentativas = v_ant.tentativas + 1
        WHERE decisao_id = v_i.id;
     END IF;
     PERFORM public.credito_portao(NULL);
@@ -666,7 +732,7 @@ BEGIN
   UPDATE public.credito_fila_recomendacao
      SET status = v_status, claim_id = NULL, claim_expira_em = NULL,
          recomendacao = CASE WHEN v_status = 'ok' THEN p_recomendacao END,
-         prazo_sugerido_dias = CASE WHEN v_status = 'ok' AND p_recomendacao = 'aprovar' THEN p_prazo_sugerido_dias END,
+         prazo_sugerido_dias = CASE WHEN v_status = 'ok' AND p_recomendacao IN ('aprovar','recusar') THEN p_prazo_sugerido_dias END,
          confianca = CASE WHEN v_status = 'ok' AND p_recomendacao IN ('aprovar','recusar') THEN p_confianca END,
          codigos = CASE WHEN v_status = 'ok' THEN COALESCE(p_codigos, '{}') ELSE '{}' END,
          modelo = p_modelo, versao_prompt = p_versao_prompt,
@@ -791,6 +857,11 @@ GRANT EXECUTE ON FUNCTION public.credito_gate_v2_efetivo(uuid,text,uuid) TO serv
 GRANT EXECUTE ON FUNCTION public.credito_fila_reivindicar_recomendacao(integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.credito_registrar_recomendacao(uuid,uuid,text,integer,numeric,text[],text,text,text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.credito_enforcement_prontidao(text) TO authenticated, service_role;
+DO $ro$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT EXECUTE ON FUNCTION public.credito_enforcement_prontidao(text) TO claude_ro;
+  END IF;
+END $ro$;
 GRANT EXECUTE ON FUNCTION public.credito_definir_enforcement(text,boolean,text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.credito_decidir_fila(uuid,boolean,text,integer) TO authenticated;
 -- credito_autorizar_solicitacao (PR 2) fica SEM grant: só credito_decidir_fila (dono) a chama.
@@ -836,6 +907,14 @@ BEGIN
     IF v_n > 0 THEN RAISE EXCEPTION 'POS FALHOU: % tem % grant(s) de escrita fora do dono', t, v_n; END IF;
   END LOOP;
 
+  IF to_regclass('public.credito_sombra_decisao') IS NULL OR to_regclass('public.credito_sombra_lote') IS NULL
+     OR to_regclass('public.credito_sombra_tentativa') IS NULL THEN
+    RAISE EXCEPTION 'POS FALHOU: PR 5 (ledger da sombra) não aplicado — aplique 20261125200000 antes';
+  END IF;
+  SELECT count(*) INTO v_n FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+   WHERE c.oid = 'public.credito_fila_v'::regclass AND a.grantee <> c.relowner
+     AND a.privilege_type <> 'SELECT';
+  IF v_n > 0 THEN RAISE EXCEPTION 'POS FALHOU: credito_fila_v com % grant(s) além de SELECT', v_n; END IF;
   IF (SELECT count(*) FROM public.credito_enforcement) <> 3 THEN
     RAISE EXCEPTION 'POS FALHOU: credito_enforcement não tem as 3 empresas';
   END IF;

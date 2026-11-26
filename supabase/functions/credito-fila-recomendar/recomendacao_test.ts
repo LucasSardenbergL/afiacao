@@ -39,9 +39,11 @@ Deno.test("saída: aprovar sem confiança → incoerente", () => {
   assertEquals(v.ok ? "ok" : v.erro, "aprovar_sem_confianca");
 });
 
-Deno.test("saída: recusar com prazo → incoerente", () => {
-  const v = validarSaida({ recomendacao: "recusar", confianca: 0.9, prazo_sugerido_dias: 28, codigos: [] });
+Deno.test("saída: recusar sem confiança → incoerente; recusar com prazo aceitável é válido", () => {
+  const v = validarSaida({ recomendacao: "recusar", codigos: [] });
   assertEquals(v.ok ? "ok" : v.erro, "recusar_incoerente");
+  const p = validarSaida({ recomendacao: "recusar", confianca: 0.9, prazo_sugerido_dias: 28, codigos: [] });
+  assertEquals(p.ok ? p.saida.prazo_sugerido_dias : p.erro, 28);
 });
 
 Deno.test("saída: abstenção com confiança → incoerente", () => {

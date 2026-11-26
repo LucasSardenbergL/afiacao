@@ -1,5 +1,5 @@
 // Núcleo puro da recomendação da fila de crédito (PR 6a). Sem IO: roda sob `deno test --no-remote`.
-// Migration: supabase/migrations/20261125200000_credito_fila_enforcement_dormente.sql.
+// Migration: supabase/migrations/20261125230000_credito_fila_enforcement_dormente.sql.
 //
 // A IA é CONSULTIVA: nada daqui autoriza pedido. A entrada vem pronta do banco
 // (`private.credito_fila_entrada_ia`: só números/flags/enums da decisão) e é revalidada aqui
@@ -53,8 +53,10 @@ A entrada é um JSON só com números, flags e códigos. Significado:
 
 Regras:
 - Dado ausente NÃO é zero. Sem dado suficiente, recomende 'sem_recomendacao'.
-- 'aprovar' só quando o risco incremental é pequeno e explicável pelos números; pode sugerir um prazo
-  menor (um dos degraus 7,14,21,28,35,42,56,63,70,84,90,120) se o prazo pedido for o problema.
+- 'aprovar' só quando o risco incremental é pequeno e explicável pelos números COM O PRAZO PEDIDO:
+  o aprovador NÃO consegue trocar o prazo nesta fila — autorizar libera exatamente prazo_dias.
+  Se você só aprovaria com prazo menor, recomende 'recusar' e informe o prazo aceitável em
+  prazo_sugerido_dias (um dos degraus 7,14,21,28,35,42,56,63,70,84,90,120).
 - 'recusar' quando os números indicam risco alto (estouro grande, atraso recente, exposição alta).
 - Use os códigos da ferramenta para justificar; nunca escreva texto livre.
 Responda SEMPRE chamando a ferramenta registrar_recomendacao.`;
@@ -106,7 +108,7 @@ export function validarSaida(input: unknown): ResultadoValidacao {
     return { ok: false, erro: "confianca_invalida" };
   }
   if (rec === "aprovar" && conf === null) return { ok: false, erro: "aprovar_sem_confianca" };
-  if (rec === "recusar" && (conf === null || prazo !== null)) return { ok: false, erro: "recusar_incoerente" };
+  if (rec === "recusar" && conf === null) return { ok: false, erro: "recusar_incoerente" };
   if (rec === "sem_recomendacao" && (conf !== null || prazo !== null)) {
     return { ok: false, erro: "abstencao_incoerente" };
   }
@@ -117,9 +119,11 @@ export function validarSaida(input: unknown): ResultadoValidacao {
   };
 }
 
-/** Lote por invocação: 5 × ~25 s cabe abaixo do kill de ~150 s da edge. */
+/** Lote por invocação (o banco também limita a 5 por 10 min, global): 5 × 25 s sem retry do SDK. */
 export const MAX_POR_INVOCACAO = 5;
 export const TIMEOUT_POR_CHAMADA_MS = 25_000;
+/** Depois disto não começa chamada nova: o claim vence e o item volta (contando tentativa). */
+export const ORCAMENTO_MS = 110_000;
 
 export function maxDoCorpo(corpo: unknown): number {
   const m = (corpo as { max?: unknown } | null)?.max;

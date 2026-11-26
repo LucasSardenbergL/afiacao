@@ -4,7 +4,7 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
 
 ## O que entrou
 
-- **Migration** `20261125200000_credito_fila_enforcement_dormente.sql` — só objetos novos + 1 troca de ACL:
+- **Migration** `20261125230000_credito_fila_enforcement_dormente.sql` — só objetos novos + 1 troca de ACL:
   - `credito_enforcement` (1 linha por empresa, as 3 **desligadas**) + `credito_enforcement_log`; único escritor `credito_definir_enforcement` (allowlist do PR 2 = o Lucas). Ligar exige `credito_enforcement_prontidao(empresa).pronto`; desligar nunca depende dela e cancela as solicitações abertas.
   - `credito_gate_v2_efetivo(pedido, empresa, revisão)` — dormente: desligado devolve `{resultado:'desligado'}` sem escrever nada; ligado avalia pelo núcleo do PR 2/5 em modo `efetivo`. Revisão errada é **resultado explícito**, nunca exceção (a edge não pode ler como "indisponível" e despachar conteúdo velho).
   - `credito_fila_v` (security_invoker): efetivo = solicitação (marcada `superada`/`congelada` quando não é mais acionável); sombra = **última** avaliação por pedido×empresa, só então filtrada para 🟡 resolvível.

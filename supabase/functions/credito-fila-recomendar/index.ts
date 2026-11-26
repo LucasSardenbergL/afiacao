@@ -1,7 +1,7 @@
 // Edge `credito-fila-recomendar` — recomendação ASSÍNCRONA da IA para a fila de crédito (PR 6a).
 // Spec: docs/superpowers/specs/2026-11-20-credito-ia-design.md §5.5 ("a fila mostra 'recomendação
 // chegando' até ela existir") e §9.9 (anti-injection: só números, enums e flags).
-// Migration: supabase/migrations/20261125200000_credito_fila_enforcement_dormente.sql.
+// Migration: supabase/migrations/20261125230000_credito_fila_enforcement_dormente.sql.
 //
 // Disparo SÓ por cron/service_role (`x-cron-secret`, pg_cron a cada 10 min): o gate do topo aceita
 // staff (para a sonda), mas o disparo pago recusa staff — ninguém precisa disparar à mão (Codex P1).
@@ -18,6 +18,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import {
   entradaSoEscalares,
   maxDoCorpo,
+  ORCAMENTO_MS,
   SISTEMA,
   TIMEOUT_POR_CHAMADA_MS,
   TOOL,
@@ -71,11 +72,17 @@ Deno.serve(async (req) => {
   if (error) return json({ ok: false, versao: VERSAO, error: `reivindicar: ${error.message}` }, 500);
   const itens = (data ?? []) as ItemReivindicado[];
 
-  const anthropic = criarClienteAnthropic(apiKey, { timeoutMs: TIMEOUT_POR_CHAMADA_MS });
-  const placar = { reivindicados: itens.length, ok: 0, erro: 0, descartadas: 0, falha_gravacao: 0 };
+  // sem retry do SDK: 5 × 25 s cabe no kill da edge; a retentativa é do banco (conta tentativa)
+  const anthropic = criarClienteAnthropic(apiKey, { timeoutMs: TIMEOUT_POR_CHAMADA_MS, maxRetries: 0 });
+  const inicio = Date.now();
+  const placar = { reivindicados: itens.length, ok: 0, erro: 0, descartadas: 0, falha_gravacao: 0, adiados: 0 };
   let semCredito = false;
 
   for (const item of itens) {
+    if (Date.now() - inicio > ORCAMENTO_MS) {
+      placar.adiados++;   // claim vence em 5 min e volta (contando tentativa)
+      continue;
+    }
     let saida: { recomendacao: string; prazo_sugerido_dias: number | null; confianca: number | null; codigos: string[] } | null = null;
     let erro: string | null = null;
 
