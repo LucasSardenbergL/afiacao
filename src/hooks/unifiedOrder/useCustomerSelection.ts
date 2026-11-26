@@ -22,6 +22,7 @@ import {
 import type { PrecosLocaisPorConta } from './precos-por-conta';
 import { resolverPrecosLocaisPorConta, type LinhaPrecoPraticado } from './precos-praticados';
 import { comPrazo, interpretarValidacaoVendedor, PRAZO_VALIDACAO_VENDEDOR_MS, type EstadoVendedor } from './validacao-vendedor';
+import { interpretarCadastro, type EstadoCadastro } from './cadastro-cliente';
 import type {
   OmieCustomer,
   AddressData,
@@ -239,6 +240,8 @@ export function useCustomerSelection({
   // 8.1: 4 estados em vez de um booleano — falha da validação NÃO é "sem divergência".
   const [estadoVendedor, setEstadoVendedor] = useState<EstadoVendedor>('nao_verificado');
   const validatingVendedor = estadoVendedor === 'validando';
+  // 8.2: o cadastro local do cliente — falha da busca NÃO é "sem cadastro" e nunca vira o vendedor.
+  const [estadoCadastro, setEstadoCadastro] = useState<EstadoCadastro>('nao_verificado');
 
   /* ─── Customer search (debounced) ─── */
   useEffect(() => {
@@ -298,7 +301,7 @@ export function useCustomerSelection({
   const resolveLocalUserId = useCallback(async (cust: OmieCustomer): Promise<string | null> => {
     let localUserId = cust.local_user_id || null;
     if (!localUserId) {
-      const { data: mapping } = await supabase
+      const { data: mapping, error: mappingError } = await supabase
         .from('omie_customer_account_map_fresco')
         .select('user_id')
         .eq('omie_codigo_cliente', cust.codigo_cliente)
@@ -306,6 +309,8 @@ export function useCustomerSelection({
         // account-correta. UNIQUE(código,account) → sem colisão. Miss → cai no match por documento abaixo.
         .eq('account', 'oben')
         .maybeSingle();
+      // 8.2: erro da leitura LANÇA (antes era ignorado e caía no documento/vendedor) → `indisponivel`.
+      if (mappingError) throw mappingError;
       if (mapping?.user_id) localUserId = mapping.user_id;
     }
     if (!localUserId && cust.cnpj_cpf) {
@@ -480,6 +485,7 @@ export function useCustomerSelection({
     setCustomers([]);
     setVendedorDivergencias([]);
     setEstadoVendedor('nao_verificado');
+    setEstadoCadastro('resolvendo');
     setSelectedAddress('');
     setRequiresPo(false);
     // Limpa estado do cliente ANTERIOR — não deve aparecer preço/parcela/vínculo
@@ -496,8 +502,20 @@ export function useCustomerSelection({
     try {
       setSelectedCustomer(cust);
 
-      const localUserId = await resolveLocalUserId(cust);
+      // 8.2: a busca do cadastro tem desfecho PRÓPRIO — falhar não derruba o resto da seleção (preços,
+      // condições), mas deixa o envio bloqueado em `indisponivel` com "Revalidar cadastro".
+      let localUserId: string | null = null;
+      let erroCadastro: unknown = null;
+      try {
+        localUserId = await resolveLocalUserId(cust);
+      } catch (e) {
+        erroCadastro = e ?? new Error('busca do cadastro falhou');
+        logger.warn('Busca do cadastro local do cliente falhou', {
+          stage: 'resolve_local_user', customerCnpjCpf: maskDocument(cust.cnpj_cpf), error: e,
+        });
+      }
       if (isStale()) return;
+      setEstadoCadastro(interpretarCadastro(localUserId, erroCadastro));
 
       if (localUserId) {
         setCustomerUserId(localUserId);
@@ -735,6 +753,41 @@ export function useCustomerSelection({
     return retained.token === selectionTokenRef.current ? cliente : null;
   }, []);
 
+  /** 8.2: "Revalidar cadastro" — refaz SÓ a busca do cadastro da seleção corrente, sem limpar o carrinho. */
+  const revalidarCadastro = useCallback(async () => {
+    if (!selectedCustomer) return;
+    const myToken = selectionTokenRef.current;
+    const isStale = () => selectionTokenRef.current !== myToken;
+    setEstadoCadastro('resolvendo');
+    let localUserId: string | null = null;
+    let erroCadastro: unknown = null;
+    try {
+      localUserId = await resolveLocalUserId(selectedCustomer);
+    } catch (e) {
+      erroCadastro = e ?? new Error('busca do cadastro falhou');
+      logger.warn('Revalidar cadastro falhou', { stage: 'revalidar_cadastro', error: e });
+    }
+    if (isStale()) return;
+    setEstadoCadastro(interpretarCadastro(localUserId, erroCadastro));
+    if (localUserId) {
+      setCustomerUserId(localUserId);
+      reloadPriceHistory?.();
+      onLocalUserResolved?.(localUserId);
+    }
+  }, [selectedCustomer, resolveLocalUserId, reloadPriceHistory, onLocalUserResolved]);
+
+  /** 8.2: cadastro criado/achado por outro caminho (ex.: "Criar cadastro no app") para a seleção `token`. */
+  const confirmarCadastro = useCallback((localUserId: string, token: number) => {
+    if (selectionTokenRef.current !== token) return;
+    setCustomerUserId(localUserId);
+    setEstadoCadastro('confirmado');
+    reloadPriceHistory?.();
+    onLocalUserResolved?.(localUserId);
+  }, [reloadPriceHistory, onLocalUserResolved]);
+
+  /** Token da seleção corrente — quem conclui algo assíncrono confere que o cliente não mudou. */
+  const tokenDaSelecao = useCallback(() => selectionTokenRef.current, []);
+
   const clearCustomer = useCallback(() => {
     // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
     // ressuscitam o cliente que estamos limpando. Como o finally da seleção pula
@@ -744,6 +797,7 @@ export function useCustomerSelection({
     setSelectedCustomer(null);
     setLoadingCustomer(false);
     setEstadoVendedor('nao_verificado');
+    setEstadoCadastro('nao_verificado');
     setCustomerUserId(null);
     setCustomerPricesOben({});
     setCustomerPricesColacor({});
@@ -789,6 +843,7 @@ export function useCustomerSelection({
     customerPurchaseHistory,
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
+    estadoCadastro, revalidarCadastro, confirmarCadastro, tokenDaSelecao,
     // Actions
     selectCustomer, clearCustomer, waitForAccountEnsure,
   };

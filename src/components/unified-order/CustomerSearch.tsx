@@ -11,6 +11,7 @@ import {
 import { cn, decodeHtmlEntities } from '@/lib/utils';
 import type { OmieCustomer } from '@/hooks/useUnifiedOrder';
 import type { EstadoVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
+import type { EstadoCadastro } from '@/hooks/unifiedOrder/cadastro-cliente';
 
 interface CustomerSearchProps {
   selectedCustomer: OmieCustomer | null;
@@ -24,6 +25,12 @@ interface CustomerSearchProps {
   vendedorDivergencias: string[];
   /** 8.1: 'indisponivel' e 'divergente' (com ou sem lista) avisam e bloqueiam o envio; a única saída é "Trocar" (sem revalidar). */
   estadoVendedor?: EstadoVendedor;
+  /** 8.2: 'indisponivel' (a busca falhou) → "Revalidar cadastro"; 'sem_cadastro' → "Criar cadastro no app".
+   *  Os dois bloqueiam o envio e nenhum limpa o carrinho. */
+  estadoCadastro?: EstadoCadastro;
+  onRevalidarCadastro?: () => void;
+  onCriarCadastro?: () => void;
+  criandoCadastro?: boolean;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -37,6 +44,7 @@ export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
   validatingVendedor, vendedorDivergencias, estadoVendedor,
+  estadoCadastro, onRevalidarCadastro, onCriarCadastro, criandoCadastro = false,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -108,6 +116,36 @@ export function CustomerSearch({
               <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
                 <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                 <p className="text-xs text-muted-foreground">Validando vendedor nos 3 Omies...</p>
+              </div>
+            )}
+            {estadoCadastro === 'indisponivel' && (
+              <div className="bg-status-warning/10 border border-status-warning/30 rounded-lg p-3" role="alert" data-testid="cadastro-indisponivel">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold">Não foi possível identificar o cliente no app</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado até o cadastro ser confirmado. O carrinho é mantido.</p>
+                  </div>
+                  {onRevalidarCadastro && (
+                    <Button variant="outline" size="sm" onClick={onRevalidarCadastro}>Revalidar cadastro</Button>
+                  )}
+                </div>
+              </div>
+            )}
+            {estadoCadastro === 'sem_cadastro' && (
+              <div className="bg-status-warning/10 border border-status-warning/30 rounded-lg p-3" role="alert" data-testid="cadastro-ausente">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold">Cliente sem cadastro no app</p>
+                    <p className="text-xs text-muted-foreground mt-1">Crie o cadastro para enviar o pedido no nome do cliente. O carrinho é mantido.</p>
+                  </div>
+                  {onCriarCadastro && (
+                    <Button variant="outline" size="sm" onClick={onCriarCadastro} disabled={criandoCadastro}>
+                      {criandoCadastro ? 'Criando…' : 'Criar cadastro no app'}
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
             {estadoVendedor === 'indisponivel' && (

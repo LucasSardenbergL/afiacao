@@ -32,7 +32,7 @@ describe('reservaDaBarra — do topo da barra ao fim da tela (Codex P2)', () => 
 describe('BarraEnvioPedido publica a reserva enquanto está montada', () => {
   const props: BarraEnvioPedidoProps = {
     temCliente: true, carregandoCliente: false, obenProductItems: [], colacorProductItems: [], serviceItems: [],
-    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', loadingFormas: false, exigeCondicao: true,
+    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', estadoCadastro: 'confirmado', loadingFormas: false, exigeCondicao: true,
     selectedParcelaOben: '999', selectedParcelaColacor: '999',
     submitting: false, totalEstimated: 0, servicosAOrcar: 0, onSubmit: vi.fn(),
   };

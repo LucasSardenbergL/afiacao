@@ -18,6 +18,7 @@ import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoDeNascimento } from '@/lib/pricing/precoDeNascimento';
 import { mensagemBloqueioVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
+import { mensagemBloqueioCadastro } from '@/hooks/unifiedOrder/cadastro-cliente';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
@@ -265,6 +266,7 @@ export function useUnifiedOrder() {
     selectedAddress, setSelectedAddress,
     customerPurchaseHistory,
     vendedorDivergencias, validatingVendedor, estadoVendedor,
+    estadoCadastro, revalidarCadastro, confirmarCadastro, tokenDaSelecao,
     selectCustomer, clearCustomer: clearCustomerInternal,
     waitForAccountEnsure,
   } = customerSel;
@@ -781,59 +783,64 @@ export function useUnifiedOrder() {
     if (product) addProductToCart(product);
   }, [obenProducts, colacorProducts, addProductToCart]);
 
+  /** Acha o cadastro local do cliente (mapping fresco → documento) ou o CRIA (`criar_perfil_local`, que
+   *  refaz a busca por documento no servidor — sem perfil duplicado). Lança em erro. Usado pelo cadastro de
+   *  ferramenta e, no 8.2, pelo "Criar cadastro no app" do envio. */
+  const garantirCadastroLocal = async (cliente: OmieCustomer): Promise<{ id: string; criado: boolean }> => {
+    // #11 (P0-B-bis PR-4): resolve codigo->user_id pela view fresca account=oben. cliente.codigo_cliente
+    // é o código da conta OBEN; buscá-lo no espelho poluído SEM conta pegava o user ERRADO em colisão de código
+    // entre contas (Codex P2 — anexa a ferramenta ao cliente errado). A fresca é UNIQUE(omie_codigo_cliente,
+    // account) → resolve o user certo; miss (ausente/stale 7d) cai no fallback por documento abaixo (fail-closed).
+    const { data: existingMapping } = await supabase
+      .from('omie_customer_account_map_fresco').select('user_id')
+      .eq('omie_codigo_cliente', cliente.codigo_cliente).eq('account', 'oben').maybeSingle();
+    // user_id da view é string|null (view nulável); null → trata como miss e cai no fallback por documento.
+    if (existingMapping?.user_id) {
+      return { id: existingMapping.user_id, criado: false };
+    }
+    if (cliente.cnpj_cpf) {
+      const docClean = chaveDocumentoParaBusca(cliente.cnpj_cpf);
+      if (docClean) {
+        // Onda D: filtro pelo documento na view MASCARADA — fora da carteira é miss e cai no
+        // `criar_perfil_local`, que refaz a busca por documento no servidor (sem perfil duplicado).
+        const { data: profile } = await supabase
+          .from('v_perfil_contato').select('user_id').eq('document', docClean).maybeSingle();
+        if (profile?.user_id) {
+          return { id: profile.user_id, criado: false };
+        }
+      }
+    }
+    const { data: result, error } = await supabase.functions.invoke('omie-cliente', {
+      body: {
+        action: 'criar_perfil_local',
+        cliente: {
+          codigo_cliente: cliente.codigo_cliente,
+          razao_social: cliente.razao_social,
+          nome_fantasia: cliente.nome_fantasia,
+          cnpj_cpf: cliente.cnpj_cpf,
+          codigo_vendedor: cliente.codigo_vendedor,
+        },
+      },
+    });
+    if (error) throw error;
+    const localUserId = result?.user_id;
+    if (!localUserId) throw new Error('Falha ao criar perfil');
+    return { id: localUserId, criado: true };
+  };
+
   // Create local profile
   const handleStaffAddTool = async () => {
     if (!selectedCustomer) return;
     if (customerUserId) { setAddToolDialogOpen(true); return; }
+    const token = tokenDaSelecao();
     setCreatingLocalProfile(true);
     try {
-      // #11 (P0-B-bis PR-4): resolve codigo->user_id pela view fresca account=oben. selectedCustomer.codigo_cliente
-      // é o código da conta OBEN; buscá-lo no espelho poluído SEM conta pegava o user ERRADO em colisão de código
-      // entre contas (Codex P2 — anexa a ferramenta ao cliente errado). A fresca é UNIQUE(omie_codigo_cliente,
-      // account) → resolve o user certo; miss (ausente/stale 7d) cai no fallback por documento abaixo (fail-closed).
-      const { data: existingMapping } = await supabase
-        .from('omie_customer_account_map_fresco').select('user_id')
-        .eq('omie_codigo_cliente', selectedCustomer.codigo_cliente).eq('account', 'oben').maybeSingle();
-      // user_id da view é string|null (view nulável); null → trata como miss e cai no fallback por documento.
-      if (existingMapping?.user_id) {
-        setCustomerUserId(existingMapping.user_id);
-        loadUserTools(existingMapping.user_id);
-        setAddToolDialogOpen(true);
-        return;
-      }
-      if (selectedCustomer.cnpj_cpf) {
-        const docClean = chaveDocumentoParaBusca(selectedCustomer.cnpj_cpf);
-        if (docClean) {
-          // Onda D: filtro pelo documento na view MASCARADA — fora da carteira é miss e cai no
-          // `criar_perfil_local`, que refaz a busca por documento no servidor (sem perfil duplicado).
-          const { data: profile } = await supabase
-            .from('v_perfil_contato').select('user_id').eq('document', docClean).maybeSingle();
-          if (profile?.user_id) {
-            setCustomerUserId(profile.user_id);
-            loadUserTools(profile.user_id);
-            setAddToolDialogOpen(true);
-            return;
-          }
-        }
-      }
-      const { data: result, error } = await supabase.functions.invoke('omie-cliente', {
-        body: {
-          action: 'criar_perfil_local',
-          cliente: {
-            codigo_cliente: selectedCustomer.codigo_cliente,
-            razao_social: selectedCustomer.razao_social,
-            nome_fantasia: selectedCustomer.nome_fantasia,
-            cnpj_cpf: selectedCustomer.cnpj_cpf,
-            codigo_vendedor: selectedCustomer.codigo_vendedor,
-          },
-        },
-      });
-      if (error) throw error;
-      const localUserId = result?.user_id;
-      if (!localUserId) throw new Error('Falha ao criar perfil');
-      setCustomerUserId(localUserId);
-      setSelectedCustomer(prev => prev ? { ...prev, local_user_id: localUserId } : prev);
-      toast.success('Perfil criado', { description: 'Agora cadastre as ferramentas.' });
+      const { id, criado } = await garantirCadastroLocal(selectedCustomer);
+      if (tokenDaSelecao() !== token) return;
+      confirmarCadastro(id, token);
+      setSelectedCustomer(prev => prev ? { ...prev, local_user_id: id } : prev);
+      loadUserTools(id);
+      if (criado) toast.success('Perfil criado', { description: 'Agora cadastre as ferramentas.' });
       setAddToolDialogOpen(true);
     } catch (e) {
       logger.error('Failed to prepare local profile for staff add-tool flow', {
@@ -844,6 +851,30 @@ export function useUnifiedOrder() {
         error: e,
       });
       toast.error('Erro', { description: 'Não foi possível preparar o cadastro.' });
+    } finally {
+      setCreatingLocalProfile(false);
+    }
+  };
+
+  /** 8.2: saída do envio bloqueado por `sem_cadastro` — cria (ou acha) o cadastro SEM limpar o carrinho. */
+  const criarCadastroNoApp = async () => {
+    if (!selectedCustomer || estadoCadastro !== 'sem_cadastro') return;
+    const token = tokenDaSelecao();
+    setCreatingLocalProfile(true);
+    try {
+      const { id, criado } = await garantirCadastroLocal(selectedCustomer);
+      if (tokenDaSelecao() !== token) return;
+      confirmarCadastro(id, token);
+      setSelectedCustomer(prev => prev ? { ...prev, local_user_id: id } : prev);
+      // `criar_perfil_local` também pode ACHAR um cadastro existente: o texto não afirma que criou.
+      void criado;
+      toast.success('Cadastro do cliente confirmado no app');
+    } catch (e) {
+      logger.error('Criar cadastro no app (envio) falhou', {
+        mode: 'staff', stage: 'criar_cadastro_envio',
+        customerCnpjCpf: maskDocument(selectedCustomer.cnpj_cpf), error: e,
+      });
+      toast.error('Não foi possível criar o cadastro do cliente', { description: 'O envio continua bloqueado. Tente de novo.' });
     } finally {
       setCreatingLocalProfile(false);
     }
@@ -949,6 +980,17 @@ export function useUnifiedOrder() {
     if (bloqueioVendedor) {
       toast.error(bloqueioVendedor);
       return;
+    }
+    // 8.2: staff só envia com o cadastro do cliente CONFIRMADO — o pedido nunca nasce no nome do vendedor.
+    // (O service também barra `customerUserId` nulo fora do autoatendimento: 2ª camada.)
+    if (!isCustomerMode) {
+      // `confirmado` sem id (não deveria existir) conta como não identificado.
+      const estadoEfetivo = !customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel' : estadoCadastro;
+      const bloqueioCadastro = mensagemBloqueioCadastro(estadoEfetivo);
+      if (bloqueioCadastro) {
+        toast.error(bloqueioCadastro);
+        return;
+      }
     }
     // Guard money-path da condição de pagamento: a listagem do Omie degradou para as 8
     // genéricas E este cliente usa condição que não está entre elas (prova pelo histórico
@@ -1178,7 +1220,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra, limparCamposDoPedido,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
-    waitForAccountEnsure, loadingCustomer, estadoVendedor, searchParams,
+    waitForAccountEnsure, loadingCustomer, estadoVendedor, estadoCadastro, searchParams,
     estadoFormasOben, estadoFormasColacor,
   ]);
 
@@ -1230,6 +1272,7 @@ export function useUnifiedOrder() {
     toolCategories, getFilteredServicos,
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
+    estadoCadastro, revalidarCadastro, criarCadastroNoApp,
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,

@@ -6,6 +6,7 @@ import {
   type EstadoFormasUI,
 } from '@/services/orderSubmission/formasDegradacao';
 import type { EstadoVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
+import type { EstadoCadastro } from '@/hooks/unifiedOrder/cadastro-cliente';
 
 /**
  * C5 (rodada 2): POR QUE o "Enviar pedido" está cinza. A lista sai da MESMA função que desabilita
@@ -22,6 +23,9 @@ type CodigoMotivoEnvio =
   | 'vendedor_divergente'
   | 'validando_vendedor'
   | 'vendedor_indisponivel'
+  | 'identificando_cliente'
+  | 'sem_cadastro_cliente'
+  | 'cadastro_indisponivel'
   | 'preco_invalido'
   | 'condicoes_indisponiveis'
   | 'carregando_condicoes'
@@ -41,6 +45,9 @@ export interface EntradaMotivosEnvio {
   vendedorDivergencias: string[];
   /** 8.1: falha da validação bloqueia (ausente ≠ consistente). Obrigatório de propósito. */
   estadoVendedor: EstadoVendedor;
+  /** 8.2: staff só envia com o cadastro do cliente confirmado (o autoatendimento passa `confirmado`).
+   *  Obrigatório de propósito. */
+  estadoCadastro: EstadoCadastro;
   estadoFormasOben?: EstadoFormasUI;
   estadoFormasColacor?: EstadoFormasUI;
   loadingFormas: boolean;
@@ -70,6 +77,15 @@ export function motivosEnvioBloqueado(e: EntradaMotivosEnvio): MotivoEnvio[] {
     motivos.push({ codigo: 'validando_vendedor', texto: 'Validando vendedor…' });
   } else if (e.estadoVendedor === 'indisponivel') {
     motivos.push({ codigo: 'vendedor_indisponivel', texto: 'Não foi possível validar o vendedor — use “Trocar”' });
+  }
+  if (e.temCliente && !e.carregandoCliente) {
+    if (e.estadoCadastro === 'resolvendo') {
+      motivos.push({ codigo: 'identificando_cliente', texto: 'Identificando o cliente no app…' });
+    } else if (e.estadoCadastro === 'sem_cadastro') {
+      motivos.push({ codigo: 'sem_cadastro_cliente', texto: 'Cliente sem cadastro no app — use “Criar cadastro no app”' });
+    } else if (e.estadoCadastro === 'indisponivel') {
+      motivos.push({ codigo: 'cadastro_indisponivel', texto: 'Não foi possível identificar o cliente no app — use “Revalidar cadastro”' });
+    }
   }
   if (findInvalidPricedProductItems([...e.obenProductItems, ...e.colacorProductItems]).length > 0) {
     motivos.push({ codigo: 'preco_invalido', texto: 'Item com preço zerado' });
