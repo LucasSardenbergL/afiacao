@@ -27296,6 +27296,7 @@ export type Database = {
         Args: { p_codigo: number; p_company: string }
         Returns: Json
       }
+      credito_painel_resumo: { Args: { p_dias?: number }; Returns: Json }
       credito_parse_calendario: {
         Args: { p_descricao: string }
         Returns: number[]
