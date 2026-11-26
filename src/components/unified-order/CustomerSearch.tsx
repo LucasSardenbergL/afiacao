@@ -22,7 +22,7 @@ interface CustomerSearchProps {
   loadingCustomer: boolean;
   validatingVendedor: boolean;
   vendedorDivergencias: string[];
-  /** 8.1: 'indisponivel' mostra "Tentar de novo"; 'divergente' (com ou sem lista) mostra "Revalidar". O envio fica bloqueado nos dois. */
+  /** 8.1: 'indisponivel' mostra "Tentar de novo"; 'divergente' (com ou sem lista) avisa, SEM revalidar: a saída é "Trocar". O envio fica bloqueado nos dois. */
   estadoVendedor?: EstadoVendedor;
   onRevalidarVendedor?: () => void;
   onSelectCustomer: (c: OmieCustomer) => void;
@@ -143,11 +143,11 @@ export function CustomerSearch({
                         ))}
                       </ul>
                     )}
+                    {/* SEM "Revalidar" aqui (3ª rodada do Codex, 2 P0): a revalidação não recarrega os códigos de
+                        vendedor da seleção (a OS sairia com o antigo) e uma conta que falha some da comparação
+                        (lacuna da edge, Onda 3) — liberaria divergência real. Só a seleção nova recarrega tudo. */}
+                    <p className="text-xs text-muted-foreground mt-1">Depois de corrigir, use “Trocar” e selecione o cliente de novo.</p>
                   </div>
-                  {/* r2 do Codex: corrigido no Omie, revalida sem descartar o carrinho (antes só "Trocar"). */}
-                  {onRevalidarVendedor && (
-                    <Button variant="outline" size="sm" onClick={onRevalidarVendedor}>Revalidar</Button>
-                  )}
                 </div>
               </div>
             )}

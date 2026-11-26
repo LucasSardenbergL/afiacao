@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import type { OmieCustomer } from '@/hooks/useUnifiedOrder';
 
-// PR 8.1, r2 do Codex: divergência (com ou sem lista) bloqueia o envio — precisa de saída que NÃO descarte
-// o carrinho (antes só "Trocar"). Com lista vazia nem aviso havia: o envio travava sem explicação.
+// PR 8.1: divergência (com ou sem lista) bloqueia o envio e AVISA — com lista vazia nem aviso havia (r2 do Codex).
+// SEM "Revalidar" (r3, 2 P0): revalidar não recarrega os códigos de vendedor da seleção e uma conta que falha
+// some da comparação na edge. A saída é "Trocar" (seleção nova recarrega tudo).
 const cliente = { codigo_cliente: 1, razao_social: 'Metalúrgica A', nome_fantasia: 'Metalúrgica A', cnpj_cpf: '01' } as unknown as OmieCustomer;
 
 function montar(extra: Partial<React.ComponentProps<typeof CustomerSearch>>) {
@@ -13,32 +14,29 @@ function montar(extra: Partial<React.ComponentProps<typeof CustomerSearch>>) {
       selectedCustomer={cliente} customerUserId={null} customerSearch="" onSearchChange={vi.fn()}
       customers={[]} searchingCustomers={false} loadingCustomer={false}
       validatingVendedor={false} vendedorDivergencias={[]}
-      onSelectCustomer={vi.fn()} onClearCustomer={vi.fn()}
+      onSelectCustomer={vi.fn()} onClearCustomer={vi.fn()} onRevalidarVendedor={vi.fn()}
       {...extra}
     />,
   );
 }
 
 describe('CustomerSearch — vendedor divergente (PR 8.1)', () => {
-  it('divergente SEM lista mostra o aviso e "Revalidar"', () => {
-    const onRevalidarVendedor = vi.fn();
-    montar({ estadoVendedor: 'divergente', onRevalidarVendedor });
-    expect(screen.getByTestId('vendedor-divergente').textContent).toContain('sem detalhar as contas');
-    fireEvent.click(screen.getByRole('button', { name: 'Revalidar' }));
-    expect(onRevalidarVendedor).toHaveBeenCalledTimes(1);
+  it('divergente SEM lista mostra o aviso, manda trocar e NÃO oferece revalidar', () => {
+    montar({ estadoVendedor: 'divergente' });
+    const aviso = screen.getByTestId('vendedor-divergente').textContent ?? '';
+    expect(aviso).toContain('sem detalhar as contas');
+    expect(aviso).toContain('Trocar');
+    expect(screen.queryByRole('button', { name: /Revalidar|Tentar de novo/ })).toBeNull();
   });
 
-  it('divergente COM lista mostra as contas e "Revalidar"', () => {
-    const onRevalidarVendedor = vi.fn();
-    montar({ estadoVendedor: 'divergente', vendedorDivergencias: ['Oben: vendedor B'], onRevalidarVendedor });
+  it('divergente COM lista mostra as contas e NÃO oferece revalidar', () => {
+    montar({ estadoVendedor: 'divergente', vendedorDivergencias: ['Oben: vendedor B'] });
     expect(screen.getByTestId('vendedor-divergente').textContent).toContain('Oben: vendedor B');
-    fireEvent.click(screen.getByRole('button', { name: 'Revalidar' }));
-    expect(onRevalidarVendedor).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /Revalidar|Tentar de novo/ })).toBeNull();
   });
 
   it('consistente não mostra aviso de divergência', () => {
-    montar({ estadoVendedor: 'consistente', onRevalidarVendedor: vi.fn() });
+    montar({ estadoVendedor: 'consistente' });
     expect(screen.queryByTestId('vendedor-divergente')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Revalidar' })).toBeNull();
   });
 });
