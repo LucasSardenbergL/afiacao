@@ -178,7 +178,7 @@ export default function CreditoFila() {
   const [dialogo, setDialogo] = useState<{ item: ItemFila; autorizar: boolean } | null>(null);
   const [motivo, setMotivo] = useState('');
 
-  const itens = fila.data ?? [];
+  const itens = useMemo(() => fila.data ?? [], [fila.data]);
   const efetivos = itens.filter((i) => i.origem === 'efetivo');
   const sombra = itens.filter((i) => i.origem === 'sombra');
   const ids = useMemo(() => [...new Set(itens.map((i) => i.customer_user_id).filter((x): x is string => !!x))], [itens]);

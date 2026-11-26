@@ -300,6 +300,9 @@ asserts() {
   P -q -f "$SAB/pront.sql"; P -q -c "REVOKE ALL ON FUNCTION public.credito_enforcement_prontidao(text) FROM PUBLIC, anon; GRANT EXECUTE ON FUNCTION public.credito_enforcement_prontidao(text) TO authenticated, service_role;"
   eq "E3.14 versão do flag subiu a cada ato" "$(Pq -c "SELECT ligado || '/' || versao FROM public.credito_enforcement WHERE company='oben'")" "true/5"
 
+  # a query que o Lucas roda (docs/historico/credito-fila-enforcement-dormente-2026-11.md), sem JWT
+  eq "E3.15 query de prontidão do Lucas: 3 empresas × 6 condições, nenhuma pronta" "$(Pq -c "SELECT count(*) || ':' || count(*) FILTER (WHERE (q.p ->> 'pronto')::boolean) FROM unnest(ARRAY['oben','colacor','colacor_sc']) c CROSS JOIN LATERAL (SELECT public.credito_enforcement_prontidao(c) AS p) q CROSS JOIN LATERAL jsonb_array_elements(q.p -> 'condicoes') x")" "18:0"
+
   echo "E4 escrita direta no flag e nas tabelas novas"
   eq "E4.1 escritor (DML, sem portão) UPDATE flag → 42501" "$(comorole escritor_teste "UPDATE public.credito_enforcement SET ligado = true")" "42501"
   eq "E4.2 portão aberto, DELETE flag → 42501" "$(comorole escritor_teste "SELECT set_config('credito.portao','oben',false); DELETE FROM public.credito_enforcement WHERE company='oben'")" "42501"

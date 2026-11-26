@@ -55,3 +55,18 @@ Abas Efetivo / Sombra; banner "Enforcement desligado — itens da sombra são si
 
 ## Prova (`db/test-credito-fila.sh`, PG17, `C` e `pt_BR.UTF-8`)
 E1 flag desligado → `credito_gate_v2_efetivo` devolve `ligado:false` e as 4 tabelas de trilha ficam intocadas (contagem antes = depois). E2 ligado → piso vencido 🔴 sem solicitação; estouro 🟡 + solicitação aberta + item na fila; dentro do limite 🟢 + reserva `efetivo`. E3 ligar sem prontidão → recusa (P0001); desligar sempre; não-aprovador → 42501; SQL sem `auth.uid()` → 42501; log grava antes/depois. E4 escrita direta no flag (UPDATE/INSERT/DELETE) → 42501. E5 alerta: solicitação de 2h01 → 1 alerta + 1 `net.http_post` (stub); 2º tick → 0; 1h59 → 0; sombra → 0. E6 recomendação: `ok` imutável; `erro` regravável até 3; entrada com chave de texto livre recusada. E7 fila: sombra pendência cadastral fora; cancelado fora; última decisão por pedido. Falsificação com controle verde na mesma invocação: F1 gate ignora o flag; F2 linha ausente = ligado; F3 ligar sem checar prontidão; F4 alerta sem dedupe; F5 alerta inclui sombra.
+
+## Revisão pós-Codex (desenho, 2026-11-25 — gpt-6.2-astra high; parecer completo nas notas da sessão)
+
+Veredito: **bloquearia como desenhado**. Todos os P0/P1 acatados no 6a; o que é do 6b ou de ativação virou pré-requisito na prontidão:
+
+| Achado | Como ficou |
+|---|---|
+| P0 revisão superada tratada como "indisponível" → despacho de r1 | `credito_gate_v2_efetivo` devolve `resultado` explícito (`desligado`·`avaliado`·`revisao_inexistente`·`revisao_superada`·`conta_divergente`), toma o MESMO advisory lock do registrador de revisão e lê a conta do PEDIDO. Leitor separado do flag na edge removido: a RPC decide. |
+| P1 kill switch dependente da prontidão | desligar nunca chama a prontidão fora de sub-bloco; cancela as solicitações abertas da empresa e loga a contagem. |
+| P1 lista de pré-requisitos incompleta | + (c) carga/transferência no efetivo, (g) exposição do grupo com empresas desligadas e PVs do Omie, (h) ensaio real de push/retomada, (i) recusa encerra a revisão no núcleo, (j) backtest + prova 2 sessões. Sombra exige lote < 1 h E 0 erros (cron parado ≠ ok). Prazo: 0 revisões de 30 d sem prazo. |
+| P1 alerta mentia (`_push_enviar` volta em silêncio) | estado `sem_canal` (sem segredo/assinatura/aprovador, retentado a cada tick) ≠ `enfileirado`; reconfere SOB LOCK (`FOR UPDATE SKIP LOCKED`), só efetivo ATUAL e com flag ligado; tag por solicitação. `enfileirado` = enqueue, não entrega → ensaio real é pré-requisito (h). |
+| P1 IA: injection validada tarde; 2 workers pagam 2 chamadas | entrada projetada campo a campo da DECISÃO (sem o jsonb da ficha; risco só se for a mesma versão do limite) e validada antes da chamada; claim atômico (5 min) antes da chamada; claim velho → `descartada`; `erro` retentável até 3 → `esgotada`; abstenção válida é final; coerência sugestão×prazo×confiança no CHECK e na edge; disparo só cron. |
+| P1 fila: "última amarela" ressuscita | sombra = última avaliação (qualquer faixa) e só depois o filtro; efetivo marca `superada` (decisão mais nova) e `congelada` (flag desligado); `credito_decidir_fila` é o ÚNICO caminho de autorização (REVOKE de authenticated na RPC do PR 2) e recusa item superado/congelado. |
+| P2 SLA/tag | "1º tick após completar 2 h"; tag por solicitação. |
+| 6b (P0/P1) | contrato das 4 saídas (piso → flag → v2 → despacho), claim por revisão, tint/ATP antes da reserva, edição com PV confirmado — pré-requisitos (d)/(e)/(f) da prontidão; o 6b só liga a chamada dormente com prova de paridade desligado. |
