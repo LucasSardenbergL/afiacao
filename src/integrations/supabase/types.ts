@@ -476,6 +476,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "atp_decisoes_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       banco_conta: {
@@ -4202,6 +4209,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "estoque_reservas_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       eventos_outlier: {
@@ -4646,6 +4660,13 @@ export type Database = {
             columns: ["linked_sales_order_id"]
             isOneToOne: false
             referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "farmer_calls_linked_sales_order_id_fkey"
+            columns: ["linked_sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
             referencedColumns: ["id"]
           },
         ]
@@ -11476,6 +11497,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "order_items_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       order_messages: {
@@ -12871,6 +12899,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "pedido_total_liquido_excecao_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: true
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       pedidos_portal_tentativas: {
@@ -13713,6 +13748,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "picking_tasks_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       posthog_error_webhook_log: {
@@ -14097,6 +14139,13 @@ export type Database = {
             columns: ["sales_order_id"]
             isOneToOne: false
             referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_orders_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
             referencedColumns: ["id"]
           },
         ]
@@ -16512,6 +16561,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "recommendation_log_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       recurring_schedules: {
@@ -17859,6 +17915,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "reposicao_ruptura_pedido_itens_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       reposicao_ruptura_prateleira_diaria: {
@@ -18448,6 +18511,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "sales_orders_gemeo_importado_id_fkey"
+            columns: ["gemeo_importado_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "sales_orders_pedido_programado_envio_id_fkey"
             columns: ["pedido_programado_envio_id"]
             isOneToOne: false
@@ -18508,6 +18578,13 @@ export type Database = {
             columns: ["sales_order_id"]
             isOneToOne: false
             referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_price_history_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
             referencedColumns: ["id"]
           },
         ]
@@ -23189,6 +23266,13 @@ export type Database = {
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "venda_excecao_credito_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "v_pedido_snapshot_proprio"
+            referencedColumns: ["id"]
+          },
         ]
       }
       venda_gerador_execucao: {
@@ -25767,6 +25851,30 @@ export type Database = {
         }
         Relationships: []
       }
+      v_pedido_snapshot_proprio: {
+        Row: {
+          customer_address: string | null
+          customer_document: string | null
+          customer_phone: string | null
+          customer_user_id: string | null
+          id: string | null
+        }
+        Insert: {
+          customer_address?: string | null
+          customer_document?: string | null
+          customer_phone?: string | null
+          customer_user_id?: string | null
+          id?: string | null
+        }
+        Update: {
+          customer_address?: string | null
+          customer_document?: string | null
+          customer_phone?: string | null
+          customer_user_id?: string | null
+          id?: string | null
+        }
+        Relationships: []
+      }
       v_pedidos_em_aberto: {
         Row: {
           dias_desde_pedido: number | null
@@ -25809,16 +25917,6 @@ export type Database = {
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
-        }
-        Relationships: []
-      }
-      v_pedido_snapshot_proprio: {
-        Row: {
-          customer_address: string | null
-          customer_document: string | null
-          customer_phone: string | null
-          customer_user_id: string | null
-          id: string | null
         }
         Relationships: []
       }
