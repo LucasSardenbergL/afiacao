@@ -33,7 +33,7 @@ describe('8.2 — a busca do cadastro distingue erro de ausência', () => {
 describe('8.2 — caminho de envio do staff confere o cadastro ANTES da trava', () => {
   it('o submit chama o guard (fora do autoatendimento) e retorna quando bloqueia', () => {
     expect(corpoDoSubmit()).toMatch(
-      /if \(!isCustomerMode\) \{[\s\S]*?mensagemBloqueioCadastro\(estadoEfetivo\)[\s\S]*?toast\.error\(bloqueioCadastro\);\s*return;/,
+      /if \(!isCustomerMode\) \{[\s\S]*?const bloqueioCadastro = mensagemBloqueioCadastro\(estadoEfetivo\);\s*if \(bloqueioCadastro\) \{\s*toast\.error\(bloqueioCadastro\);\s*return;/,
     );
   });
 
