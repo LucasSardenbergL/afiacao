@@ -41,6 +41,26 @@ A pós-condição pegou na 1ª rodada um furo real: as views nasciam com o defau
 
 Redução automática + backtest → fatia 5b (após o PR 4). Condições de ativação herdadas dos PRs 2/3 (lock no escritor do mapa, retomada e despacho por revisão, tint/ATP antes da reserva) → PR 6. Esta prova não entrou no núcleo do CI, como as dos PRs 1–3.
 
+## Deploy (2026-11-26)
+
+- **Migrations**: `bun run db:aplicar` a partir da main mergeada (#4192 → `c39f1f5a5`), com ensaio verde antes de cada uma. Índices: **`db_aplicacoes` #1439 `aplicada`** às 02:25:25Z (sha256 `99c17724…`). Sombra: **#1441 `aplicada`** às 02:26:14Z (sha256 `b5ba9c70…`), com `POSCONDICAO credito-sombra OK`.
+- **2ª testemunha** por psql-ro:
+  - 6 tabelas `credito_sombra_*` com RLS e as 2 views com `security_invoker`;
+  - 7 funções sem EXECUTE para anon/authenticated/service_role;
+  - nenhuma escrita fora do dono;
+  - cron `credito-sombra-lote-10min` ativo como `postgres` (`3-59/10`);
+  - md5 do núcleo e do piso inalterados (`3bd62a20…`, `e89aa733…`);
+  - marco 02:26:14Z, inventário = 32.545 PVs (122 abertos).
+- **1º lote** (02:33Z, 6 s): 78 PVs da carga inicial avaliados, 0 erros, 22 pulados como `revisao_ausente` (PVs antigos do app, anteriores ao PR 3) e 1 sinal de sobra (44 da carga para o lote seguinte). 78 reservas sombra ativas, R$ 56,8 mil. Distribuição da carga:
+
+| Faixa / motivo | PVs | R$ |
+|---|---|---|
+| 🔴 `piso_vencido_60d` (oben 31, colacor 10) | 41 | 33,4 mil |
+| 🟡 `sem_limite` (colacor 23, oben 14) | 37 | 23,4 mil |
+
+  O piso domina a carga: mais da metade dos PVs em trânsito é de cliente com vencido ≥ 60 d no grupo. Vale olhar no PR 6 se esses "importado/separacao" são trânsito real ou status parado. O sensor `excluido_app_reserva_ativa` = 13 (PVs excluídos no app que seguem com reserva, como o desenho manda).
+- Sem edge e sem Publish.
+
 ## Como reverter
 
 `SELECT cron.unschedule('credito-sombra-lote-10min');` para parar. Remover de vez: `DROP` das 6 tabelas, 2 views e 7 funções `credito_sombra_*` (os 2 índices podem ficar) (founder, SQL Editor). Nenhuma decisão de venda depende delas.
