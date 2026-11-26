@@ -792,8 +792,9 @@ BEGIN
                    AND NOT EXISTS (SELECT 1 FROM public.credito_sombra_carga k WHERE k.sales_order_id = s.id)) THEN
     RAISE EXCEPTION 'POSCONDICAO credito-sombra: marco/inventário incompleto';
   END IF;
-  IF (SELECT count(*) FROM cron.job WHERE jobname = 'credito-sombra-lote-10min' AND active) <> 1 THEN
-    RAISE EXCEPTION 'POSCONDICAO credito-sombra: cron ausente';
+  IF (SELECT count(*) FROM cron.job WHERE jobname = 'credito-sombra-lote-10min' AND active
+                                      AND username = 'postgres') <> 1 THEN
+    RAISE EXCEPTION 'POSCONDICAO credito-sombra: cron ausente ou com outro dono (o lote só roda como o dono das funções)';
   END IF;
   RAISE NOTICE 'POSCONDICAO credito-sombra OK';
 END

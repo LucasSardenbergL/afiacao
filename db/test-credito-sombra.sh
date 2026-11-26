@@ -92,8 +92,8 @@ CREATE TABLE public.sync_state (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), e
 -- pg_cron não roda no PG local: stub fiel ao contrato usado (schedule/unschedule/job)
 -- (schema cron.job vem do stubs-supabase.sql; aqui só schedule/unschedule)
 CREATE FUNCTION cron.schedule(p_jobname text, p_schedule text, p_command text) RETURNS bigint LANGUAGE sql AS
-$f$ INSERT INTO cron.job (jobid, jobname, schedule, command, active)
-    VALUES ((SELECT COALESCE(max(jobid), 0) + 1 FROM cron.job), p_jobname, p_schedule, p_command, true) RETURNING jobid $f$;
+$f$ INSERT INTO cron.job (jobid, jobname, schedule, command, active, username)   -- pg_cron grava o papel que agendou
+    VALUES ((SELECT COALESCE(max(jobid), 0) + 1 FROM cron.job), p_jobname, p_schedule, p_command, true, current_user) RETURNING jobid $f$;
 CREATE FUNCTION cron.unschedule(p_jobid bigint) RETURNS boolean LANGUAGE sql AS
 $f$ DELETE FROM cron.job WHERE jobid = p_jobid RETURNING true $f$;
 INSERT INTO public.omie_condicao_pagamento_catalogo(empresa, codigo, descricao, num_parcelas, ativo) VALUES
@@ -376,6 +376,7 @@ rodada() {   # $1 = arquivo da migration
 
 echo "· controle (migration REAL)"
 if rodada "$MIGS5"; then ok "A0 migration aplica com pós-condição"; else bad "A0 migration falhou"; fi
+if P -q -f "$REPO_ROOT/db/medir-credito-sombra.sql" > "$SAB/medir.log" 2>&1 && ! grep -q ERROR "$SAB/medir.log"; then ok "M1 db/medir-credito-sombra.sql roda sobre o ledger"; else bad "M1 medição quebrou: $(grep ERROR "$SAB/medir.log" | head -c 300)"; fi
 echo "· re-aplicar é idempotente (marco não move, cron não duplica)"
 M0=$(Pq -c "SELECT ativado_em FROM public.credito_sombra_marco")
 if P -q -1 -f "$MIGS5" >/dev/null 2>&1; then ok "A1 2ª aplicação passa"; else bad "A1 2ª aplicação falhou"; fi
