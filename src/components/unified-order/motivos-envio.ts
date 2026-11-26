@@ -69,7 +69,7 @@ export function motivosEnvioBloqueado(e: EntradaMotivosEnvio): MotivoEnvio[] {
   } else if (e.estadoVendedor === 'validando') {
     motivos.push({ codigo: 'validando_vendedor', texto: 'Validando vendedor…' });
   } else if (e.estadoVendedor === 'indisponivel') {
-    motivos.push({ codigo: 'vendedor_indisponivel', texto: 'Não foi possível validar o vendedor' });
+    motivos.push({ codigo: 'vendedor_indisponivel', texto: 'Não foi possível validar o vendedor — use “Trocar”' });
   }
   if (findInvalidPricedProductItems([...e.obenProductItems, ...e.colacorProductItems]).length > 0) {
     motivos.push({ codigo: 'preco_invalido', texto: 'Item com preço zerado' });

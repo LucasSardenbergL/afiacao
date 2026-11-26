@@ -428,7 +428,7 @@ não vazia; rede/4xx/corpo sem `consistente` caíam em "sem divergência" e o en
 caminho de envio nem conferia o vendedor (só o `disabled` do botão). Agora 4 estados
 (`validacao-vendedor.ts`: validando · consistente · divergente · indisponível + `nao_verificado`
 para autoatendimento/sem documento, que não bloqueia); só `consistente === true` libera; o guard
-também roda no `submitOrder` antes da trava; "Tentar de novo" revalida sem limpar o carrinho. O
+também roda no `submitOrder` antes da trava; "indisponível" e "divergente" só saem por "Trocar" (seleção nova; sem revalidar — r3/r4). O
 alerta de crédito que falhava calado agora diz "não foi possível consultar" (não trava a venda: a
 trava de crédito no servidor, `gate-credito.ts`, já é fail-closed). Codex: r1 1 P0 (o alerta prometia "o envio confere no servidor", e a OS de Afiação não passa
 pelo gate de crédito) + 2 P1 (validação sem prazo travava em `validando`; erro escondia o saldo já lido), todos

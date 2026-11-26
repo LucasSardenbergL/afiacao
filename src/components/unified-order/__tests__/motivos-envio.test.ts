@@ -44,7 +44,7 @@ describe('motivosEnvioBloqueado — o porquê do Enviar cinza', () => {
     ['vendedor divergente', { vendedorDivergencias: ['oben'] }, 'vendedor_divergente', 'Vendedor divergente'],
     ['8.1: divergente sem lista', { estadoVendedor: 'divergente' }, 'vendedor_divergente', 'Vendedor divergente'],
     ['8.1: validando vendedor', { estadoVendedor: 'validando' }, 'validando_vendedor', 'Validando vendedor…'],
-    ['8.1: validação falhou', { estadoVendedor: 'indisponivel' }, 'vendedor_indisponivel', 'Não foi possível validar o vendedor'],
+    ['8.1: validação falhou', { estadoVendedor: 'indisponivel' }, 'vendedor_indisponivel', 'Não foi possível validar o vendedor — use “Trocar”'],
     ['preço zerado', { obenProductItems: [prod('oben', 0)] }, 'preco_invalido', 'Item com preço zerado'],
     ['condição sumiu do Omie', { estadoFormasOben: COM_PROVA }, 'condicoes_indisponiveis', 'Condição de pagamento indisponível'],
     ['condições carregando', { loadingFormas: true }, 'carregando_condicoes', 'Carregando condições…'],
