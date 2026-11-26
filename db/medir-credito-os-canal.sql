@@ -31,4 +31,23 @@ SELECT (f.data_vencimento - f.data_emissao) AS dias, count(*) AS titulos
  WHERE f.company = 'colacor_sc' AND f.data_emissao > now() - interval '90 days'
  GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 
+-- 4. Opção C (OS criada no Omie): a Colacor SC ainda fatura OS no Omie?
+-- O elo OS → título só existe nos títulos VENR (faturamento de OS): numero_pedido = nº da OS.
+-- Condição para reabrir a opção C: retomar_opcao_c = true ⇔ ≥ 5 títulos VENR em 90 dias.
+-- Em 2026-11-26: último VENR em 2025-12-19, 0 em 2026, retomar_opcao_c = f.
+SELECT count(*) FILTER (WHERE f.id_origem = 'VENR')                                       AS venr_vida,
+       count(*) FILTER (WHERE f.id_origem = 'VENR' AND nullif(f.numero_pedido, '') IS NOT NULL) AS venr_com_elo,
+       max(f.data_emissao) FILTER (WHERE f.id_origem = 'VENR')                            AS ultimo_venr,
+       count(*) FILTER (WHERE f.id_origem = 'VENR' AND f.data_emissao > now() - interval '90 days') AS venr_90d,
+       count(*) FILTER (WHERE f.id_origem = 'VENR' AND f.data_emissao > now() - interval '90 days') >= 5
+                                                                                           AS retomar_opcao_c
+  FROM public.fin_contas_receber f
+ WHERE f.company = 'colacor_sc';
+
+-- 4b. Origem dos títulos da Colacor SC por mês, desde 2025-09 (mostra a troca VENR → MANR)
+SELECT to_char(f.data_emissao, 'YYYY-MM') AS mes, f.id_origem, count(*) AS titulos
+  FROM public.fin_contas_receber f
+ WHERE f.company = 'colacor_sc' AND f.data_emissao >= date '2025-09-01'
+ GROUP BY 1, 2 ORDER BY 1, 2;
+
 SELECT 'FIM_OK' AS marcador;
