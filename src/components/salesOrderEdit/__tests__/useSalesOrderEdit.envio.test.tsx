@@ -79,7 +79,7 @@ beforeEach(() => {
   salesOrderRow = {
     id: 'ord-1', customer_user_id: 'cust-1', created_by: 'vend-1', items: [ITEM],
     subtotal: 20, total: 20, status: 'enviado', notes: null, account: 'oben',
-    omie_pedido_id: 42, omie_numero_pedido: '1001', created_at: '2026-01-01', hash_payload: null,
+    omie_pedido_id: 42, omie_numero_pedido: '1001', created_at: '2026-01-01', updated_at: '2026-11-26T10:00:00+00', hash_payload: null,
   };
   mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
   mockedRpc.mockImplementation(((nome: string) => {
@@ -136,6 +136,8 @@ describe('pedido sem PV (caminho local)', () => {
       ['is', 'omie_pedido_id', null],
       ['is', 'deleted_at', null],
       ['eq', 'status', 'orcamento'],
+      // versão da abertura: um claim de envio depois dela muda o `updated_at` e o UPDATE não casa
+      ['eq', 'updated_at', '2026-11-26T10:00:00+00'],
     ]);
     await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith('/sales'));
   });
@@ -243,5 +245,80 @@ describe('preço do cliente — corrida entre pedidos', () => {
     act(() => { hook.result.current.removeItem(hook.result.current.items.findIndex((i) => i.omie_codigo_produto === 555)); });
     act(() => { hook.result.current.addProduct(PRODUTO); });
     expect(hook.result.current.items.find((i) => i.omie_codigo_produto === 555)?.valor_unitario).toBe(95);
+  });
+});
+
+describe('preço do cliente — corrida pela leitura de profiles (Codex r3)', () => {
+  it('profiles de A atrasado até B carregar: A não publica e B fica com o próprio preço', async () => {
+    let soltarPerfilA: (v: unknown) => void = () => {};
+    const perfilA = new Promise((r) => { soltarPerfilA = r; });
+    mockedRpc.mockImplementation(((nome: string, args?: { p_customer?: string }) => {
+      if (nome === 'get_ultimos_precos_cliente') {
+        const preco = args?.p_customer === 'cust-A' ? 80 : 95;
+        return Promise.resolve({ data: [{ product_id: 'p-novo', unit_price: preco, ultimo_praticado_em: '2026-11-01' }], error: null });
+      }
+      return Promise.resolve({ data: [{ id: rota.id, omie_payload: null, omie_response: null }], error: null });
+    }) as never);
+    mockedFrom.mockImplementation(((table: string) => {
+      if (table === 'profiles') {
+        const atual = rota.id;
+        return { select: () => ({ eq: () => ({ single: () => (atual === 'ord-1'
+          ? perfilA
+          : Promise.resolve({ data: { name: 'Cliente B' }, error: null })) }) }) };
+      }
+      return chainFor(table);
+    }) as never);
+    salesOrderRow = { ...salesOrderRow, customer_user_id: 'cust-A' };
+    const hook = renderHook(() => useSalesOrderEdit());
+    await waitFor(() => expect(hook.result.current.order?.customer_user_id).toBe('cust-A'));
+    salesOrderRow = { ...salesOrderRow, id: 'ord-2', customer_user_id: 'cust-B' };
+    rota.id = 'ord-2';
+    hook.rerender();
+    await waitFor(() => expect(hook.result.current.customerName).toBe('Cliente B'));
+    const PRODUTO = {
+      id: 'p-novo', omie_codigo_produto: 555, codigo: 'X9', descricao: 'Selador', unidade: 'GL',
+      valor_unitario: 100, estoque: 3, ativo: true, account: 'oben', is_tintometric: false, tint_type: null,
+    } as unknown as OmieProduct;
+    await waitFor(() => expect(hook.result.current.precoPrevisto(PRODUTO)).toBe(95));
+    // a leitura VELHA de A chega agora
+    await act(async () => { soltarPerfilA({ data: { name: 'Cliente A' }, error: null }); await perfilA; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(hook.result.current.customerName).toBe('Cliente B');
+    expect(hook.result.current.precoPrevisto(PRODUTO)).toBe(95);
+    act(() => { hook.result.current.addProduct(PRODUTO); });
+    expect(hook.result.current.items.find((i) => i.omie_codigo_produto === 555)?.valor_unitario).toBe(95);
+  });
+});
+
+describe('parcela no alterar_pedido (Codex r3)', () => {
+  const corpoAlterar = () => {
+    const chamada = mockedInvoke.mock.calls.find(([, o]) => {
+      const corpo = (o as { body?: Record<string, unknown> })?.body;
+      return corpo !== undefined && 'observacao' in corpo;
+    });
+    return (chamada?.[1] as { body: Record<string, unknown> }).body;
+  };
+  beforeEach(() => {
+    mockedRpc.mockImplementation(((nome: string) => {
+      if (nome === 'get_ultimos_precos_cliente') return Promise.resolve({ data: [], error: null });
+      return Promise.resolve({ data: [{ id: 'ord-1', omie_payload: { cabecalho: { codigo_parcela: '028' } }, omie_response: null }], error: null });
+    }) as never);
+  });
+
+  it('vendedor não mexeu no prazo: não envia codigo_parcela (a edge herda o prazo VIVO do PV)', async () => {
+    const { result } = await renderLoaded();
+    await waitFor(() => expect(result.current.selectedParcela).toBe('028'));
+    act(() => { result.current.setNotes('só a observação'); });
+    await act(async () => { await result.current.handleSave(); });
+    expect(corpoAlterar()).toBeDefined();
+    expect(corpoAlterar().codigo_parcela).toBeUndefined();
+  });
+
+  it('vendedor trocou o prazo: envia o escolhido', async () => {
+    const { result } = await renderLoaded();
+    await waitFor(() => expect(result.current.selectedParcela).toBe('028'));
+    act(() => { result.current.setSelectedParcela('042'); });
+    await act(async () => { await result.current.handleSave(); });
+    expect(corpoAlterar().codigo_parcela).toBe('042');
   });
 });

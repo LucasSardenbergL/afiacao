@@ -24,6 +24,8 @@ export interface SalesOrder {
   omie_numero_pedido: string | null;
   omie_payload: OmiePayloadJson | null;
   created_at: string;
+  /** Versão da linha na abertura (trigger em todo UPDATE) — trava otimista do salvar local. */
+  updated_at?: string | null;
   /**
    * Pedido CRIADO no Omie e trazido pelo sync (`hash_payload` = `omie_<conta>_<pid>`, determinístico;
    * pedido do app tem `hash_payload` NULL). É fato de ORIGEM — o status muda com a etapa do Omie

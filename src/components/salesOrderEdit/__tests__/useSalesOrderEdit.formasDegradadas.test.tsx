@@ -166,7 +166,7 @@ describe('useSalesOrderEdit — condição de pagamento sob listagem degradada',
     expect(navigateSpy).not.toHaveBeenCalled();
   });
 
-  it('PERMITE salvar mantendo a condição original — ela vai íntegra ao Omie', async () => {
+  it('PERMITE salvar mantendo a condição original — sem reenviá-la (a edge herda a VIVA do PV)', async () => {
     mockFormas({ formas: FORMAS_FALLBACK, source: 'fallback', degraded: true, motivo: null });
     const { result } = await renderLoaded();
     mockedInvoke.mockClear();
@@ -178,9 +178,14 @@ describe('useSalesOrderEdit — condição de pagamento sob listagem degradada',
     expect(mockedInvoke).toHaveBeenCalledWith(
       'omie-vendas-sync',
       expect.objectContaining({
-        body: expect.objectContaining({ action: 'alterar_pedido', codigo_parcela: 'A17' }),
+        body: expect.objectContaining({ action: 'alterar_pedido' }),
       }),
     );
+    // Sem mudança do vendedor, a parcela NÃO vai: reenviar a do recibo regravaria um prazo que o
+    // financeiro trocou no Omie depois (Codex r3); a edge usa `parcelaEfetiva(undefined, viva)`.
+    const corpo = (mockedInvoke.mock.calls.find(([, o]) =>
+      (o as { body?: { action?: string } })?.body?.action === 'alterar_pedido')?.[1] as { body: Record<string, unknown> }).body;
+    expect(corpo.codigo_parcela).toBeUndefined();
     await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith('/sales'));
   });
 

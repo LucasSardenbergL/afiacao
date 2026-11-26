@@ -81,13 +81,20 @@ export function useSalesOrderEdit() {
 
   const loadOrder = async () => {
     if (!id) return;
+    // Geração da carga nasce ANTES do 1º await: uma resposta tardia de qualquer leitura do pedido
+    // anterior (sales_orders, payload, profiles, preços) não publica sobre o pedido aberto agora
+    // (Codex r3: atrasar só `profiles` de A fazia A pegar o token depois de B).
+    const minhaCarga = ++cargaPrecoRef.current;
+    const velha = () => cargaPrecoRef.current !== minhaCarga;
+    setInsumosPreco(null);
     try {
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('id, customer_user_id, created_by, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, hash_payload')
+        .select('id, customer_user_id, created_by, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, updated_at, hash_payload')
         .eq('id', id)
         .single();
       if (error) throw error;
+      if (velha()) return;
       const row = data;
       // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
       // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
@@ -95,6 +102,7 @@ export function useSalesOrderEdit() {
       // o resto do payload. Falha do canal ⇒ fail-closed (o pedido não carrega).
       const { data: pl, error: plErr } = await supabase.rpc('staff_get_sales_order_payload', { p_order_ids: [id] });
       if (plErr) throw plErr;
+      if (velha()) return;
       const payload = omiePayloadDoJson(pl?.[0]?.omie_payload ?? null, `sales_orders ${row.id}`);
       const o: SalesOrder = {
         id: row.id,
@@ -110,6 +118,7 @@ export function useSalesOrderEdit() {
         omie_payload: payload,
         origem_omie: typeof row.hash_payload === 'string' && row.hash_payload.startsWith('omie_'),
         created_at: row.created_at,
+        updated_at: row.updated_at ?? null,
       };
       setOrder(o);
       setItems(o.items || []);
@@ -122,10 +131,9 @@ export function useSalesOrderEdit() {
         .select('name')
         .eq('user_id', o.customer_user_id)
         .single();
+      if (velha()) return;
       if (profile) setCustomerName(profile.name || '');
       setCustomerUserId(o.customer_user_id);
-      const minhaCarga = ++cargaPrecoRef.current;
-      setInsumosPreco(null);
       carregarInsumosPreco(o.customer_user_id, row.created_by ?? null, minhaCarga).catch((e) => {
         // Rede de segurança: nunca deixa "Adicionar" preso em "carregando" — degrada para a tabela pura.
         console.error('[edição] insumos de preço do cliente (falha inesperada)', e);
@@ -164,6 +172,7 @@ export function useSalesOrderEdit() {
           return data;
         }),
       ]);
+      if (velha()) return; // catálogo/formas da conta do pedido anterior não publicam
 
       // ── Duas metades do mesmo site, de PRs diferentes (money-path §9). Elas não são
       // alternativas: tratam falhas DIFERENTES, e resolver por um lado reverteria a outra.
@@ -260,6 +269,14 @@ export function useSalesOrderEdit() {
       return;
     }
     setItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  /** O preço que o clique em "Adicionar" vai aplicar — a busca mostra ESTE, não a tabela (Codex r3).
+   *  `null` = ainda carregando ou sem preço sabido. Base tintométrica: o preço sai do diálogo de cor. */
+  const precoPrevisto = (product: OmieProduct): number | null => {
+    if (product.is_tintometric && product.tint_type === 'base') return product.valor_unitario ?? null;
+    if (!insumosPreco) return null;
+    return precoDeNascimento(product, insumosPreco, new Date());
   };
 
   const addProduct = (product: OmieProduct) => {
@@ -459,7 +476,10 @@ export function useSalesOrderEdit() {
               } : {}),
             })),
             observacao: notes,
-            codigo_parcela: selectedParcela || undefined,
+            // Só a parcela que o VENDEDOR escolheu: sem mudança, a edge herda a condição VIVA do PV
+            // (`parcelaEfetiva`). Reenviar a do recibo regravaria um prazo que o financeiro já trocou
+            // no Omie (Codex r3).
+            codigo_parcela: selectedParcela && selectedParcela !== parcelaOriginal ? selectedParcela : undefined,
             // Gate ATP fase 2: esta via entende blocked:'atp' (aumento de
             // exposição Oben na edição é bloqueado na fronteira).
             atp_capaz: true,
@@ -587,9 +607,11 @@ export function useSalesOrderEdit() {
         // AINDA está assim — sem PV, não excluída, mesmo status. Outra aba que converteu o orçamento
         // nesse meio-tempo faz o UPDATE não casar nenhuma linha (Codex 2026-11-26). O carimbo
         // `envio_omie_reivindicado_em` NÃO entra no filtro: `authenticated` não tem SELECT nessa coluna
-        // (42501 em todo salvar) e um envio recusado o deixa preso para sempre. Residual: um envio EM VOO
-        // (claim feito, PV ainda não gravado) não é visto daqui.
-        const { data: gravadas, error } = await supabase
+        // (42501 em todo salvar) e um envio recusado o deixa preso para sempre. Em vez dele, `updated_at`
+        // (trigger em TODO UPDATE, SELECT concedido): o claim de um envio feito depois da abertura muda a
+        // versão e o UPDATE não casa — sem dois totais confirmados para a mesma venda (Codex r3).
+        // Residual: tela aberta DURANTE o voo (claim já feito, write-back ainda não) não é vista.
+        const condicoes = supabase
           .from('sales_orders')
           .update({
             ...(valores.valores ?? {}),
@@ -599,11 +621,14 @@ export function useSalesOrderEdit() {
           .eq('id', order.id)
           .is('omie_pedido_id', null)
           .is('deleted_at', null)
-          .eq('status', order.status)
-          .select('id');
+          .eq('status', order.status);
+        const { data: gravadas, error } = await (order.updated_at
+          ? condicoes.eq('updated_at', order.updated_at)
+          : condicoes.is('updated_at', null)
+        ).select('id');
         if (error) throw error;
         if ((gravadas ?? []).length !== 1) {
-          toast.error('O pedido mudou enquanto você editava (foi enviado, excluído ou mudou de status). Nada foi gravado — recarregue a página.');
+          toast.error('O pedido mudou enquanto você editava (foi enviado, alterado em outra aba, excluído ou mudou de status). Nada foi gravado — recarregue a página.');
           setSaving(false);
           return;
         }
@@ -647,6 +672,7 @@ export function useSalesOrderEdit() {
     updateItem,
     removeItem,
     addProduct,
+    precoPrevisto,
     handleTintConfirm,
     tintProductAsProduct,
     filteredProducts,

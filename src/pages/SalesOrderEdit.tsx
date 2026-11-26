@@ -39,6 +39,7 @@ const SalesOrderEdit = () => {
     updateItem,
     removeItem,
     addProduct,
+    precoPrevisto,
     handleTintConfirm,
     tintProductAsProduct,
     filteredProducts,
@@ -125,6 +126,7 @@ const SalesOrderEdit = () => {
                 setProductSearch={setProductSearch}
                 filteredProducts={filteredProducts}
                 onAddProduct={addProduct}
+                precoPrevisto={precoPrevisto}
               />
             )}
 

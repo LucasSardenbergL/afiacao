@@ -9,9 +9,11 @@ interface AddProductSearchProps {
   setProductSearch: (v: string) => void;
   filteredProducts: OmieProduct[];
   onAddProduct: (p: OmieProduct) => void;
+  /** O preço que o clique aplica (`null` = carregando/sem preço) — a mesma decisão do `addProduct`. */
+  precoPrevisto: (p: OmieProduct) => number | null;
 }
 
-export function AddProductSearch({ productSearch, setProductSearch, filteredProducts, onAddProduct }: AddProductSearchProps) {
+export function AddProductSearch({ productSearch, setProductSearch, filteredProducts, onAddProduct, precoPrevisto }: AddProductSearchProps) {
   return (
     <div className="border rounded-lg p-3 bg-muted/30 space-y-2">
       <div className="relative">
@@ -26,7 +28,9 @@ export function AddProductSearch({ productSearch, setProductSearch, filteredProd
       </div>
       {filteredProducts.length > 0 && (
         <div className="max-h-48 overflow-y-auto space-y-1">
-          {filteredProducts.map((p) => (
+          {filteredProducts.map((p) => {
+            const preco = precoPrevisto(p);
+            return (
             <button
               key={p.id}
               onClick={() => onAddProduct(p)}
@@ -37,10 +41,11 @@ export function AddProductSearch({ productSearch, setProductSearch, filteredProd
                 <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade} • Estoque: <span className={p.estoque === null ? 'font-medium' : p.estoque > 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>{p.estoque ?? '—'}</span></p>
               </div>
               <span className="text-xs font-medium shrink-0">
-                R$ {(p.valor_unitario || 0).toFixed(2)}
+                {preco === null ? '—' : `R$ ${preco.toFixed(2)}`}
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
       {productSearch.length >= 2 && filteredProducts.length === 0 && (
