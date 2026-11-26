@@ -13,6 +13,7 @@ import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelas
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
 import { edicaoExigeGate, gateCredito, MENSAGEM_CREDITO_INDISPONIVEL } from "./gate-credito.ts";
+import { gateV2Efetivo } from "./gate-v2.ts";
 import { calendarioDaParcela, parcelaEfetiva, registrarRevisao, totalCentavos } from "./revisao-credito.ts";
 import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
@@ -3182,6 +3183,16 @@ Deno.serve(async (req) => {
             // caller antigo, falha de TRANSPORTE: segue como hoje (o registro acima mede o furo)
           }
         }
+        // Crédito-IA 6b — gate v2 EFETIVO, DORMENTE (gate-v2.ts): com o flag da conta desligado a RPC
+        // devolve `desligado` e o envio segue exatamente o caminho de hoje. Depois do piso, tint e ATP
+        // e antes do claim: nada foi despachado ainda. Segura = ERRO (nunca `blocked` novo).
+        const creditoV2 = await gateV2Efetivo(supabaseAdmin, {
+          salesOrderId: sales_order_id,
+          company: account,
+          revisao: revisaoCriacao?.revisao ?? null,
+          contexto: "criacao",
+        });
+        if (!creditoV2.segue) throw new Error(creditoV2.mensagem);
         // Claim ATÔMICO do envio (migration 20261120230001), o mais perto possível do IncluirPedido:
         // carimba o pedido SÓ se ele não está marcado para exclusão. A leitura de deleted_at lá em
         // cima é só o atalho; esta é a disputa de verdade com o excluir_pedido (lock de linha).
@@ -3610,6 +3621,16 @@ Deno.serve(async (req) => {
             break;
           }
         }
+        // Crédito-IA 6b — gate v2 EFETIVO, DORMENTE (gate-v2.ts). FORA do `edicaoExigeGate` (Codex Q3):
+        // o predicado é do PISO; com o flag ligado toda revisão nova é avaliada. Desligado → segue o
+        // caminho de hoje. Antes da fase destrutiva (ExcluirItemPedido): nada mudou no Omie ainda.
+        const creditoV2Edit = await gateV2Efetivo(supabaseAdmin, {
+          salesOrderId: editSoId,
+          company: editAccount,
+          revisao: revisaoEdicao?.revisao ?? null,
+          contexto: "edicao",
+        });
+        if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);
 
         // Step 2: Delete all existing items
         // Contador de exclusões CONFIRMADAS (resposta recebida). Não é o mesmo que "itens que sumiram

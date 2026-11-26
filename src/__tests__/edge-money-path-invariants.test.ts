@@ -5360,3 +5360,53 @@ describe('guardrail money-path: A4 sem caixa fabricado (fin-next-best-action, pl
     }
   });
 });
+
+// ── Crédito-IA 6b: gate v2 EFETIVO dormente nas 2 vias de pedido (2026-11-26) ──
+// Com o flag desligado a RPC devolve `desligado` e o envio segue o caminho de hoje (gate-v2_test.ts).
+// Aqui a ORDEM: em cada `case`, depois do piso (e de tint/ATP na criação) e ANTES da 1ª mutação
+// (claim/IncluirPedido na criação; ExcluirItemPedido na edição). Segura = throw, nunca `blocked` novo.
+describe('omie-vendas-sync — gate v2 efetivo (6b)', () => {
+  const src = removerComentarios(read(VENDAS));
+  const criar = blocoCriarPedido(src);
+  const alterar = src.match(/case "alterar_pedido": \{[\s\S]*?\n {6}case "/)?.[0] ?? '';
+
+  it('criar_pedido: v2 depois de piso, tint e ATP; antes do claim e do IncluirPedido', () => {
+    const v2 = criar.indexOf('await gateV2Efetivo(');
+    expect(v2, 'gateV2Efetivo sumiu do criar_pedido').toBeGreaterThan(-1);
+    for (const antes of ['await gateCredito(', 'await gateTintPreco(', '"atp_gate_pedido"', 'await registrarRevisao(']) {
+      const i = criar.indexOf(antes);
+      expect(i, `${antes} sumiu do criar_pedido`).toBeGreaterThan(-1);
+      expect(i, `o v2 roda antes de ${antes}`).toBeLessThan(v2);
+    }
+    for (const depois of ['"sales_order_reivindicar_envio"', 'await criarPedidoVenda(']) {
+      const i = criar.indexOf(depois);
+      expect(i, `${depois} sumiu do criar_pedido`).toBeGreaterThan(-1);
+      expect(v2, `o v2 roda depois de ${depois} — chegaria tarde`).toBeLessThan(i);
+    }
+    expect(criar).toMatch(/revisao: revisaoCriacao\?\.revisao \?\? null/);
+    expect(criar, 'o v2 que segura tem de LANÇAR (blocked novo é lido como sucesso por bundle antigo)')
+      .toMatch(/if \(!creditoV2\.segue\) throw new Error\(creditoV2\.mensagem\);/);
+  });
+
+  it('alterar_pedido: v2 FORA do edicaoExigeGate, depois do piso e antes da fase destrutiva', () => {
+    expect(alterar, 'bloco do alterar_pedido não encontrado').not.toBe('');
+    const v2 = alterar.indexOf('await gateV2Efetivo(');
+    expect(v2, 'gateV2Efetivo sumiu do alterar_pedido').toBeGreaterThan(-1);
+    const piso = alterar.indexOf('await gateCredito(');
+    expect(piso).toBeGreaterThan(-1);
+    expect(piso, 'o v2 roda antes do piso').toBeLessThan(v2);
+    for (const depois of ['"ExcluirItemPedido"', '"IncluirItemPedido"', '"AlterarPedidoVenda"']) {
+      const i = alterar.indexOf(depois);
+      expect(i, `${depois} sumiu do alterar_pedido`).toBeGreaterThan(-1);
+      expect(v2, `o v2 roda depois de ${depois} — o Omie já teria mudado`).toBeLessThan(i);
+    }
+    // Fora do `if (edicaoExigeGate(...)) { ... }`: o bloco do if fecha antes do v2.
+    const ifGate = alterar.indexOf('if (edicaoExigeGate(');
+    const trecho = alterar.slice(ifGate, v2);
+    const abre = (trecho.match(/\{/g) ?? []).length;
+    const fecha = (trecho.match(/\}/g) ?? []).length;
+    expect(abre, 'o v2 ficou DENTRO do if edicaoExigeGate (Codex Q3)').toBe(fecha);
+    expect(alterar).toMatch(/revisao: revisaoEdicao\?\.revisao \?\? null/);
+    expect(alterar).toMatch(/if \(!creditoV2Edit\.segue\) throw new Error\(creditoV2Edit\.mensagem\);/);
+  });
+});
