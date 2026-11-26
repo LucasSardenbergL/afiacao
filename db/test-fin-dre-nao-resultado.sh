@@ -17,7 +17,11 @@ export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
-"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
+# locale do CLUSTER parametrizável (igual a db/test-fin-dfc-realizado.sh): `initdb --locale=C` fixo
+# prevalecia sobre LC_ALL e a rodada "pt_BR" não provava collation pt_BR. O assert Z0 confere o
+# lc_collate efetivo. Rodar nos dois: PG_LOCALE=C e PG_LOCALE=pt_BR.UTF-8 (com LC_ALL igual).
+PG_LOCALE="${PG_LOCALE:-C}"
+"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$PG_LOCALE" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
@@ -37,7 +41,8 @@ for f in "$MIG" "$MAPA" "$FIX"; do [ -f "$f" ] || { echo "FALTA $f"; exit 2; }; 
 FONTE="$(sed -n "s/^  v_fonte_esperada  constant text := '\([0-9a-f]\{64\}\)';\$/\1/p" "$MAPA")"
 FONTE_SUG="$(sed -n "s/^  v_fonte_sugestor  constant text := '\([0-9a-f]\{64\}\)';\$/\1/p" "$MAPA")"
 [ ${#FONTE} -eq 64 ] && [ ${#FONTE_SUG} -eq 64 ] || { echo "fontes esperadas não encontradas no script do mapa"; exit 2; }
-echo "═══ setup pronto (PG17 :$PORT) ═══"
+echo "═══ setup pronto (PG17 :$PORT, locale $PG_LOCALE) ═══"
+eq "Z0 lc_collate do cluster é o pedido" "$(Pq -c "SELECT datcollate FROM pg_database WHERE datname = current_database();")" "$PG_LOCALE"
 
 # ZONA 1 — tabelas como em PROD (psql-ro 2026-11-22: CHECKs da fase 2, UNIQUE, notas/updated_at)
 P -q <<'SQL'
