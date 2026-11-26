@@ -21,7 +21,8 @@ export function useFilaPropostas(status: StatusFila) {
     queryKey: [CHAVE, "fila", status],
     queryFn: async () => {
       const linhas = await fetchAllPages(
-        (de, ate) => supabase.rpc("credito_fila_propostas", { p_status: status }).range(de, ate),
+        (de, ate) => supabase.rpc("credito_fila_propostas", { p_status: status })
+          .order("created_at", { ascending: false }).order("id", { ascending: true }).range(de, ate),
         "credito_fila_propostas",
       );
       return linhas as unknown as PropostaFila[];

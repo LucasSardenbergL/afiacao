@@ -13,6 +13,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 import { extrairToolUseUnico, MODELO_PADRAO, TIMEOUT_ANTHROPIC_MS } from "../_shared/anthropic.ts";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { exigirLeitura } from "../_shared/leitura-critica.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import {
   aplicarTravas, montarEntradaIA, NOME_TOOL, ORCAMENTO, restanteParaChamada, SYSTEM_POLITICA,
@@ -41,9 +43,7 @@ async function avaliarRaiz(db: Db, apiKey: string, token: string, raiz: string, 
   const resta = restanteParaChamada(inicio, Date.now());
   if (resta === 0) return "adiada"; // sem tempo: não grava nada; a reivindicação expira e a raiz volta
   try {
-    const fichaRes = await db.rpc("credito_ficha", { p_raiz: raiz });
-    if (fichaRes.error) throw new Error(`ficha: ${fichaRes.error.message}`);
-    const ficha = fichaRes.data as Ficha | null;
+    const ficha = exigirLeitura(await db.rpc("credito_ficha", { p_raiz: raiz }), "credito_ficha") as Ficha | null;
     if (!ficha || typeof ficha !== "object") throw new Error("ficha vazia");
 
     const entrada = montarEntradaIA(ficha);
@@ -92,7 +92,7 @@ async function avaliarRaiz(db: Db, apiKey: string, token: string, raiz: string, 
     if (error) throw new Error(`registro: ${error.message}`);
     return "proposta";
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = mensagemDeErro(e) ?? "erro sem mensagem";
     console.warn(`[credito-ia-avaliar] raiz ${raiz}: ${msg}`);
     await registrarFalha(db, token, raiz, msg);
     return "falha";
@@ -143,8 +143,9 @@ Deno.serve(async (req: Request) => {
       const rec = await db.rpc("credito_reivindicar_raizes", {
         p_n: ORCAMENTO.raizesPorInvocacao, p_token: token, p_ttl_segundos: ORCAMENTO.ttlReivindicacaoS,
       });
-      if (rec.error) throw new Error(`reivindicar: ${rec.error.message}`);
-      const raizes = ((rec.data ?? []) as unknown[]).filter((r): r is string => typeof r === "string");
+      // erro ⇒ lança (nada reivindicado); null sem erro ⇒ nenhuma raiz elegível
+      const lidas = exigirLeitura(rec, "credito_reivindicar_raizes") as unknown[] | null;
+      const raizes = (lidas ?? []).filter((r): r is string => typeof r === "string");
       const desfechos = await emPool(raizes, ORCAMENTO.concorrencia, (r) => avaliarRaiz(db, apiKey, token, r, inicio));
       const conta = (d: Desfecho) => desfechos.filter((x) => x === d).length;
       return {
@@ -157,6 +158,6 @@ Deno.serve(async (req: Request) => {
     }, (r) => r);
     return json({ ok: true, versao: VERSAO, ...resumo });
   } catch (e) {
-    return json({ ok: false, versao: VERSAO, mensagem: e instanceof Error ? e.message : String(e) }, 500);
+    return json({ ok: false, versao: VERSAO, mensagem: mensagemDeErro(e) ?? "erro sem mensagem" }, 500);
   }
 });
