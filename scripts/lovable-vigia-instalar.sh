@@ -3,7 +3,7 @@
 #
 # Faz: clone próprio do repo em ~/.local/share/afiacao/vigia-repo (o vigia faz checkout nele a cada
 # tick — nunca num worktree de sessão), copia scripts/lovable-vigia.sh para fora do repo e carrega
-# o LaunchAgent `dev.afiacao.lovable-vigia` (a cada 180 s). Idempotente.
+# o LaunchAgent `dev.afiacao.lovable-vigia` (a cada 60 s). Idempotente.
 # Pré-requisito: token de 1 ano do `claude setup-token` no Keychain, serviço `claude-vigia-lovable`.
 # Uso: scripts/lovable-vigia-instalar.sh            · desinstalar: scripts/lovable-vigia-instalar.sh --remover
 #      scripts/lovable-vigia-instalar.sh --login    · login OAuth do Lovable num store só do vigia (1x)
@@ -54,7 +54,7 @@ cat > "$PLIST" <<EOF
 <plist version="1.0"><dict>
   <key>Label</key><string>$ROTULO</string>
   <key>ProgramArguments</key><array><string>/bin/bash</string><string>$BASE/lovable-vigia.sh</string></array>
-  <key>StartInterval</key><integer>180</integer>
+  <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>EnvironmentVariables</key><dict>
@@ -68,4 +68,4 @@ EOF
 
 launchctl bootout "gui/$(id -u)/$ROTULO" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "vigia instalado: $ROTULO a cada 180 s · log $EST/vigia.log · pausar: touch $EST/pausado"
+echo "vigia instalado: $ROTULO a cada 60 s · log $EST/vigia.log · pausar: touch $EST/pausado"
