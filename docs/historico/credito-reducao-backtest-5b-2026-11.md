@@ -92,6 +92,10 @@ Lições da falsificação:
   - P1-4: o laço inclui os vigentes fora da carteira ativa.
   - P2: trigger com piora estrita; INSERT automático exercitado; S26 numa raiz saudável; aprovação × redução nas duas ordens; `initdb` no locale da rodada; coorte prospectiva fixa na 1ª proposta; cobertura conta título sem mapa; piso em T indeterminado por falta de saldo ou emissão.
   - A pós-condição por regex em `pg_proc` é complementar (Codex): a exclusividade do writer está provada pelos testes do trigger e do writer.
+- **Diff, 3ª rodada:** 1 P1 + 4 P2, acatados.
+  - P1: `WHEN OTHERS` não pega `query_canceled`. O `statement_timeout` numa raiz lenta desfazia o lote e devolvia a raiz à frente da fila. Agora o 57014 é registrado, o lock de sessão é solto e o lote encerra. A prova X1 reproduz com o grupo ocupado e `statement_timeout` de 1 s.
+  - P2: a ficha só é chamada com identidade válida; a aprovação espera o corte ainda sem commit e é recusada por versão (C4); prospectivo com data e decisão da mesma 1ª proposta; piso em T não fica indeterminado por título baixado antes de T.
+- **Diff, 4ª rodada (confirmação):** **aprovou o merge**, com 0 P0, 0 P1 e 2 P2, acatados: piso em T NULL-safe (`IS NOT TRUE`) e X1 com 1 raiz, provando que a seguinte vem antes da cancelada.
 
 ## Backtest IA × regra (prod, psql-ro, @BT_DATA@)
 
