@@ -35,7 +35,7 @@ export interface ProdutoOp extends ItemOp {
   invalido: string | null;
 }
 
-export type TipoFalhaOp = "invalido" | "indeterminado" | "sem_registro_local";
+type TipoFalhaOp = "invalido" | "indeterminado" | "sem_registro_local";
 
 export type DesfechoOp =
   | { status: "criada"; omie_ordem_id: number; omie_ordem_numero: string | null }
