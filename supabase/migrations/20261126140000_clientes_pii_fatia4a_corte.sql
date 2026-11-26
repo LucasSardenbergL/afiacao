@@ -97,7 +97,8 @@ BEGIN
     END IF;
   END LOOP;
   -- as duas fontes que sobram
-  IF NOT has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'SELECT')
+  IF to_regclass('public.v_pedido_snapshot_proprio') IS NULL
+     OR NOT has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'SELECT')
      OR NOT has_table_privilege('authenticated', 'public.v_cliente_contatos', 'SELECT') THEN
     RAISE EXCEPTION 'B4 FALHOU: fonte mascarada ausente (v_pedido_snapshot_proprio / v_cliente_contatos) — aplicar 20261126130000 antes';
   END IF;
