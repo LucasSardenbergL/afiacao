@@ -19,6 +19,7 @@
 
 import { diaIsoValido } from "./o-que-vai-ao-omie.ts";
 import { ehEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 export interface ItemOp {
   product_id?: string | null;
@@ -120,5 +121,5 @@ export function resumoOps(desfechos: DesfechoOp[]): { success: boolean; falhas: 
  */
 export function motivoDaFalhaOp(err: unknown): string {
   if (ehEscritaIndeterminada(err)) return "a chamada terminou sem confirmação do Omie (ele pode ter gravado)";
-  return err instanceof Error ? err.message : String(err);
+  return mensagemDeErro(err) ?? "erro sem mensagem do Omie";
 }
