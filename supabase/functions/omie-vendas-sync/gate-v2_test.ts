@@ -58,7 +58,8 @@ Deno.test("desligado SEM ligado:false é resposta sem forma → segura (nunca in
   if (!d.segue) assertComeca(d.mensagem, MENSAGEM_V2_INDISPONIVEL);
 });
 
-const VERDE = { resultado: "avaliado", ligado: true, faixa: "verde", decisao_id: "d-1", reserva_id: "r-1" };
+const ID = "0b5c2f1e-6d3a-4c1b-9e2f-7a8b9c0d1e2f";
+const VERDE = { resultado: "avaliado", ligado: true, faixa: "verde", decisao_id: ID, reserva_id: ID };
 
 Deno.test("avaliado verde com decisão e reserva → segue", async () => {
   const { c } = cliente({ data: VERDE, error: null });
@@ -72,6 +73,8 @@ Deno.test("verde malformado NÃO libera: ligado:false, sem decisão ou sem reser
     { ...VERDE, decisao_id: null },
     { ...VERDE, reserva_id: null },
     { ...VERDE, reserva_id: "" },
+    { ...VERDE, decisao_id: " " },
+    { ...VERDE, reserva_id: "r-1" },
   ]) {
     const { c } = cliente({ data, error: null });
     assertEquals(await gateV2Efetivo(c, ARGS), { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL });
@@ -79,18 +82,18 @@ Deno.test("verde malformado NÃO libera: ligado:false, sem decisão ou sem reser
 });
 
 Deno.test("avaliado amarelo → segura com a solicitação na mensagem", async () => {
-  const { c } = cliente({ data: { resultado: "avaliado", ligado: true, faixa: "amarelo", solicitacao_id: "sol-9" }, error: null });
+  const { c } = cliente({ data: { resultado: "avaliado", ligado: true, faixa: "amarelo", solicitacao_id: ID }, error: null });
   const d = await gateV2Efetivo(c, ARGS);
   assertEquals(d.segue, false);
   if (!d.segue) {
     assertEquals(d.resultado, "amarelo");
-    assertEquals(d.mensagem, `${MENSAGEM_V2_AMARELO} · solicitação sol-9`);
+    assertEquals(d.mensagem, `${MENSAGEM_V2_AMARELO} · solicitação ${ID}`);
   }
 });
 
 Deno.test("amarelo SEM solicitação (pendência de grupo) → pendência, nunca 'aguarde a fila' (Codex P1)", async () => {
-  for (const motivo of ["sem_grupo", "grupo_conflito", "piso_indeterminado", "grupo_mudou"]) {
-    const { c } = cliente({ data: { resultado: "avaliado", ligado: true, faixa: "amarelo", motivo, solicitacao_id: null }, error: null });
+  for (const [motivo, sol] of [["sem_grupo", null], ["grupo_conflito", null], ["piso_indeterminado", null], ["grupo_mudou", null], ["estoura_limite", " "], ["estoura_limite", "x"]]) {
+    const { c } = cliente({ data: { resultado: "avaliado", ligado: true, faixa: "amarelo", motivo, solicitacao_id: sol }, error: null });
     assertEquals(await gateV2Efetivo(c, ARGS), { segue: false, resultado: "pendencia", mensagem: MENSAGEM_V2_PENDENCIA });
   }
 });
@@ -120,6 +123,26 @@ Deno.test("erro da RPC → indisponível com mensagem FIXA: o texto bruto não v
   const { c } = cliente({ data: null, error: { message: "MARCADOR-SECRETO limite 98765,43" } });
   const d = await gateV2Efetivo(c, ARGS);
   assertEquals(d, { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL });
+});
+
+Deno.test("corpo inesperado não vaza valores NEM nomes de campo (mensagem e log)", async () => {
+  const logs: string[] = [];
+  const orig = console.warn;
+  console.warn = (...a: unknown[]) => { logs.push(a.map(String).join(" ")); };
+  try {
+    const { c } = cliente({ data: { resultado: "MARCADOR-RES", "MARCADOR-CHAVE": 98765.43 }, error: { message: "" } as never });
+    await gateV2Efetivo(c, ARGS);
+    const { c: c2 } = cliente({ data: { resultado: "MARCADOR-RES", "MARCADOR-CHAVE": 98765.43 }, error: null });
+    await gateV2Efetivo(c2, ARGS);
+    const { c: c3 } = cliente({ data: null, error: { message: "MARCADOR-ERRO" } });
+    await gateV2Efetivo(c3, ARGS);
+  } finally {
+    console.warn = orig;
+  }
+  const tudo = logs.join("\n");
+  for (const m of ["MARCADOR", "98765"]) {
+    if (tudo.includes(m)) throw new Error(`log vazou ${m}: ${tudo}`);
+  }
 });
 
 Deno.test("corpo inesperado não vaza valores na mensagem", async () => {

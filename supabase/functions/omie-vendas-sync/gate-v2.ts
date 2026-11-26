@@ -42,6 +42,10 @@ export const MENSAGEM_V2_PENDENCIA =
 export const MENSAGEM_V2_REVALIDAR =
   "Pedido não enviado: a revisão de crédito deste pedido mudou. Recarregue o pedido e envie de novo.";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** id gravado pelo núcleo: UUID de verdade, nunca string vazia/espaço (Codex r2). */
+const ehId = (v: unknown): v is string => typeof v === "string" && UUID.test(v);
+
 const REVALIDAR = new Set(["pedido_inexistente", "conta_divergente", "revisao_inexistente", "revisao_superada"]);
 
 export async function gateV2Efetivo(
@@ -78,12 +82,11 @@ export async function gateV2Efetivo(
   // Avaliado só vale com ligado:true (o núcleo só roda com o flag ligado). Contraditório → sem forma.
   if (resultado === "avaliado" && o?.ligado === true) {
     const faixa = o.faixa;
-    const texto = (v: unknown) => typeof v === "string" && v.length > 0;
     // Verde só segue com a decisão E a reserva gravadas pelo núcleo (Codex diff P1): verde sem os
     // ids não prova reserva nenhuma → sem forma, segura.
-    if (faixa === "verde" && texto(o.decisao_id) && texto(o.reserva_id)) return { segue: true, resultado: "verde" };
+    if (faixa === "verde" && ehId(o.decisao_id) && ehId(o.reserva_id)) return { segue: true, resultado: "verde" };
     if (faixa === "amarelo") {
-      if (texto(o.solicitacao_id)) {
+      if (ehId(o.solicitacao_id)) {
         console.warn(`[gate-v2][${company}] amarelo (${contexto}) — SEGURADO na fila · solicitação ${o.solicitacao_id}`);
         return { segue: false, resultado: "amarelo", mensagem: `${MENSAGEM_V2_AMARELO} · solicitação ${o.solicitacao_id}` };
       }
@@ -104,8 +107,11 @@ export async function gateV2Efetivo(
   }
 
   // Forma desconhecida (inclui `desligado` sem ligado:false, `avaliado` contraditório ou incompleto):
-  // sem veredito. No log só os NOMES dos campos, nunca os valores (podem ser dado de crédito).
-  const campos = o ? Object.keys(o).sort().join(",") : (Array.isArray(data) ? "array" : typeof data);
-  console.warn(`[gate-v2][${company}] resposta sem forma (${contexto}): campos=[${campos}] — SEGURADO`);
+  // sem veredito. No log nada que venha do corpo (nem valores nem nomes de campo — Codex r2): só o
+  // `resultado` quando é um dos conhecidos, e o tipo do corpo.
+  const conhecidos = new Set(["desligado", "avaliado", ...REVALIDAR]);
+  const rotulo = resultado !== null && conhecidos.has(resultado) ? resultado : "?";
+  const tipo = o ? "objeto" : (Array.isArray(data) ? "array" : typeof data);
+  console.warn(`[gate-v2][${company}] resposta sem forma (${contexto}): resultado=${rotulo} corpo=${tipo} — SEGURADO`);
   return { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL };
 }
