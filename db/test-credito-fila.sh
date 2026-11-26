@@ -88,12 +88,16 @@ GRANT EXECUTE ON FUNCTION private.cap_credito_escrever(uuid) TO authenticated, s
 CREATE TABLE public.sales_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text NOT NULL DEFAULT 'oben',
   customer_user_id uuid, created_by uuid, vendedor_user_id uuid, omie_numero_pedido text,
-  status text NOT NULL DEFAULT 'enviado', deleted_at timestamptz);
+  status text NOT NULL DEFAULT 'enviado', deleted_at timestamptz, total numeric, items jsonb,
+  created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.omie_condicao_pagamento_catalogo (empresa text NOT NULL, codigo text NOT NULL, descricao text,
   num_parcelas integer, dias_parcelas text, ativo boolean DEFAULT true, ultima_sincronizacao timestamptz, PRIMARY KEY (empresa, codigo));
 CREATE TABLE public.fin_contas_receber (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company text NOT NULL, omie_codigo_cliente bigint, saldo numeric, status_titulo text, data_vencimento date);
+  company text NOT NULL, omie_codigo_cliente bigint, saldo numeric, status_titulo text, data_vencimento date,
+  numero_pedido text, valor_documento numeric, omie_codigo_lancamento bigint, updated_at timestamptz DEFAULT now());
+CREATE TABLE public.sync_state (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), entity_type text NOT NULL,
+  account text, last_sync_at timestamptz);
 CREATE TABLE public.customer_canonical_alias (
   alias_user_id uuid PRIMARY KEY, canonical_user_id uuid NOT NULL,
   status text NOT NULL DEFAULT 'inactive' CHECK (status IN ('active','inactive','conflict')));
@@ -109,36 +113,17 @@ BEGIN INSERT INTO public.t_push(user_ids, titulo, corpo, url, tag) VALUES (p_use
 REVOKE EXECUTE ON FUNCTION public._push_enviar(uuid[], text, text, text, text) FROM PUBLIC, anon, authenticated;
 CREATE SCHEMA IF NOT EXISTS vault;
 CREATE TABLE vault.decrypted_secrets (name text PRIMARY KEY, decrypted_secret text);
--- ledger da sombra do PR 5 (20261125200000_credito_gate_v2_sombra.sql, branch claude/credito-ia-pr5-sombra
--- 0473551fb): só as colunas que o 6a lê. Quando o PR 5 mergear, trocar este stub pela migration real.
-CREATE TABLE public.credito_sombra_lote (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), terminado_em timestamptz);
-CREATE TABLE public.credito_sombra_tentativa (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), company text NOT NULL,
-  resultado text NOT NULL, criada_em timestamptz NOT NULL DEFAULT now());
-CREATE TABLE public.credito_sombra_decisao (
-  id uuid PRIMARY KEY, sales_order_id uuid NOT NULL, company text NOT NULL, origem text NOT NULL, versao text NOT NULL,
-  grupo_user_id uuid, valor_brl numeric NOT NULL, prazo_dias integer, faixa text NOT NULL, motivo text NOT NULL,
-  exposicao_titulos_brl numeric, exposicao_reservas_brl numeric, limite_brl numeric, prazo_max_dias integer,
-  limite_versao integer, piso jsonb NOT NULL, carga_inicial boolean NOT NULL, avaliado_em timestamptz NOT NULL DEFAULT now());
--- view do PR 5 (texto verbatim de 0473551fb): última decisão por PV, sem PV com versão corrente ilegível
-ALTER TABLE public.credito_sombra_tentativa ADD COLUMN sales_order_id uuid;
-CREATE VIEW public.credito_sombra_pv_atual WITH (security_invoker = on) AS
-SELECT x.* FROM (
-  SELECT DISTINCT ON (d.sales_order_id, d.company) d.*
-    FROM public.credito_sombra_decisao d
-   ORDER BY d.sales_order_id, d.company, d.avaliado_em DESC, d.id) x
- WHERE NOT EXISTS (SELECT 1 FROM public.credito_sombra_tentativa t
-                    WHERE t.sales_order_id = x.sales_order_id AND t.company = x.company
-                      AND t.resultado <> 'erro' AND t.criada_em > x.avaliado_em);
-GRANT SELECT ON public.credito_sombra_pv_atual TO authenticated, service_role;
 -- pg_cron: schedule upsert por nome (como o real)
 CREATE OR REPLACE FUNCTION cron.schedule(p_nome text, p_sched text, p_cmd text) RETURNS bigint LANGUAGE plpgsql AS $f$
 DECLARE v bigint;
 BEGIN
   DELETE FROM cron.job WHERE jobname = p_nome;
   SELECT COALESCE(max(jobid), 0) + 1 INTO v FROM cron.job;
-  INSERT INTO cron.job(jobid, schedule, command, jobname, active) VALUES (v, p_sched, p_cmd, p_nome, true);
+  INSERT INTO cron.job(jobid, schedule, command, jobname, active, username) VALUES (v, p_sched, p_cmd, p_nome, true, current_user);
   RETURN v;
 END $f$;
+CREATE OR REPLACE FUNCTION cron.unschedule(p_jobid bigint) RETURNS boolean LANGUAGE sql AS
+$f$ DELETE FROM cron.job WHERE jobid = p_jobid RETURNING true $f$;
 SQL
 
 # usuários: Lucas (master + allowlist), M2 (master FORA da allowlist), G gestor, V vendedor
@@ -158,8 +143,13 @@ SQL
 MIGS=("20260702233000_trava_credito_fase2.sql" "20260703140000_trava_credito_gate_excecao_por_par.sql"
       "20261121120000_trava_credito_piso_grupo.sql" "20261121160000_credito_limite_reserva_decisao.sql"
       "20261121180000_credito_prazo_revisao.sql" "20261121200000_credito_piso_pagto_parcial.sql"
-      "20261124170000_credito_gate_fronteira_60_inclusiva.sql")
-for m in "${MIGS[@]}"; do P -q -1 -f "$REPO_ROOT/supabase/migrations/$m" 2>>"$SAB/antecedentes.log"; done
+      "20261124170000_credito_gate_fronteira_60_inclusiva.sql"
+      # PR 5 (#4192, em prod antes deste): o ledger REAL da sombra — não stub
+      "20261125195900_credito_sombra_indices.sql" "20261125200000_credito_gate_v2_sombra.sql")
+for m in "${MIGS[@]}"; do
+  P -q -1 -f "$REPO_ROOT/supabase/migrations/$m" 2>>"$SAB/antecedentes.log" \
+    || { echo "❌ antecedente $m falhou:"; grep -v NOTICE "$SAB/antecedentes.log" | tail -8; exit 1; }
+done
 MIG="$REPO_ROOT/supabase/migrations/20261125230000_credito_fila_enforcement_dormente.sql"
 P -q -1 -f "$MIG" 2>"$SAB/apl1.log"
 P -q -1 -f "$MIG" 2>"$SAB/apl2.log"   # idempotente: re-colar não quebra
@@ -219,7 +209,7 @@ BEGIN
   DELETE FROM public.credito_autorizacao; DELETE FROM public.credito_solicitacao;
   DELETE FROM public.credito_reserva; DELETE FROM public.credito_decisao_pedido;
   DELETE FROM public.credito_operacao_revisao; DELETE FROM public.fin_contas_receber;
-  DELETE FROM public.credito_sombra_decisao; DELETE FROM public.credito_sombra_tentativa; DELETE FROM public.sales_orders WHERE id NOT IN
+  DELETE FROM public.credito_sombra_decisao; DELETE FROM public.credito_sombra_tentativa; DELETE FROM public.credito_sombra_lote; DELETE FROM public.sales_orders WHERE id NOT IN
     ('$SOA','$SOB','$SOC','$SOS') AND id::text NOT LIKE 'b0000000-0000-0000-0000-0000000001%';
   UPDATE public.sales_orders SET status = 'enviado', deleted_at = NULL;
   DELETE FROM public.credito_enforcement_log; DELETE FROM public.t_push; DELETE FROM public.push_subscriptions;
@@ -227,16 +217,18 @@ BEGIN
   UPDATE public.credito_enforcement SET ligado = false, versao = 0, alterado_por = NULL, alterado_em = NULL, motivo = NULL;
 END \$f\$;
 CREATE FUNCTION public.t_sombra(p_so uuid, p_cli bigint, p_ver text, p_val numeric) RETURNS void
-LANGUAGE plpgsql VOLATILE AS \$f\$
-DECLARE j jsonb;
+LANGUAGE plpgsql VOLATILE SET session_replication_role = replica AS \$f\$
+DECLARE j jsonb; v_lote uuid := gen_random_uuid();
 BEGIN
+  INSERT INTO public.credito_sombra_lote (id, terminado_em, status) VALUES (v_lote, clock_timestamp(), 'ok');
   j := private.credito_avaliar_reservar(p_so, 'oben', p_cli, p_ver, p_val, 28, 'sombra', NULL);
-  INSERT INTO public.credito_sombra_decisao (id, sales_order_id, company, origem, versao, grupo_user_id, valor_brl,
-    prazo_dias, faixa, motivo, exposicao_titulos_brl, exposicao_reservas_brl, limite_brl, prazo_max_dias, piso,
-    carga_inicial, avaliado_em)
-  VALUES (gen_random_uuid(), p_so, 'oben', 'omie', p_ver, (j->>'grupo_user_id')::uuid, p_val, 28, j->>'faixa',
-    j->>'motivo', (j->>'exposicao_titulos_brl')::numeric, (j->>'exposicao_reservas_brl')::numeric,
-    (j->>'limite_brl')::numeric, (j->>'prazo_max_dias')::int, j->'piso', false, clock_timestamp());
+  INSERT INTO public.credito_sombra_decisao (id, lote_id, sales_order_id, company, origem, versao, conteudo_md5,
+    grupo_user_id, valor_brl, prazo_dias, faixa, motivo, faixa_sem_prazo, motivo_sem_prazo, exposicao_titulos_brl,
+    exposicao_reservas_brl, limite_brl, prazo_max_dias, piso, sync, carga_inicial, status_pedido, avaliado_em)
+  VALUES (gen_random_uuid(), v_lote, p_so, 'oben', 'omie', p_ver, md5(p_ver), (j->>'grupo_user_id')::uuid, p_val, 28,
+    j->>'faixa', j->>'motivo', j->>'faixa', j->>'motivo', (j->>'exposicao_titulos_brl')::numeric,
+    (j->>'exposicao_reservas_brl')::numeric, (j->>'limite_brl')::numeric, (j->>'prazo_max_dias')::int, j->'piso',
+    '{}'::jsonb, false, 'enviado', clock_timestamp());
 END \$f\$;
 CREATE ROLE escritor_teste BYPASSRLS;
 GRANT USAGE ON SCHEMA public TO escritor_teste;
@@ -424,7 +416,7 @@ asserts() {
   eq "E7.5 pedido cancelado: sai" "$(comoval "$G" "SELECT count(*) FROM public.credito_fila_v WHERE origem='sombra'")" "0"
   Pq -c "SELECT public.t_forca(\$q\$UPDATE public.sales_orders SET status = 'enviado' WHERE id = '$SOS'\$q\$);" >/dev/null
   eq "E7.6 origem do pedido: Omie (sem created_by)" "$(comoval "$G" "SELECT origem_pedido FROM public.credito_fila_v WHERE origem='sombra'")" "omie"
-  Pq -c "INSERT INTO public.credito_sombra_tentativa(company, resultado, sales_order_id, criada_em) VALUES ('oben', 'revisao_ausente', '$SOS', clock_timestamp());" >/dev/null
+  Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.credito_sombra_tentativa(id, lote_id, company, conteudo_md5, resultado, sales_order_id, criada_em) VALUES (gen_random_uuid(), (SELECT id FROM public.credito_sombra_lote LIMIT 1), 'oben', 'x', 'revisao_ausente', '$SOS', clock_timestamp())\$q\$);" >/dev/null
   eq "E7.7 versão corrente ilegível (tentativa após a decisão) → sai da fila" "$(comoval "$G" "SELECT count(*) FROM public.credito_fila_v WHERE origem='sombra'")" "0"
 
   echo "E8 decidir: só o item atual, só com o flag ligado"
