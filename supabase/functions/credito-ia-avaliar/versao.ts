@@ -7,7 +7,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("credito-ia-avaliar");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-ficha-claude-travas-writer-unico";
+export const VERSAO = "v1.1-max-tokens-4096";
 
 /** O que um disparo (não-sonda) faz — citado no erro de sonda ambígua. */
 export const EFEITO =

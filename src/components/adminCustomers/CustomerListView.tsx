@@ -744,7 +744,7 @@ export function CustomerListView({
                         <span className={cn(
                           'text-xs font-medium tabular-nums',
                           metricas.dias > 60 ? 'text-status-error' :
-                          metricas.dias > 30 ? 'text-status-warning' :
+                          metricas.dias > 30 ? 'text-status-warning-foreground' :
                           'text-muted-foreground'
                         )}>
                           {metricas.dias}d
