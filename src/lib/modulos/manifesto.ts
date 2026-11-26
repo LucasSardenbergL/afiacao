@@ -149,6 +149,17 @@ export const MODULOS: ModuloApp[] = [
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
+    id: "credito",
+    nome: "Crédito (limite do grupo por IA)",
+    kind: "negocio",
+    rotaPrefixos: ["/credito"],
+    gates: ["RequireStaff"],
+    status: "ativo",
+    codigo: ["src/lib/credito/**", "src/pages/CreditoLimites.tsx"],
+    testes: ["src/lib/credito/limites.test.ts"],
+    risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
+  },
+  {
     id: "financeiro",
     nome: "Financeiro",
     kind: "negocio",

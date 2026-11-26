@@ -42,6 +42,7 @@ const Customer360 = lazyRota(() => import("./pages/Customer360"));
 const AdminOrderDetail = lazyRota(() => import("./pages/AdminOrderDetail"));
 const AdminDemandForecast = lazyRota(() => import("./pages/AdminDemandForecast"));
 const AdminRoutePlanner = lazyRota(() => import("./pages/AdminRoutePlanner"));
+const CreditoLimites = lazyRota(() => import("./pages/CreditoLimites"));
 const AdminMonthlyReports = lazyRota(() => import("./pages/AdminMonthlyReports"));
 const AdminProductivity = lazyRota(() => import("./pages/AdminProductivity"));
 const VendaClientePainel = lazyRota(() => import("./pages/VendaClientePainel"));
@@ -279,6 +280,8 @@ const arvoreDeRotas = (
         <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
         <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
         <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
+        {/* crédito-IA PR 4: leitura gestor/master pela RPC; aprovação só do aprovador de crédito */}
+        <Route path="credito/limites" element={<CreditoLimites />} />
         <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
         <Route path="admin/productivity" element={<AdminProductivity />} />
         {/* Painel do founder — Venda por cliente (master: gate na página e na RPC venda_painel) */}

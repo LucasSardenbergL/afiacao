@@ -114,7 +114,7 @@ SQL
 for m in 20260702233000_trava_credito_fase2 20260703140000_trava_credito_gate_excecao_por_par \
          20261121120000_trava_credito_piso_grupo 20261121160000_credito_limite_reserva_decisao \
          20261121200000_credito_piso_pagto_parcial 20261124170000_credito_gate_fronteira_60_inclusiva; do
-  P -q -f "$REPO_ROOT/supabase/migrations/$m.sql"
+  P -q -1 -f "$REPO_ROOT/supabase/migrations/$m.sql"
 done
 echo "base aplicada: PR1 + PR2 + pagto parcial + fronteira-60"
 

@@ -190,6 +190,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Financeiro',
     items: [
       { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', staffOnly: true },
+      { icon: Shield, label: 'Limites de crédito', path: '/credito/limites', staffOnly: true },
       { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', staffOnly: true },
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', staffOnly: true },
       { icon: Target, label: 'Orçamento', path: '/financeiro/orcamento', staffOnly: true },

@@ -27264,6 +27264,37 @@ export type Database = {
         Args: { p_motivo?: string; p_proposta_id: string }
         Returns: Json
       }
+      credito_aprovar_propostas_lote: {
+        Args: { p_ids: string[]; p_motivo?: string }
+        Returns: Json
+      }
+      credito_avaliacao_progresso: { Args: never; Returns: Json }
+      credito_fila_propostas: {
+        Args: { p_status?: string }
+        Returns: {
+          confianca: number
+          created_at: string
+          decidido_em: string
+          documento: string
+          ficha: Json
+          ficha_calculada_em: string
+          grupo_user_id: string
+          id: string
+          limite_sugerido_brl: number
+          limite_vigente_brl: number
+          modelo: string
+          motivo_decisao: string
+          nome: string
+          prazo_max_dias: number
+          prazo_vigente_dias: number
+          risco: string
+          saida_ia: Json
+          status: string
+          travas: Json
+          versao_politica: string
+          versao_vigente: number
+        }[]
+      }
       credito_autorizar_solicitacao: {
         Args: {
           p_autorizar: boolean

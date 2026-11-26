@@ -270,7 +270,8 @@ BEGIN
          round(percentile_cont(0.5) WITHIN GROUP (ORDER BY atraso)::numeric, 1),
          round(percentile_cont(0.8) WITHIN GROUP (ORDER BY atraso)::numeric, 1),
          CASE WHEN COALESCE(sum(valor_documento), 0) > 0 AND NOT bool_or(valor_documento IS NULL)
-              THEN round(sum(valor_documento) FILTER (WHERE atraso > 5) / sum(valor_documento), 4) END,
+              -- 0 parcela atrasada ENTRE parcelas observadas é zero observado (o FILTER vazio dá NULL)
+              THEN round(COALESCE(sum(valor_documento) FILTER (WHERE atraso > 5), 0) / sum(valor_documento), 4) END,
          max(data_vencimento - data_emissao) FILTER (WHERE atraso <= 5 AND data_emissao IS NOT NULL)
     INTO v_pg_n, v_p50, v_p80, v_pct, v_honrado
     FROM parc;
