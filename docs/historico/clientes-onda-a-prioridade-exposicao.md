@@ -162,6 +162,19 @@ A métrica principal se manteve no cron: 0 stale no top 100, média de 64 dias, 
 552 notas distintas. Ressalva: é 1 par de dias, separados por ~9h e sem dia útil inteiro entre eles —
 mede a estabilidade da regra, não a do comportamento de compra.
 
+**2º par, com dia útil inteiro (2026-11-26, psql-ro, `ON_ERROR_STOP`, marcador de fim, exit 0):** cron de
+25/11 (06:25 UTC) contra o cron de 26/11 (06:25 UTC), 709 → 708 clientes com nota. Mesma régua (última
+nota de cada cliente por dia UTC em `priority_score_log`, desc + `customer_user_id`):
+
+| Par | top 10 | top 20 | top 100 |
+|---|---|---|---|
+| 24/11 manual → 25/11 cron | **10/10** | 18/20 | 97/100 |
+| 25/11 cron → 26/11 cron | **10/10** | 19/20 | 95/100 |
+
+Em `farmer_client_scores` (estado de 26/11): 0 stale no top 100, média de 68 dias sem compra, 1º ativo
+no rank 1. Régua ≥ 8/10 cumprida nos dois pares; este é o primeiro com compra real entre os recálculos.
+Pendência da onda A encerrada.
+
 ## Reserva de reativação no Meu dia (decisão do founder, 2026-11-24)
 
 Com a v1.9, nenhum inativo entrava no top 10 da carteira medida (282 ativos acima de todo stale).
