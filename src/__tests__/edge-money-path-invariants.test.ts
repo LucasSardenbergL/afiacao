@@ -836,11 +836,12 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
     // omie_pedido_id + hash_payload entraram no guard de reenvio (Codex 2026-08-29) — sem
     // eles o guard classifica linha ENVIADA como virgem e volta a duplicar no Omie.
     // O pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
+    // items + updated_at (v1.53): a versão lida ANTES do gate ATP e os itens da pré-checagem do claim conferido.
     expect(
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
     ).toMatch(
-      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload(, deleted_at)?(, ready_by_date)?"\)/,
+      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at, ready_by_date, items, updated_at"\)/,
     );
   });
 });
