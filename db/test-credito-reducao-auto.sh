@@ -517,7 +517,7 @@ check_cancelada() {
   echo "COMMIT;" >&3; exec 3>&-; wait "$apsql" || true
   eq "X1 lote cancelado na 1ª raiz devolve normalmente e registra 57014 (a fila anda)" \
      "$r/$(q "SELECT left(erro, 5) FROM public.credito_reducao_verificacao WHERE raiz = '$C'")" "1/57014"
-  eq "X1 a próxima rodada atende a raiz seguinte primeiro" "$(q "SELECT private.credito_reducao_lote(25, 20) -> 'por_resultado' ->> 'reduzido'")/$(vg $F)" "1/0/0/alto/v2"
+  eq "X1 a próxima rodada (1 raiz só) atende a SEGUINTE, não a cancelada" "$(q "SELECT private.credito_reducao_lote(1, 20) -> 'por_resultado' ->> 'reduzido'")/$(vg $F)" "1/0/0/alto/v2"
 }
 # o corte AINDA SEM COMMIT segura a aprovação; depois do commit ela é recusada por versão superada
 check_reducao_x_aprovacao() {

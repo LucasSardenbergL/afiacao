@@ -118,7 +118,7 @@ piso_t AS (
                            AND ((t.aberto_hoje AND (t.saldo > 0 OR t.status_titulo = 'PAGTO PARCIAL'))
                                 OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa > h.t))) THEN 'comprovado'
               -- emissão nula só não sabe "estava aberto em T?" se a baixa não o liquidou ANTES de T
-              WHEN bool_or((t.data_emissao IS NULL AND NOT (t.status_titulo = 'RECEBIDO' AND t.data_baixa <= h.t))
+              WHEN bool_or((t.data_emissao IS NULL AND (t.status_titulo = 'RECEBIDO' AND t.data_baixa <= h.t) IS NOT TRUE)
                            OR (t.aberto_hoje AND t.saldo IS NULL)
                            OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa IS NULL)) THEN 'indeterminado'
               ELSE 'livre' END AS piso_t
