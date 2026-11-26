@@ -39,13 +39,13 @@ export function mensagemBloqueioVendedor(estado: EstadoVendedor): string | null 
   switch (estado) {
     case 'validando': return 'Aguarde — ainda validando o vendedor nos Omies.';
     case 'divergente': return 'Vendedor divergente entre as contas Omie. Corrija no Omie antes de enviar.';
-    case 'indisponivel': return 'Não foi possível validar o vendedor. Toque em "Tentar de novo" antes de enviar.';
+    case 'indisponivel': return 'Não foi possível validar o vendedor. Use “Trocar” e selecione o cliente de novo antes de enviar.';
     default: return null;
   }
 }
 
 /** Prazo máximo da validação (Codex r1): uma chamada pendurada deixava o estado em `validando` — o envio
- *  travado sem "Tentar de novo". Estourou → rejeita, e quem chama trata como `indisponivel`. */
+ *  travado sem saída. Estourou → rejeita, e quem chama trata como `indisponivel` (saída: "Trocar"). */
 export const PRAZO_VALIDACAO_VENDEDOR_MS = 30_000;
 
 export function comPrazo<T>(p: Promise<T>, ms: number): Promise<T> {

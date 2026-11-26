@@ -22,9 +22,8 @@ interface CustomerSearchProps {
   loadingCustomer: boolean;
   validatingVendedor: boolean;
   vendedorDivergencias: string[];
-  /** 8.1: 'indisponivel' mostra "Tentar de novo"; 'divergente' (com ou sem lista) avisa, SEM revalidar: a saída é "Trocar". O envio fica bloqueado nos dois. */
+  /** 8.1: 'indisponivel' e 'divergente' (com ou sem lista) avisam e bloqueiam o envio; a única saída é "Trocar" (sem revalidar). */
   estadoVendedor?: EstadoVendedor;
-  onRevalidarVendedor?: () => void;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -37,7 +36,7 @@ interface CustomerSearchProps {
 export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
-  validatingVendedor, vendedorDivergencias, estadoVendedor, onRevalidarVendedor,
+  validatingVendedor, vendedorDivergencias, estadoVendedor,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -117,11 +116,12 @@ export function CustomerSearch({
                   <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
                   <div className="flex-1">
                     <p className="text-xs font-semibold">Não foi possível validar o vendedor</p>
-                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado até a validação responder.</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado. Use “Trocar” e selecione o cliente de novo.</p>
+                    {/* SEM "Tentar de novo" (4ª rodada do Codex, P0; decisão do founder: só Trocar): a resposta que chega
+                        depois do prazo é descartada, e na 2ª consulta a conta divergente que falha some da comparação
+                        (lacuna da edge, Onda 3) → liberaria divergência real; e revalidar não recarrega os códigos de
+                        vendedor da seleção. Só a seleção nova recarrega tudo. */}
                   </div>
-                  {onRevalidarVendedor && (
-                    <Button variant="outline" size="sm" onClick={onRevalidarVendedor}>Tentar de novo</Button>
-                  )}
                 </div>
               </div>
             )}

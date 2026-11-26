@@ -725,13 +725,6 @@ export function useCustomerSelection({
     onLocalUserResolved, reloadPriceHistory, validarVendedor,
   ]);
 
-  /** 8.1: "Tentar de novo" da validação — só vale para a seleção corrente. */
-  const revalidarVendedor = useCallback(async () => {
-    if (!selectedCustomer?.cnpj_cpf) return;
-    const myToken = selectionTokenRef.current;
-    await validarVendedor(selectedCustomer, () => selectionTokenRef.current !== myToken);
-  }, [selectedCustomer, validarVendedor]);
-
   /** Join da Etapa 3: o submit espera o ensure em background terminar e
    *  recebe o cliente com os códigos por-conta atualizados — SÓ se a retenção
    *  ainda é da seleção corrente (token-stamp); senão null (e o preflight
@@ -795,7 +788,7 @@ export function useCustomerSelection({
     // History (vem do useQuery; sem setter público)
     customerPurchaseHistory,
     // Vendedor
-    vendedorDivergencias, validatingVendedor, estadoVendedor, revalidarVendedor,
+    vendedorDivergencias, validatingVendedor, estadoVendedor,
     // Actions
     selectCustomer, clearCustomer, waitForAccountEnsure,
   };

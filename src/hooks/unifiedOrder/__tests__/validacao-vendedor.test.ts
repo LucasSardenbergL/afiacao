@@ -66,3 +66,11 @@ describe('8.1 — validação com prazo (Codex r1: pendurada travava o envio em 
     await expect(comPrazo(Promise.resolve('ok'), 30_000)).resolves.toBe('ok');
   });
 });
+
+describe('mensagemBloqueioVendedor — saída única "Trocar" (r4 do Codex, decisão do founder)', () => {
+  it('indisponivel manda trocar e NÃO manda tentar de novo', () => {
+    const m = mensagemBloqueioVendedor('indisponivel') ?? '';
+    expect(m).toContain('Trocar');
+    expect(m).not.toContain('Tentar de novo');
+  });
+});

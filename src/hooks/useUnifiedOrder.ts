@@ -264,7 +264,7 @@ export function useUnifiedOrder() {
     addresses,
     selectedAddress, setSelectedAddress,
     customerPurchaseHistory,
-    vendedorDivergencias, validatingVendedor, estadoVendedor, revalidarVendedor,
+    vendedorDivergencias, validatingVendedor, estadoVendedor,
     selectCustomer, clearCustomer: clearCustomerInternal,
     waitForAccountEnsure,
   } = customerSel;
@@ -1229,7 +1229,7 @@ export function useUnifiedOrder() {
     addToolDialogOpen, setAddToolDialogOpen, creatingLocalProfile,
     toolCategories, getFilteredServicos,
     // Vendedor
-    vendedorDivergencias, validatingVendedor, estadoVendedor, revalidarVendedor,
+    vendedorDivergencias, validatingVendedor, estadoVendedor,
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,

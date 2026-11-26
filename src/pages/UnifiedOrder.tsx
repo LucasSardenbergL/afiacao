@@ -590,7 +590,7 @@ const UnifiedOrder = () => {
               customers={h.customers} searchingCustomers={h.searchingCustomers}
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
-              estadoVendedor={h.estadoVendedor} onRevalidarVendedor={h.revalidarVendedor}
+              estadoVendedor={h.estadoVendedor}
               onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />
