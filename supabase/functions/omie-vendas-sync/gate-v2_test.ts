@@ -4,7 +4,6 @@ import {
   type ClienteGateV2,
   gateV2Efetivo,
   MENSAGEM_V2_AMARELO,
-  MENSAGEM_V2_INDISPONIVEL,
   MENSAGEM_V2_PENDENCIA,
   MENSAGEM_V2_REVALIDAR,
   MENSAGEM_V2_VERMELHO,
@@ -16,21 +15,31 @@ function assertEquals(a: unknown, b: unknown) {
     throw new Error(`assertEquals falhou: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
   }
 }
-function assertComeca(s: string, prefixo: string) {
-  if (!s.startsWith(prefixo)) throw new Error(`esperava começar com ${JSON.stringify(prefixo)}: ${JSON.stringify(s)}`);
-}
 
-function cliente(resposta: { data: unknown; error: { message: string } | null } | "lanca") {
+function cliente(resposta: { data: unknown; error: { message: string } | null } | "lanca", logFalha: false | "erro" | "lanca" = false) {
   const chamadas: Array<{ nome: string; args: Record<string, unknown> }> = [];
+  const logs: Array<{ tabela: string; linha: Record<string, unknown> }> = [];
   const c: ClienteGateV2 = {
     rpc(nome, args) {
       chamadas.push({ nome, args });
       if (resposta === "lanca") return Promise.reject(new Error("connection reset"));
       return Promise.resolve(resposta);
     },
+    from(tabela) {
+      return {
+        insert(linha) {
+          logs.push({ tabela, linha });
+          if (logFalha === "lanca") return Promise.reject(new Error("insert caiu"));
+          return Promise.resolve({ error: logFalha === "erro" ? { message: "log fora" } : null });
+        },
+      };
+    },
   };
-  return { c, chamadas };
+  return { c, chamadas, logs };
 }
+
+/** Opção (b): sem veredito da RPC → segue e registra. */
+const SEGUIU = { segue: true, resultado: "indisponivel_seguiu" };
 
 const ARGS = { salesOrderId: "so-1", company: "oben", revisao: "rv-1", contexto: "criacao" as const };
 
@@ -51,11 +60,10 @@ Deno.test("revisão null vai como null (a RPC decide; desligado segue)", async (
   assertEquals(chamadas[0].args.p_revisao, null);
 });
 
-Deno.test("desligado SEM ligado:false é resposta sem forma → segura (nunca infere o flag)", async () => {
-  const { c } = cliente({ data: { resultado: "desligado" }, error: null });
-  const d = await gateV2Efetivo(c, ARGS);
-  assertEquals(d.segue, false);
-  if (!d.segue) assertComeca(d.mensagem, MENSAGEM_V2_INDISPONIVEL);
+Deno.test("desligado SEM ligado:false é resposta sem forma → segue e registra (opção b)", async () => {
+  const { c, logs } = cliente({ data: { resultado: "desligado" }, error: null });
+  assertEquals(await gateV2Efetivo(c, ARGS), SEGUIU);
+  assertEquals(logs.length, 1);
 });
 
 const ID = "0b5c2f1e-6d3a-4c1b-9e2f-7a8b9c0d1e2f";
@@ -66,7 +74,7 @@ Deno.test("avaliado verde com decisão e reserva → segue", async () => {
   assertEquals(await gateV2Efetivo(c, ARGS), { segue: true, resultado: "verde" });
 });
 
-Deno.test("verde malformado NÃO libera: ligado:false, sem decisão ou sem reserva (Codex P1)", async () => {
+Deno.test("verde malformado não vale como verde: vira sem forma (segue e registra, opção b)", async () => {
   for (const data of [
     { ...VERDE, ligado: false },
     { ...VERDE, ligado: undefined },
@@ -77,7 +85,7 @@ Deno.test("verde malformado NÃO libera: ligado:false, sem decisão ou sem reser
     { ...VERDE, reserva_id: "r-1" },
   ]) {
     const { c } = cliente({ data, error: null });
-    assertEquals(await gateV2Efetivo(c, ARGS), { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL });
+    assertEquals(await gateV2Efetivo(c, ARGS), SEGUIU);
   }
 });
 
@@ -104,11 +112,10 @@ Deno.test("avaliado vermelho → recusa", async () => {
   assertEquals(d, { segue: false, resultado: "vermelho", mensagem: MENSAGEM_V2_VERMELHO });
 });
 
-Deno.test("avaliado sem faixa conhecida → sem forma, segura", async () => {
+Deno.test("avaliado sem faixa conhecida → sem forma, segue e registra (opção b)", async () => {
   const { c } = cliente({ data: { resultado: "avaliado", ligado: true, faixa: "azul" }, error: null });
   const d = await gateV2Efetivo(c, ARGS);
-  assertEquals(d.segue, false);
-  if (!d.segue) assertEquals(d.resultado, "indisponivel");
+  assertEquals(d, SEGUIU);
 });
 
 for (const r of ["pedido_inexistente", "conta_divergente", "revisao_inexistente", "revisao_superada"]) {
@@ -119,10 +126,10 @@ for (const r of ["pedido_inexistente", "conta_divergente", "revisao_inexistente"
   });
 }
 
-Deno.test("erro da RPC → indisponível com mensagem FIXA: o texto bruto não vaza (Codex P1)", async () => {
+Deno.test("erro da RPC → segue e registra; o texto bruto não vaza (Codex P1)", async () => {
   const { c } = cliente({ data: null, error: { message: "MARCADOR-SECRETO limite 98765,43" } });
   const d = await gateV2Efetivo(c, ARGS);
-  assertEquals(d, { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL });
+  assertEquals(d, SEGUIU);
 });
 
 Deno.test("corpo inesperado não vaza valores NEM nomes de campo (mensagem e log)", async () => {
@@ -148,20 +155,62 @@ Deno.test("corpo inesperado não vaza valores NEM nomes de campo (mensagem e log
 Deno.test("corpo inesperado não vaza valores na mensagem", async () => {
   const { c } = cliente({ data: { resultado: "xpto", limite_brl: 98765.43 }, error: null });
   const d = await gateV2Efetivo(c, ARGS);
-  assertEquals(d, { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL });
+  assertEquals(d, SEGUIU);
 });
 
-Deno.test("transporte lança → indisponível, segura", async () => {
+Deno.test("transporte lança → sem veredito, segue e registra (opção b)", async () => {
   const { c } = cliente("lanca");
   const d = await gateV2Efetivo(c, ARGS);
-  assertEquals(d.segue, false);
-  if (!d.segue) assertEquals(d.resultado, "indisponivel");
+  assertEquals(d, SEGUIU);
 });
 
-Deno.test("data nula / array / string → sem forma, segura", async () => {
+Deno.test("data nula / array / string → sem forma, segue e registra (opção b)", async () => {
   for (const data of [null, [], "desligado", 0]) {
     const { c } = cliente({ data, error: null });
-    const d = await gateV2Efetivo(c, ARGS);
-    assertEquals(d.segue, false);
+    assertEquals(await gateV2Efetivo(c, ARGS), SEGUIU);
+  }
+});
+
+Deno.test("opção (b): o registro tem a forma fixa e não leva nada da resposta", async () => {
+  const { c, logs } = cliente({ data: null, error: { message: "MARCADOR-ERRO" } });
+  assertEquals(await gateV2Efetivo(c, { ...ARGS, contexto: "edicao" }), SEGUIU);
+  assertEquals(logs, [{
+    tabela: "venda_bloqueio_credito_log",
+    linha: {
+      company: "oben",
+      sales_order_id: "so-1",
+      acao: "gate_indisponivel",
+      detalhe: "gate_v2 edicao: transporte — SEGUIU (opção b, enforcement dormente)",
+    },
+  }]);
+});
+
+Deno.test("opção (b): registro que devolve erro OU que lança não segura a venda (Codex P2)", async () => {
+  for (const falha of ["erro", "lanca"] as const) {
+    const { c, logs } = cliente("lanca", falha);
+    assertEquals(await gateV2Efetivo(c, ARGS), SEGUIU);
+    assertEquals(logs.length, 1);
+  }
+});
+
+Deno.test("opção (b): sem_forma grava a linha fixa e não leva o corpo (Codex P2)", async () => {
+  const { c, logs } = cliente({ data: { resultado: "MARCADOR-RES", limite_brl: 98765.43 }, error: null });
+  assertEquals(await gateV2Efetivo(c, ARGS), SEGUIU);
+  assertEquals(logs, [{
+    tabela: "venda_bloqueio_credito_log",
+    linha: {
+      company: "oben",
+      sales_order_id: "so-1",
+      acao: "gate_indisponivel",
+      detalhe: "gate_v2 criacao: sem_forma — SEGUIU (opção b, enforcement dormente)",
+    },
+  }]);
+});
+
+Deno.test("opção (b): desligado e verde NÃO registram nada", async () => {
+  for (const data of [{ resultado: "desligado", ligado: false }, VERDE]) {
+    const { c, logs } = cliente({ data, error: null });
+    await gateV2Efetivo(c, ARGS);
+    assertEquals(logs.length, 0);
   }
 });
