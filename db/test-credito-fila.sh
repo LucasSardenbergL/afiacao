@@ -287,7 +287,11 @@ asserts() {
   # como "segue" ({resultado:'desligado', ligado:false}) e não escreve nada.
   eq "E1.7 6b: revisão NULL → desligado/ligado=false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'oben', NULL) r) x;" | tail -1)" "desligado/false"
   eq "E1.8 6b: revisão real → desligado/ligado=false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'oben', '$r') r) x;" | tail -1)" "desligado/false"
-  eq "E1.9 6b: conta declarada errada, flag da conta REAL desligado → desligado" "$(gate "$SOA" "$r" colacor | J "['resultado']")" "desligado"
+  # Codex diff P2: com as 2 contas desligadas o teste passaria também lendo o flag da conta DECLARADA.
+  # Liga só a declarada (colacor); o pedido é da oben (desligada) → tem de ser desligado/false.
+  Pq -c "SELECT public.t_forca(\$q\$UPDATE public.credito_enforcement SET ligado = true WHERE company = 'colacor'\$q\$);" >/dev/null
+  eq "E1.9 6b: declarada LIGADA (colacor), conta REAL desligada (oben) → desligado/false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'colacor', '$r') r) x;" | tail -1)" "desligado/false"
+  Pq -c "SELECT public.t_forca(\$q\$UPDATE public.credito_enforcement SET ligado = false WHERE company = 'colacor'\$q\$);" >/dev/null
   eq "E1.10 6b: NULL/real/conta errada → trilhas intocadas" "$(Pq -c "SELECT public.t_foto();")" "$antes"
   eq "E1.11 6b: pedido inexistente → pedido_inexistente (a edge SEGURA; nunca 'desligado')" "$(gate "00000000-0000-0000-0000-0000000000ff" "$r" | J "['resultado']")" "pedido_inexistente"
 
