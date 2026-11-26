@@ -17,6 +17,7 @@ export const PRECOS_LOCAIS_VAZIOS: PrecosLocaisPorConta = { oben: {}, colacor: {
  *  para o preço de tabela (mapas vazios), com rastro — nunca R$ 0. */
 export async function resolverPrecosLocaisPorConta(
   localPriceRows: LinhaPrecoPraticado[] | null,
+  opcoes: { estrito?: boolean } = {},
 ): Promise<PrecosLocaisPorConta> {
   if (!localPriceRows || localPriceRows.length === 0) return { ...PRECOS_LOCAIS_VAZIOS };
   const localPricesByProduct: Record<string, number> = {};
@@ -36,6 +37,9 @@ export async function resolverPrecosLocaisPorConta(
   // Falha do mapeamento → degrada honesto (cada conta cai p/ o preço de tabela
   // `valor_unitario`, nunca R$0), mas deixa RASTRO: sem ele o preço-cliente
   // sumiria silencioso mesmo com a RPC tendo retornado preços (Codex P2).
+  // `estrito` (edição de pedido): a falha do mapeamento LANÇA, para o caller avisar o vendedor — com
+  // mapas vazios o item nasceria pela tabela calado, embora a RPC tenha devolvido o praticado (Codex).
+  if (error && opcoes.estrito) throw error;
   if (error) {
     logger.warn('resolveLocalPricesByOmieCode: mapeamento omie_products falhou (degrada p/ preço de tabela)', {
       stage: 'resolve_local_prices_omie_map',
@@ -46,10 +50,10 @@ export async function resolverPrecosLocaisPorConta(
   return montarPrecosLocaisPorConta(localPricesByProduct, productMappings ?? [], datasByProduct);
 }
 
-/** Lê e resolve os preços praticados de UM cliente. Lança se a RPC falhar (o caller decide a
- *  degradação e o aviso). */
+/** Lê e resolve os preços praticados de UM cliente. Lança se a RPC OU o mapeamento falhar (o caller
+ *  decide a degradação e o aviso). */
 export async function carregarPrecosPraticados(customerUserId: string): Promise<PrecosLocaisPorConta> {
   const { data, error } = await supabase.rpc('get_ultimos_precos_cliente', { p_customer: customerUserId });
   if (error) throw error;
-  return resolverPrecosLocaisPorConta((data as LinhaPrecoPraticado[] | null) ?? null);
+  return resolverPrecosLocaisPorConta((data as LinhaPrecoPraticado[] | null) ?? null, { estrito: true });
 }

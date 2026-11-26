@@ -1,6 +1,6 @@
 // Lógica da tela de edição de pedido de venda (load, edição de itens, save no Omie).
 // Extraída verbatim de src/pages/SalesOrderEdit.tsx (god-component split).
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { itensPedidoDoJson, omiePayloadDoJson } from '@/lib/pedido/itens-json';
@@ -71,6 +71,9 @@ export function useSalesOrderEdit() {
   // do cliente, tier × multiplicador). `null` = ainda carregando: "Adicionar" espera, como no wizard,
   // para o item não nascer pela tabela por uma corrida.
   const [insumosPreco, setInsumosPreco] = useState<InsumosDoNascimento | null>(null);
+  // Token da carga: a resposta tardia do pedido ANTERIOR (mesma instância da rota) não pode
+  // sobrescrever os insumos do pedido aberto agora — o item de B nasceria com o preço de A.
+  const cargaPrecoRef = useRef(0);
 
   useEffect(() => {
     if (id) loadOrder();
@@ -121,10 +124,14 @@ export function useSalesOrderEdit() {
         .single();
       if (profile) setCustomerName(profile.name || '');
       setCustomerUserId(o.customer_user_id);
-      carregarInsumosPreco(o.customer_user_id, row.created_by ?? null).catch((e) => {
+      const minhaCarga = ++cargaPrecoRef.current;
+      setInsumosPreco(null);
+      carregarInsumosPreco(o.customer_user_id, row.created_by ?? null, minhaCarga).catch((e) => {
         // Rede de segurança: nunca deixa "Adicionar" preso em "carregando" — degrada para a tabela pura.
         console.error('[edição] insumos de preço do cliente (falha inesperada)', e);
-        setInsumosPreco({ precos: { oben: {}, colacor: {} }, datas: { oben: {}, colacor: {} }, tierPorConta: null, multConfig: null });
+        if (cargaPrecoRef.current === minhaCarga) {
+          setInsumosPreco({ precos: { oben: {}, colacor: {} }, datas: { oben: {}, colacor: {} }, tierPorConta: null, multConfig: null });
+        }
       });
 
       const account = o.account === 'colacor' ? 'colacor' : 'oben';
@@ -194,19 +201,23 @@ export function useSalesOrderEdit() {
     }
   };
 
-  const carregarInsumosPreco = async (cliente: string | null, criador: string | null) => {
+  const carregarInsumosPreco = async (cliente: string | null, criador: string | null, carga: number) => {
+    const publicar = (v: InsumosDoNascimento) => {
+      if (cargaPrecoRef.current === carga) setInsumosPreco(v);
+    };
     const vazio: InsumosDoNascimento = {
       precos: { oben: {}, colacor: {} }, datas: { oben: {}, colacor: {} }, tierPorConta: null, multConfig: null,
     };
     // Legado: orçamento que nasceu sem cliente grava `customer_user_id = user.id` (submitQuote). Ler o
     // histórico/tier dessa identidade daria o preço do VENDEDOR — sem cliente provado, tabela pura.
     if (!cliente || (criador !== null && cliente === criador)) {
-      setInsumosPreco(vazio);
+      publicar(vazio);
       return;
     }
     const [precos, tier, mult] = await Promise.allSettled([
       carregarPrecosPraticados(cliente), buscarTierPorConta(cliente), buscarMultConfig(),
     ]);
+    if (cargaPrecoRef.current !== carga) return; // outro pedido foi aberto: esta resposta é velha
     if (precos.status === 'rejected' || tier.status === 'rejected' || mult.status === 'rejected') {
       console.error('[edição] insumos de preço do cliente', { precos: precos.status, tier: tier.status, mult: mult.status });
       toast.warning('Preço do cliente não carregou por completo', {
@@ -215,7 +226,7 @@ export function useSalesOrderEdit() {
           : 'Produto adicionado agora não considera o tier do cliente. Confira o preço antes de salvar.',
       });
     }
-    setInsumosPreco({
+    publicar({
       precos: precos.status === 'fulfilled' ? { oben: precos.value.oben, colacor: precos.value.colacor } : vazio.precos,
       datas: precos.status === 'fulfilled' ? { oben: precos.value.datasOben, colacor: precos.value.datasColacor } : vazio.datas,
       tierPorConta: tier.status === 'fulfilled' ? tier.value : null,
@@ -576,8 +587,11 @@ export function useSalesOrderEdit() {
           return;
         }
         // A decisão "sem PV" foi tomada com a foto da abertura da tela: o UPDATE só vale se a linha
-        // AINDA está assim — sem PV, sem envio reivindicado, não excluída, mesmo status. Outra aba que
-        // converteu o orçamento nesse meio-tempo faz o UPDATE não casar nenhuma linha (Codex 2026-11-26).
+        // AINDA está assim — sem PV, não excluída, mesmo status. Outra aba que converteu o orçamento
+        // nesse meio-tempo faz o UPDATE não casar nenhuma linha (Codex 2026-11-26). O carimbo
+        // `envio_omie_reivindicado_em` NÃO entra no filtro: `authenticated` não tem SELECT nessa coluna
+        // (42501 em todo salvar) e um envio recusado o deixa preso para sempre. Residual: um envio EM VOO
+        // (claim feito, PV ainda não gravado) não é visto daqui.
         const { data: gravadas, error } = await supabase
           .from('sales_orders')
           .update({
@@ -587,7 +601,6 @@ export function useSalesOrderEdit() {
           })
           .eq('id', order.id)
           .is('omie_pedido_id', null)
-          .is('envio_omie_reivindicado_em', null)
           .is('deleted_at', null)
           .eq('status', order.status)
           .select('id');

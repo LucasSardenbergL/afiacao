@@ -85,16 +85,23 @@ Deno.test("âncora: codigo_cliente que o app mandou ao criar o PV", () => {
 });
 
 Deno.test("PV reaproveitado: cliente vivo ≠ âncora recusa", () => {
-  recusa(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: 200 }), "cliente_omie", "PV reaproveitado", "reaproveitado");
+  recusa(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: 200, ancoraIndependente: true }), "cliente_omie", "PV reaproveitado", "reaproveitado");
 });
 
 Deno.test("sem âncora ou sem cliente vivo: recusa (não dá para provar de quem é o PV)", () => {
-  recusa(vereditoClienteEdicao({ codigoClienteAncora: null, codigoClienteVivo: 200 }), "cliente_omie", "não há registro do cliente", "sem ancora");
-  recusa(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: null }), "cliente_omie", "veio sem o cliente", "sem vivo");
+  recusa(vereditoClienteEdicao({ codigoClienteAncora: null, codigoClienteVivo: 200, ancoraIndependente: true }), "cliente_omie", "não há registro do cliente", "sem ancora");
+  recusa(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: null, ancoraIndependente: true }), "cliente_omie", "veio sem o cliente", "sem vivo");
 });
 
 Deno.test("mesmo cliente: editável", () => {
-  igual(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: 100 }), OK, "mesmo");
+  igual(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: 100, ancoraIndependente: true }), OK, "mesmo");
+});
+
+Deno.test("PV vinculado por duplicidade (reconciled): âncora não é independente — recusa mesmo com cliente igual", () => {
+  recusa(
+    vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: 100, ancoraIndependente: false }),
+    "cliente_omie", "vinculado a um PV que já existia", "reconciliado",
+  );
 });
 
 // ── leitura do cabeçalho / etapa viva ─────────────────────────────────────
@@ -102,7 +109,7 @@ Deno.test("mesmo cliente: editável", () => {
 const FRETE_OMIE = { modalidade: "1", codigo_transportadora: 987, quantidade_volumes: 3, especie_volumes: "CX", valor_frete: 45.5, previsao_entrega: "05/12/2026" };
 const LIDO_OK: CabecalhoLido = {
   etapa: "10", dataPrevisao: "01/12/2026", cancelado: "N", faturado: "N", frete: {},
-  categoria: null, contaCorrente: null, codVend: null,
+  categoria: "1.01.01", contaCorrente: 8693825504, codVend: null,
 };
 
 Deno.test("lê etapa/previsão/frete/marcas/classificação aninhados e no topo (drift de shape)", () => {
@@ -171,23 +178,25 @@ Deno.test("volumes mandados pelo caller sobrescrevem só quantidade_volumes", ()
   igual(freteDaEdicao({ lido, quantidadeVolumes: 7 }), { ...FRETE_OMIE, quantidade_volumes: 7 }, "volumes 7");
 });
 
-Deno.test("classificação: a LIDA vence o default da conta; o default só cobre o que não veio", () => {
-  const padrao = { codigo_categoria: "1.01.01", codigo_conta_corrente: 8693825504 };
+Deno.test("classificação: vai a LIDA; vendedor ausente vai ausente (não restaura o da criação)", () => {
   igual(
-    informacoesAdicionaisDaEdicao({ lido: { ...LIDO_OK, categoria: "1.01.03", contaCorrente: 77, codVend: 9 }, padrao, codVendDoPayload: 5 }),
+    informacoesAdicionaisDaEdicao({ ...LIDO_OK, categoria: "1.01.03", contaCorrente: 77, codVend: 9 }),
     { codigo_categoria: "1.01.03", codigo_conta_corrente: 77, codVend: 9 },
     "lida",
   );
   igual(
-    informacoesAdicionaisDaEdicao({ lido: LIDO_OK, padrao, codVendDoPayload: 5 }),
-    { codigo_categoria: "1.01.01", codigo_conta_corrente: 8693825504, codVend: 5 },
-    "default",
-  );
-  igual(
-    informacoesAdicionaisDaEdicao({ lido: LIDO_OK, padrao, codVendDoPayload: null }),
+    informacoesAdicionaisDaEdicao({ ...LIDO_OK, codVend: null }),
     { codigo_categoria: "1.01.01", codigo_conta_corrente: 8693825504 },
     "sem codVend",
   );
+});
+
+Deno.test("leitura sem categoria ou conta corrente: recusa antes de mutar (não cai no default da conta)", () => {
+  recusa(vereditoEtapaEdicao({ ...LIDO_OK, categoria: null }), "leitura_omie_incompleta", "categoria", "sem categoria");
+  recusa(vereditoEtapaEdicao({ ...LIDO_OK, contaCorrente: null }), "leitura_omie_incompleta", "conta corrente", "sem cc");
+  let msg = "";
+  try { informacoesAdicionaisDaEdicao({ ...LIDO_OK, categoria: null }); } catch (e) { msg = (e as Error).message; }
+  if (!msg.includes("informacoesAdicionaisDaEdicao: leitura sem categoria")) throw new Error(`não lançou o ramo certo: ${msg}`);
 });
 
 Deno.test("cabecalho/frete sem leitura aprovada: lança com a marca do ramo", () => {

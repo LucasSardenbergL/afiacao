@@ -108,7 +108,18 @@ export function codigoClienteDoPayload(omiePayload: unknown): number | null {
 export function vereditoClienteEdicao(input: {
   codigoClienteAncora: number | null;
   codigoClienteVivo: number | null;
+  /** `false` quando o envio VINCULOU um PV já existente por duplicidade (`omie_response.reconciled`):
+   *  desde o #4174 o `omie_payload` gravado é o PV consultado, então o cliente dele não prova nada sobre
+   *  o cliente do pedido (Codex 2026-11-26). 0 recibos reconciliados na prod em 2026-11-26. */
+  ancoraIndependente: boolean;
 }): VereditoEdicao {
+  if (!input.ancoraIndependente) {
+    return {
+      permitido: false,
+      bloqueio: "cliente_omie",
+      motivo: "este pedido foi vinculado a um PV que já existia no Omie (envio repetido) — não há registro independente do cliente. Confira e altere direto no Omie.",
+    };
+  }
   if (input.codigoClienteAncora === null || input.codigoClienteVivo === null) {
     return {
       permitido: false,
@@ -205,6 +216,8 @@ export function vereditoEtapaEdicao(lido: CabecalhoLido): VereditoEdicao {
     lido.dataPrevisao === null ? "data de previsão" : null,
     lido.frete === null ? "frete" : null,
     lido.cancelado === null ? "situação de cancelamento" : null,
+    lido.categoria === null ? "categoria" : null,
+    lido.contaCorrente === null ? "conta corrente" : null,
   ].filter(Boolean);
   if (falta.length > 0) {
     return {
@@ -257,18 +270,18 @@ export function freteDaEdicao(input: {
   return frete;
 }
 
-/** Classificação do AlterarPedidoVenda: a LIDA do Omie (uma reclassificação feita no ERP não é
- *  desfeita por quem só trocou a observação); o default da conta só cobre o campo que não veio. */
-export function informacoesAdicionaisDaEdicao(input: {
-  lido: CabecalhoLido;
-  padrao: { codigo_categoria: string; codigo_conta_corrente: number };
-  codVendDoPayload: number | null;
-}): Record<string, unknown> {
+/** Classificação do AlterarPedidoVenda: a LIDA do Omie, sem default nenhum — uma reclassificação ou a
+ *  remoção do vendedor feita no ERP não é desfeita por quem só trocou a observação. Categoria e conta
+ *  corrente ausentes já recusaram em `vereditoEtapaEdicao`; vendedor ausente vai ausente (Codex
+ *  2026-11-26: reenviar o `codVend` da criação restaurava um vendedor removido no Omie). */
+export function informacoesAdicionaisDaEdicao(lido: CabecalhoLido): Record<string, unknown> {
+  if (lido.categoria === null || lido.contaCorrente === null) {
+    throw new Error("informacoesAdicionaisDaEdicao: leitura sem categoria/conta corrente — vereditoEtapaEdicao deveria ter recusado");
+  }
   const out: Record<string, unknown> = {
-    codigo_categoria: input.lido.categoria ?? input.padrao.codigo_categoria,
-    codigo_conta_corrente: input.lido.contaCorrente ?? input.padrao.codigo_conta_corrente,
+    codigo_categoria: lido.categoria,
+    codigo_conta_corrente: lido.contaCorrente,
   };
-  const codVend = input.lido.codVend ?? input.codVendDoPayload;
-  if (codVend !== null) out.codVend = codVend;
+  if (lido.codVend !== null) out.codVend = lido.codVend;
   return out;
 }

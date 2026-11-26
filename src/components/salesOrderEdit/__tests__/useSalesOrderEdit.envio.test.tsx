@@ -1,14 +1,15 @@
 // O que o salvar da edição manda — P0 5–8 da revisão de 2026-11-25:
 //  • recusa da edge (gêmeo avançado, etapa, PV de outro cliente) chega à tela COM o motivo;
 //  • pedido sem PV: salvar só a observação não regrava subtotal/total, e o UPDATE só vale se a linha
-//    ainda está sem PV/sem envio/mesmo status;
+//    ainda está sem PV/não excluída/mesmo status (sem filtrar coluna que `authenticated` não lê);
 //  • produto adicionado nasce pelo último preço praticado do cliente (mesma regra do Novo Pedido).
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 const navigateSpy = vi.fn();
+const rota = { id: 'ord-1' };
 vi.mock('react-router-dom', () => ({
-  useParams: () => ({ id: 'ord-1' }),
+  useParams: () => ({ id: rota.id }),
   useNavigate: () => navigateSpy,
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({}) }));
@@ -72,6 +73,7 @@ function chainFor(table: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  rota.id = 'ord-1';
   condicoes.length = 0;
   linhasGravadas = [{ id: 'ord-1' }];
   salesOrderRow = {
@@ -132,7 +134,6 @@ describe('pedido sem PV (caminho local)', () => {
     expect(condicoes).toEqual([
       ['eq', 'id', 'ord-1'],
       ['is', 'omie_pedido_id', null],
-      ['is', 'envio_omie_reivindicado_em', null],
       ['is', 'deleted_at', null],
       ['eq', 'status', 'orcamento'],
     ]);
@@ -181,5 +182,66 @@ describe('produto adicionado na edição', () => {
     });
     expect(result.current.items[1].valor_unitario).toBe(100);
     expect(mockedRpc).not.toHaveBeenCalledWith('get_ultimos_precos_cliente', expect.anything());
+  });
+});
+
+describe('preço do cliente — falha do mapeamento avisa', () => {
+  it('RPC ok mas omie_products falha: aviso ao vendedor (não nasce calado pela tabela)', async () => {
+    mockedFrom.mockImplementation(((table: string) => {
+      if (table === 'omie_products') {
+        const b: Record<string, unknown> = {};
+        b.select = () => b; b.eq = () => b; b.or = () => b; b.order = () => b;
+        b.range = () => Promise.resolve({ data: [], error: null });
+        b.in = () => Promise.resolve({ data: null, error: { message: 'timeout' } });
+        return b;
+      }
+      return chainFor(table);
+    }) as never);
+    await renderLoaded();
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(
+      'Preço do cliente não carregou por completo',
+      expect.objectContaining({ description: expect.stringContaining('último preço praticado') }),
+    ));
+  });
+});
+
+describe('preço do cliente — corrida entre pedidos', () => {
+  it('a resposta tardia do pedido A não sobrescreve o preço do pedido B aberto depois', async () => {
+    let soltarA: (v: unknown) => void = () => {};
+    const respostaA = new Promise((r) => { soltarA = r; });
+    mockedRpc.mockImplementation(((nome: string, args?: { p_customer?: string }) => {
+      if (nome === 'get_ultimos_precos_cliente') {
+        if (args?.p_customer === 'cust-A') return respostaA;
+        return Promise.resolve({ data: [{ product_id: 'p-novo', unit_price: 95, ultimo_praticado_em: '2026-11-01' }], error: null });
+      }
+      return Promise.resolve({ data: [{ id: rota.id, omie_payload: null, omie_response: null }], error: null });
+    }) as never);
+    salesOrderRow = { ...salesOrderRow, customer_user_id: 'cust-A' };
+    const hook = renderHook(() => useSalesOrderEdit());
+    await waitFor(() => expect(hook.result.current.order?.customer_user_id).toBe('cust-A'));
+    // abre o pedido B na MESMA instância
+    salesOrderRow = { ...salesOrderRow, id: 'ord-2', customer_user_id: 'cust-B' };
+    rota.id = 'ord-2';
+    hook.rerender();
+    await waitFor(() => expect(hook.result.current.order?.customer_user_id).toBe('cust-B'));
+    const PRODUTO = {
+      id: 'p-novo', omie_codigo_produto: 555, codigo: 'X9', descricao: 'Selador', unidade: 'GL',
+      valor_unitario: 100, estoque: 3, ativo: true, account: 'oben', is_tintometric: false, tint_type: null,
+    } as unknown as OmieProduct;
+    await waitFor(() => {
+      act(() => { hook.result.current.addProduct(PRODUTO); });
+      expect(hook.result.current.items.some((i) => i.omie_codigo_produto === 555)).toBe(true);
+    });
+    // agora chega a resposta VELHA do A (R$ 80) — não pode mudar nada
+    await act(async () => {
+      soltarA({ data: [{ product_id: 'p-novo', unit_price: 80, ultimo_praticado_em: '2026-11-01' }], error: null });
+      await respostaA;
+    });
+    const novo = hook.result.current.items.find((i) => i.omie_codigo_produto === 555);
+    expect(novo?.valor_unitario).toBe(95);
+    // e um 2º item adicionado depois da resposta velha também nasce pelo preço de B
+    act(() => { hook.result.current.removeItem(hook.result.current.items.findIndex((i) => i.omie_codigo_produto === 555)); });
+    act(() => { hook.result.current.addProduct(PRODUTO); });
+    expect(hook.result.current.items.find((i) => i.omie_codigo_produto === 555)?.valor_unitario).toBe(95);
   });
 });

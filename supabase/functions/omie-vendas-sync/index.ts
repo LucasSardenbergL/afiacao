@@ -3432,10 +3432,6 @@ Deno.serve(async (req) => {
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i) => s + i.valor_total, 0);
 
         // Build Omie payload
-        const origPayload = existingOrder.omie_payload as {
-          informacoes_adicionais?: { codVend?: number };
-          frete?: { codigo_transportadora?: number };
-        } | null;
         const codigoPedido = Number(existingOrder.omie_pedido_id);
         const buildExpectedSignature = (items: EditItemInput[]) => items
           .map((item) => `${Number(item.omie_codigo_produto)}:${Number(item.quantidade)}:${Number(item.valor_unitario).toFixed(4)}`)
@@ -3558,6 +3554,7 @@ Deno.serve(async (req) => {
           ? vereditoClienteEdicao({
             codigoClienteAncora: codigoClienteDoPayload(existingOrder.omie_payload),
             codigoClienteVivo: omieCodigoClienteEdit,
+            ancoraIndependente: (existingOrder as { omie_response?: { reconciled?: unknown } | null }).omie_response?.reconciled !== true,
           })
           : vereditoEtapa;
         if (!vereditoCliente.permitido) {
@@ -3706,13 +3703,7 @@ Deno.serve(async (req) => {
         // 2026-11-26); se o Omie o recusar, a edição falha com os ITENS intactos, em vez de deixá-los
         // trocados e o cabeçalho para trás. O TotalizarPedido do fim recalcula as parcelas.
         const editCabecalho = cabecalhoDaEdicao({ codigoPedido, lido: lidoEdit, codigoParcela: editParcelaEnvio });
-        const editInfoAdic = informacoesAdicionaisDaEdicao({
-          lido: lidoEdit,
-          padrao: { codigo_categoria: editConfig.codigo_categoria, codigo_conta_corrente: editConfig.codigo_conta_corrente },
-          codVendDoPayload: Number(origPayload?.informacoes_adicionais?.codVend) > 0
-            ? Number(origPayload?.informacoes_adicionais?.codVend)
-            : null,
-        });
+        const editInfoAdic = informacoesAdicionaisDaEdicao(lidoEdit);
         const editFrete = freteDaEdicao({ lido: lidoEdit, quantidadeVolumes: editVolumes });
 
         try {

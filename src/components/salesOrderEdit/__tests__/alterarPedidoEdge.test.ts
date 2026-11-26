@@ -46,7 +46,8 @@ describe('alterar_pedido — travas antes de mutar o Omie', () => {
     expect(bloco).not.toContain('modalidade: "0"');
     posicao('cabecalhoDaEdicao({');
     posicao('freteDaEdicao({');
-    posicao('informacoesAdicionaisDaEdicao({');
+    posicao('informacoesAdicionaisDaEdicao(lidoEdit)');
+    expect(bloco).not.toContain('codigo_categoria: editConfig.codigo_categoria');
   });
 
   it('o payload regravado guarda a âncora do cliente para a próxima edição', () => {
