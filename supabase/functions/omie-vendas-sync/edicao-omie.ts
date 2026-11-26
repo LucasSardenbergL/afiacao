@@ -178,6 +178,21 @@ function marcaSN(v: unknown): string | null {
 
 /** Lê etapa, previsão, frete, classificação e as marcas de cancelado/faturado. Mesmo drift de shape do
  *  `det`: aninhado em `pedido_venda_produto` ou no topo. Ausente fica `null` — nunca um default. */
+/**
+ * Prazo da edição: sem escolha do vendedor, a edge herda a condição VIVA do PV (`parcelaEfetiva`). Se a
+ * leitura também não a trouxer, `parcelaEfetiva` cairia no default `999` e uma edição de observação
+ * TROCARIA o prazo do pedido — recusa antes de mutar (Codex r4).
+ */
+export function vereditoParcelaEdicao(input: { informada: unknown; viva: unknown }): VereditoEdicao {
+  const texto = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  if (texto(input.informada) !== "" || texto(input.viva) !== "") return { permitido: true };
+  return {
+    permitido: false,
+    bloqueio: "leitura_omie_incompleta",
+    motivo: "a leitura do pedido no Omie veio sem a condição de pagamento e nenhuma foi escolhida — nada foi alterado. Escolha a condição ou tente de novo.",
+  };
+}
+
 export function lerCabecalhoParaEdicao(consulta: ConsultaCrua): CabecalhoLido {
   const pv = consulta?.pedido_venda_produto ?? null;
   const cab = pv?.cabecalho ?? consulta?.cabecalho;

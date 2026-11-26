@@ -41,7 +41,8 @@ export function AddProductSearch({ productSearch, setProductSearch, filteredProd
                 <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade} • Estoque: <span className={p.estoque === null ? 'font-medium' : p.estoque > 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>{p.estoque ?? '—'}</span></p>
               </div>
               <span className="text-xs font-medium shrink-0">
-                {preco === null ? '—' : `R$ ${preco.toFixed(2)}`}
+                {preco !== null ? `R$ ${preco.toFixed(2)}`
+                  : p.is_tintometric && p.tint_type === 'base' ? 'após a cor' : '—'}
               </span>
             </button>
             );

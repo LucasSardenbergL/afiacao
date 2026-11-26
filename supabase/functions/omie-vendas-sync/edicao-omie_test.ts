@@ -11,6 +11,7 @@ import {
   vereditoClienteEdicao,
   vereditoEtapaEdicao,
   vereditoGemeoEdicao,
+  vereditoParcelaEdicao,
   vereditoPedidoLocalEdicao,
 } from "./edicao-omie.ts";
 
@@ -91,6 +92,14 @@ Deno.test("PV reaproveitado: cliente vivo ≠ âncora recusa", () => {
 Deno.test("sem âncora ou sem cliente vivo: recusa (não dá para provar de quem é o PV)", () => {
   recusa(vereditoClienteEdicao({ codigoClienteAncora: null, codigoClienteVivo: 200, ancoraIndependente: true }), "cliente_omie", "não há registro do cliente", "sem ancora");
   recusa(vereditoClienteEdicao({ codigoClienteAncora: 100, codigoClienteVivo: null, ancoraIndependente: true }), "cliente_omie", "veio sem o cliente", "sem vivo");
+});
+
+Deno.test("prazo: sem escolha e sem parcela viva recusa (não cai no 999); com qualquer uma passa", () => {
+  recusa(vereditoParcelaEdicao({ informada: undefined, viva: null }), "leitura_omie_incompleta", "sem a condição de pagamento", "sem ambas");
+  recusa(vereditoParcelaEdicao({ informada: "  ", viva: "" }), "leitura_omie_incompleta", "sem a condição de pagamento", "brancos");
+  recusa(vereditoParcelaEdicao({ informada: undefined, viva: 28 }), "leitura_omie_incompleta", "sem a condição de pagamento", "viva nao-texto");
+  igual(vereditoParcelaEdicao({ informada: undefined, viva: "028" }), OK, "herda a viva");
+  igual(vereditoParcelaEdicao({ informada: "042", viva: null }), OK, "escolhida");
 });
 
 Deno.test("mesmo cliente: editável", () => {

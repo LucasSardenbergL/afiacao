@@ -38,6 +38,11 @@ describe('alterar_pedido — travas antes de mutar o Omie', () => {
     expect(etapa).toBeLessThan(cliente);
     expect(cliente).toBeLessThan(cabecalho);
     expect(cabecalho).toBeLessThan(exclusao);
+    // prazo sem escolha e sem leitura recusa antes de a revisão de crédito cair no 999 (Codex r4)
+    const parcela = posicao('vereditoParcelaEdicao({ informada: editParcela, viva: omieParcelaEdit })');
+    expect(cliente).toBeLessThan(parcela);
+    expect(parcela).toBeLessThan(posicao('parcelaEfetiva(editParcela, omieParcelaEdit)'));
+    expect(bloco).toContain('if (!vereditoParcela.permitido)');
   });
 
   it('cabeçalho/frete/classificação vêm da LEITURA — nada de etapa "10", previsão de hoje ou frete do zero', () => {

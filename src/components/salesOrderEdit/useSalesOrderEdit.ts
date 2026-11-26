@@ -274,7 +274,7 @@ export function useSalesOrderEdit() {
   /** O preço que o clique em "Adicionar" vai aplicar — a busca mostra ESTE, não a tabela (Codex r3).
    *  `null` = ainda carregando ou sem preço sabido. Base tintométrica: o preço sai do diálogo de cor. */
   const precoPrevisto = (product: OmieProduct): number | null => {
-    if (product.is_tintometric && product.tint_type === 'base') return product.valor_unitario ?? null;
+    if (product.is_tintometric && product.tint_type === 'base') return null; // sai do diálogo de cor
     if (!insumosPreco) return null;
     return precoDeNascimento(product, insumosPreco, new Date());
   };

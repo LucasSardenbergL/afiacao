@@ -49,6 +49,7 @@ import {
   vereditoClienteEdicao,
   vereditoEtapaEdicao,
   vereditoGemeoEdicao,
+  vereditoParcelaEdicao,
   vereditoPedidoLocalEdicao,
 } from "./edicao-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
@@ -3557,8 +3558,11 @@ Deno.serve(async (req) => {
             ancoraIndependente: (existingOrder as { omie_response?: { reconciled?: unknown } | null }).omie_response?.reconciled !== true,
           })
           : vereditoEtapa;
-        if (!vereditoCliente.permitido) {
-          result = { success: false, blocked: vereditoCliente.bloqueio, contexto: "edicao", motivo: vereditoCliente.motivo };
+        const vereditoParcela = vereditoCliente.permitido
+          ? vereditoParcelaEdicao({ informada: editParcela, viva: omieParcelaEdit })
+          : vereditoCliente;
+        if (!vereditoParcela.permitido) {
+          result = { success: false, blocked: vereditoParcela.bloqueio, contexto: "edicao", motivo: vereditoParcela.motivo };
           break;
         }
 

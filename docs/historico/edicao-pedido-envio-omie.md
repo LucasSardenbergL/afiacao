@@ -34,6 +34,7 @@
   `envio_omie_reivindicado_em`: `authenticated` não tem SELECT nessa coluna (42501 em todo salvar — Codex, prod).
 - **Parcela**: só vai ao Omie se o vendedor TROCOU o seletor; sem troca a edge herda o prazo VIVO do PV
   (reenviar o do recibo regravaria um prazo que o financeiro mudou no Omie). Muda o teste de formas degradadas.
+  Sem escolha E sem parcela na leitura → recusa `leitura_omie_incompleta` (senão `parcelaEfetiva` daria `999`).
 - **Preço do produto adicionado**: `precoDeNascimento` (`src/lib/pricing/`), a mesma decisão do Novo Pedido;
   legado com `customer_user_id = created_by` usa tabela pura; resposta tardia de QUALQUER leitura do pedido
   anterior não publica (geração nasce antes do 1º await do `loadOrder`); falha do mapeamento avisa o vendedor;
@@ -48,7 +49,9 @@
 - Residuais aceitos: tela aberta DURANTE um envio em voo (claim feito, write-back não) não é vista pelo UPDATE local; cabeçalho
   aplicado + falha na exclusão deixa a parcela nova sobre os itens velhos (a mensagem diz); gêmeo local
   `separacao` de um PV que voltou a 10 no Omie é recusado (precisão > recall).
-- Falsificação: 14 + 9 sabotagens, todas vermelhas com controle verde; uma camada redundante (corrida do
+- Falsificação: 14 + 9 + 4 + 2 sabotagens, todas vermelhas com controle verde; uma camada redundante (corrida do
   preço) foi removida porque sabotá-la ficava verde.
+- Fora (Codex r4, exige versão no claim = migration): edição local salva ANTES do claim de uma conversão
+  aberta em outra aba com os itens velhos → PV com o total antigo. Caso de concorrência entre editores.
 - Fora: concorrência entre dois editores / alteração no Omie entre abrir e salvar; vencimentos reais de
   `fin_contas_receber` no cupom (RLS de financeiro + vazio-por-RLS indistinguível de não faturado).
