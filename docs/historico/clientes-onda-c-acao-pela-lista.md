@@ -35,3 +35,27 @@
 ```bash
 ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f db/sensor-clientes-adocao.sql
 ```
+
+## Seguimento (2026-11-24): a11y medida em prod e empresa na tarefa por voz
+
+**Auditoria nas duas telas, nos dois temas**, na sessão logada (navegador do app). O `axe` não rodou:
+injetar script de CDN na sessão logada foi recusado pela permissão. No lugar, uma leitura só do DOM
+mediu nomes acessíveis, ids duplicados, `lang`/`h1` e o contraste WCAG de cada nó de texto (cor × fundo
+efetivo). Na lista, no escuro, foram 607 nós medidos.
+
+| Achado | Onde | Antes | Agora |
+|---|---|---|---|
+| selo de saúde (Estável/Atenção/Saudável) | lista e 360 | 2,25–3,30:1 (`text-status-*-bold` sobre `-bg`) | `-foreground`: 6,2–8,2:1 no claro, 10,8–11,4:1 no escuro |
+| chips do hero (churn, margem), status de pedido, "Nenhum título vencido" | 360 | 2,25–4,04:1 | mesma troca (`format.ts`, `ActivityColumn`, `components.tsx`, `AcoesDaFicha`) |
+| botão da conta (ícone `User`) sem nome | topo do app | sem nome acessível | `aria-label="Menu da conta"` |
+| tema escuro | lista e 360 | 0 violações de contraste | — |
+
+**Fica de fora, de propósito:** o cabeçalho da tabela em `text-muted-foreground` dá 4,35:1, logo abaixo
+de 4,5. É o token GLOBAL do design system e pede decisão de DS, não um remendo nesta tela. O `-bold`
+continua certo para fundo e ícone (é o que ele é); o erro era usá-lo como cor de TEXTO pequeno.
+
+**Tarefa por voz da 360 (pedido da onda B):** o `VozTarefaDialog` recebia `empresa="oben"` fixo. Agora
+segue o `CriarTarefaDialog`: com a empresa comprovada, usa ela; quando é ambígua, não tem dado ou a
+leitura falhou, mostra o seletor (`voz-escolher-empresa`) com o motivo e trava o salvar até a escolha. A
+escolha vale também para os cards detectados antes dela. Falsificado: voltar ao "oben" e tirar o
+seletor deixa 2 de 3 vermelhos, e o controle fica verde.

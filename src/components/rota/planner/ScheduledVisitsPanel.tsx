@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { enderecoPrincipal, lerContatoOperacional } from '@/lib/contato-cliente';
 import { useVisitasAgendadas } from '@/hooks/useVisitasAgendadas';
 import { deriveVisitaStatus } from '@/lib/visitas/visita-status';
 import { navLink } from '@/lib/maps/nav-link';
@@ -39,22 +40,19 @@ export function ScheduledVisitsPanel() {
   });
 
   // Resolve endereços (best-effort para o botão "Ir")
+  // Onda D: endereço pelo contexto OPERACIONAL da visita agendada (objeto = a visita que o próprio
+  // usuário agendou; fora da carteira grava no ledger). Visita de outro staff não devolve endereço.
+  const visitaIds = [...new Set(visits.map((v) => v.id))].sort();
   const addressesQuery = useQuery({
-    queryKey: ['scheduled-visits-addresses', customerIds],
-    enabled: customerIds.length > 0,
+    queryKey: ['scheduled-visits-addresses', visitaIds],
+    enabled: visitaIds.length > 0,
     queryFn: async (): Promise<Record<string, string>> => {
-      const { data, error } = await supabase
-        .from('addresses')
-        .select('user_id, street, number, city, state, is_default')
-        .in('user_id', customerIds)
-        .order('is_default', { ascending: false });
-      if (error) throw new Error(error.message);
-
+      const contato = await lerContatoOperacional('rota', visitaIds, 'visita_agendada');
       const map: Record<string, string> = {};
-      for (const addr of data ?? []) {
-        // Mantém só o primeiro por user_id (ordenado por is_default desc → default vem primeiro)
-        if (!map[addr.user_id]) {
-          map[addr.user_id] = [addr.street, addr.number, addr.city, addr.state]
+      for (const c of contato.values()) {
+        const addr = enderecoPrincipal(c.enderecos);
+        if (addr && !map[c.customer_user_id]) {
+          map[c.customer_user_id] = [addr.street, addr.number, addr.city, addr.state]
             .filter(Boolean)
             .join(', ');
         }

@@ -37,6 +37,10 @@ export const ROUTE_CRUMBS: RouteCrumb[] = [
   // Financeiro
   { path: "/financeiro/cockpit", crumb: "Financeiro" },
 
+  // Crédito
+  { path: "/credito/limites", crumb: "Limites de crédito" },
+  { path: "/credito/fila", crumb: "Fila de crédito" },
+
   // Estoque
   { path: "/admin/estoque/recebimento", crumb: "Recebimento" },
   { path: "/admin/estoque/picking", crumb: "Picking & Estoque" },

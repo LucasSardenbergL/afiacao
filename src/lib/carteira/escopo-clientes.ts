@@ -2,6 +2,7 @@
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { coberturaCustoCliente, valorMedido } from '@/lib/scoring/margin';
 import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
 import { churnConhecido } from '@/lib/scoring/churn';
@@ -123,10 +124,10 @@ export function ownersAtivosDoAlvo(
   return [alvoId, ...cobertos];
 }
 
-export const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
 /** Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
  *  posse direta + carteiras que o alvo cobre (ativas e dentro da validade). */
-export async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
+async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
   const { data: cov, error: covErr } = await supabase
     .from('carteira_coverage')
     .select('covered_user_id, valid_until')
@@ -142,7 +143,7 @@ export async function ownersDoAlvoNaLente(alvoId: string): Promise<string[]> {
  * puro capa em 1000. `ownerFilter` null = confia na RLS (`carteira_visivel_para`: carteira própria +
  * cobertura); com lista, recorta pelos donos. Página com erro LANÇA (carteira parcial trocaria o escopo).
  */
-export async function fetchAssignmentsElegiveis(
+async function fetchAssignmentsElegiveis(
   ownerFilter: string[] | null,
   rotulo: string,
 ): Promise<{ customer_user_id: string; owner_user_id: string }[]> {
@@ -190,11 +191,12 @@ export async function fetchCarteiraClientes(opts: {
   const profiles = await coletarEmLotesConcorrente(ids, LOTE_IN, CONCORRENCIA_LOTES, async (lote) => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
+      .select('user_id, name, customer_type, created_at, requires_po')
       .in('user_id', lote)
       .eq('is_employee', false);
     if (error) throw error;
-    return (data ?? []) as Customer[];
+    // Contato pela view MASCARADA (onda D): gestor vê tudo, farmer só a carteira/cobertura.
+    return (await comContatoMascarado(data ?? [])) as Customer[];
   });
 
   const customers = ordenarPorNome(marcarCobertura(profiles, ownerById, opts.baseId));

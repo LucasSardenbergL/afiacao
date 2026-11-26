@@ -42,6 +42,7 @@ const Customer360 = lazyRota(() => import("./pages/Customer360"));
 const AdminOrderDetail = lazyRota(() => import("./pages/AdminOrderDetail"));
 const AdminDemandForecast = lazyRota(() => import("./pages/AdminDemandForecast"));
 const AdminRoutePlanner = lazyRota(() => import("./pages/AdminRoutePlanner"));
+const CreditoLimites = lazyRota(() => import("./pages/CreditoLimites"));
 const AdminMonthlyReports = lazyRota(() => import("./pages/AdminMonthlyReports"));
 const AdminProductivity = lazyRota(() => import("./pages/AdminProductivity"));
 const VendaClientePainel = lazyRota(() => import("./pages/VendaClientePainel"));
@@ -61,6 +62,7 @@ const AdminPriceTable = lazyRota(() => import("./pages/AdminPriceTable"));
 const Training = lazyRota(() => import("./pages/Training"));
 const SalesProducts = lazyRota(() => import("./pages/SalesProducts"));
 const SalesOrders = lazyRota(() => import("./pages/SalesOrders"));
+const CreditoPainel = lazyRota(() => import("./pages/CreditoPainel"));
 const SalesPrintDashboard = lazyRota(() => import("./pages/SalesPrintDashboard"));
 
 const UnifiedOrder = lazyRota(() => import("./pages/UnifiedOrder"));
@@ -131,6 +133,7 @@ const FinanceiroEndividamento = lazyRota(() => import("./pages/FinanceiroEndivid
 const FinanceiroAntecipacao = lazyRota(() => import("./pages/FinanceiroAntecipacao"));
 const Recebimento = lazyRota(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazyRota(() => import("./pages/RecebimentoConferencia"));
+const CreditoFila = lazyRota(() => import("./pages/CreditoFila"));
 const ProductionOrders = lazyRota(() => import("./pages/ProductionOrders"));
 const ProducaoBomExcecoes = lazyRota(() => import("./pages/ProducaoBomExcecoes"));
 const ProducaoApontamento = lazyRota(() => import("./pages/ProducaoApontamento"));
@@ -269,6 +272,8 @@ const arvoreDeRotas = (
 
       {/* ─── Staff-only (fail-closed: todo o resto) ─── */}
       <Route element={<RequireStaff />}>
+        {/* crédito-IA PR 6a: leitura gestor/master pela RLS; decisão só do aprovador de crédito */}
+        <Route path="credito/fila" element={<CreditoFila />} />
         <Route path="admin" element={<Admin />} />
         <Route path="admin/approvals" element={<AdminApprovals />} />
         <Route path="admin/departments" element={<AdminDepartments />} />
@@ -278,6 +283,8 @@ const arvoreDeRotas = (
         <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
         <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
         <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
+        {/* crédito-IA PR 4: leitura gestor/master pela RPC; aprovação só do aprovador de crédito */}
+        <Route path="credito/limites" element={<CreditoLimites />} />
         <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
         <Route path="admin/productivity" element={<AdminProductivity />} />
         {/* Painel do founder — Venda por cliente (master: gate na página e na RPC venda_painel) */}
@@ -290,6 +297,8 @@ const arvoreDeRotas = (
         <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
         <Route path="admin/clientes-nao-vinculados" element={<ClientesNaoVinculados />} />
         <Route path="sales" element={<SalesOrders />} />
+        {/* crédito-IA PR 8: leitura gestor/master — o gate fino é a RPC credito_painel_resumo (42501) */}
+        <Route path="credito/painel" element={<CreditoPainel />} />
         <Route path="sales/products" element={<SalesProducts />} />
         <Route path="sales/new" element={<UnifiedOrder />} />
         <Route path="sales/print" element={<SalesPrintDashboard />} />

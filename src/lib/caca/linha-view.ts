@@ -37,6 +37,7 @@ type LinhaCandidato = Pick<
   | 'nome'
   | 'telefone'
   | 'cliente_user_id'
+  | 'contato_visivel'
 >;
 
 export function paraComprador(l: LinhaComprador): CompradorRow {

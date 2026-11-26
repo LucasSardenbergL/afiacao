@@ -20,7 +20,8 @@ const STRIP_DOC = [
 const PONTOS: Array<{ arquivo: string; helper: string; chamada: string }> = [
   { arquivo: 'src/pages/Profile.tsx', helper: 'documentoEditadoParaGravar', chamada: 'documentoEditadoParaGravar(editDocument' },
   { arquivo: 'src/pages/Auth.tsx', helper: 'normalizarDocumento', chamada: 'document: normalizarDocumento(formData.document)' },
-  { arquivo: 'src/components/auth/SignupForm.tsx', helper: 'normalizarDocumento', chamada: 'normalizarDocumento(formData.document)' },
+  // SignupForm: a checagem "documento já cadastrado" (que chamava normalizarDocumento) saiu na onda D
+  // fatia 3 — lia profiles.document como anon e nunca disparava (RLS). O signup grava pelo Auth.tsx, acima.
   { arquivo: 'src/components/auth/SignupForm.tsx', helper: 'ehDocumentoPessoaJuridica', chamada: 'ehDocumentoPessoaJuridica(formData.document)' },
   { arquivo: 'src/hooks/unifiedOrder/useCustomerSelection.ts', helper: 'chaveDocumentoParaBusca', chamada: 'chaveDocumentoParaBusca(cust.cnpj_cpf)' },
   { arquivo: 'src/hooks/useUnifiedOrder.ts', helper: 'chaveDocumentoParaBusca', chamada: 'chaveDocumentoParaBusca(selectedCustomer.cnpj_cpf)' },

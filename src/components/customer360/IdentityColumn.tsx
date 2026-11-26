@@ -213,6 +213,15 @@ export function IdentityColumn({
                 : isOmieLabel
                   ? `Endereço ${i + 1}`
                   : (a.label || `Endereço ${i + 1}`);
+              // Onda D: fora da carteira a view devolve só cidade/UF — diz que está oculto (≠ vazio).
+              if (a.contato_visivel === false) {
+                return (
+                  <div key={i} className="space-y-0.5">
+                    <div className="text-foreground leading-snug">{[a.city, a.state].filter(Boolean).join('/') || '—'}</div>
+                    <div className="text-xs text-muted-foreground">Endereço completo visível só para a carteira</div>
+                  </div>
+                );
+              }
               return (
                 <div key={i} className="space-y-0.5">
                   <div className="flex items-center gap-2">
@@ -230,7 +239,7 @@ export function IdentityColumn({
                     {a.complement && <span className="text-muted-foreground"> · {a.complement}</span>}
                   </div>
                   <div className="text-muted-foreground">
-                    {a.neighborhood} · {a.city}/{a.state} · {formatCep(a.zip_code)}
+                    {a.neighborhood} · {a.city}/{a.state} · {formatCep(a.zip_code ?? '')}
                   </div>
                 </div>
               );

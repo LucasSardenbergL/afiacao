@@ -93,6 +93,8 @@ import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
 import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
 import * as enviarPush from "../enviar-push/versao.ts";
+import * as creditoFilaRecomendar from "../credito-fila-recomendar/versao.ts";
+import * as creditoIaAvaliar from "../credito-ia-avaliar/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
 import * as nvoipSipCreds from "../nvoip-sip-creds/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
@@ -298,6 +300,8 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "whatsapp-send", mod: whatsappSend },
   { nome: "whatsapp-send-template", mod: whatsappTemplate },
   { nome: "enviar-push", mod: enviarPush },
+  { nome: "credito-fila-recomendar", mod: creditoFilaRecomendar },
+  { nome: "credito-ia-avaliar", mod: creditoIaAvaliar },
   { nome: "nvoip-calls", mod: nvoipCalls },
   { nome: "nvoip-sip-creds", mod: nvoipSipCreds },
   { nome: "dispatch-notifications", mod: dispatchNotif },
@@ -431,6 +435,9 @@ const ESCRITA_NOSSO_BANCO = [
   "nvoip-calls",
   "dispatch-notifications",
   "email-crs-ajuste-lote",
+  // crédito-IA PR 6a: chama a API PAGA da Anthropic e grava a recomendação da fila; gate
+  // `authorizeCronOrStaff` no topo (disparo recusa staff) — um `probe` mal grafado pagaria a IA.
+  "credito-fila-recomendar",
   // 13ª leva: grava o webhook bruto em `whatsapp_webhook_events`, cria conversas e mensagens e
   // escreve o `opt_in_status` — é ali que o STOP do cliente vira `opt_out` (LGPD) — além do status
   // de entrega dos templates. Entra em GATE_PROPRIO: o gate dela é o `x-whatsapp-secret`.

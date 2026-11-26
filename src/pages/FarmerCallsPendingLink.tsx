@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useLinkCallToCustomer } from '@/hooks/useLinkCallToCustomer';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
@@ -101,11 +102,23 @@ function PendingRow({
       // só-wildcard (`**`, passa o length>=2) → `.or()` match-all dos profiles (#1062); busca vazia
       if (!isSearchablePostgrestTerm(search)) return [];
       // `search` é input do usuário — ilikeOr sanitiza (anti-injeção PostgREST)
-      const { data } = await supabase.from('profiles')
-        .select('user_id, name, phone')
-        .or(ilikeOr(['name', 'phone'], search))
-        .limit(10);
-      return (data ?? []) as ProfileMatch[];
+      // Onda D: nome casa em qualquer cliente; telefone só onde o contato é visível (filtro na view
+      // MASCARADA — número oculto responde igual a termo ausente). Erro LANÇA (antes virava "nada").
+      const [porNome, porFone] = await Promise.all([
+        supabase.from('profiles').select('user_id, name').or(ilikeOr(['name'], search)).limit(10),
+        supabase.from('v_perfil_contato').select('user_id').or(ilikeOr(['phone'], search)).limit(10),
+      ]);
+      if (porNome.error) throw porNome.error;
+      if (porFone.error) throw porFone.error;
+      const jaTem = new Set((porNome.data ?? []).map((p) => p.user_id));
+      const extras = (porFone.data ?? []).map((p) => p.user_id).filter((id): id is string => !!id && !jaTem.has(id));
+      let linhas = porNome.data ?? [];
+      if (extras.length > 0) {
+        const { data: mais, error } = await supabase.from('profiles').select('user_id, name').in('user_id', extras);
+        if (error) throw error;
+        linhas = [...linhas, ...(mais ?? [])].slice(0, 10);
+      }
+      return (await comContatoMascarado(linhas)) as ProfileMatch[];
     },
   });
 

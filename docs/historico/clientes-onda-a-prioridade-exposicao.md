@@ -4,6 +4,19 @@ Vem da 3ª revisão da tela de Clientes (11 eixos), que apontou a nota de priori
 As ondas anteriores estão em `clientes-onda-1-carteira-priorizada.md`, `clientes-onda-2-ficha-unica.md` e
 `clientes-onda-3-acao-na-ficha.md`.
 
+> ⚠️ **Correção (2026-11-24, depois do Publish do #4162):** tudo o que este registro diz sobre o
+> "Meu dia" — o corte de 200, o `?? 0` de `agenda.ts`, o escopo unificado e a reserva de reativação
+> (#4162) — foi feito num caminho que **nenhuma tela renderiza**. O `AgendaTodayList` saiu da página
+> Meu dia no `578c79a3c` (2026-10-20), que passou a mostrar a lista de recompra por produto
+> (`private._venda_sugestoes_json`, ordenada por `valor_ref_total`, sem ler `priority_score`). A
+> verificação por bytes do #4162 deu `ALVO ausente nos 411 chunks`, e o mesmo grep também não achava
+> propriedades antigas do arquivo, o que levou ao achado. O código sem uso (`AgendaTodayList`,
+> `SignalModifierBadge`, `useMyAgendaToday`, `useMyCarteiraScores`, `src/lib/scoring/agenda.ts` e
+> testes) foi removido no PR seguinte. **O que vale da onda A:** a nota v1.9 e a ordem da lista de
+> Clientes (`/admin/customers`), medidas em prod abaixo. Lição: antes de mexer num componente, prove
+> que ele está montado (`git grep "<Componente"`), não só que o teste passa — testes que importam o
+> arquivo mantêm vivo o código morto e o knip não acusa.
+
 ## O defeito (medido em prod via psql-ro, carteira da vendedora, 2.832 clientes, 707 com nota)
 
 - Top 100 por `priority_score`: **100% `stale`**, média de **1.196 dias** sem compra. 1º `ativo` no
@@ -135,8 +148,19 @@ Régua "ativo atrasado acima de inativo": maior nota stale = 29,82 < menor nota 
 0 violações nos 282 ativos × 427 stale. `sem_historico` (2.123) segue sem nota (NULL, não 0).
 `priority_score_log` do run: os 4 `*_component` = NULL em todas as linhas, notas com 2 casas.
 
-Pendente: estabilidade do top 10 entre dias consecutivos (régua ≥ 8/10) — só mede depois do cron
-de 2026-11-25 06:00 UTC, com a query acima sobre `priority_score_log`.
+**Estabilidade medida (2026-11-25, psql-ro, exit 0):** último run v1.9 de 24/11 (20:58 UTC, recálculo
+manual) contra o cron de 25/11 (06:25 UTC), 709 clientes com nota nos dois. Na `priority_score_log`, a
+última nota de cada cliente por dia, ordenada por nota desc e `customer_user_id`:
+
+| Corte | Iguais entre os dois dias |
+|---|---|
+| top 10 | **10/10** (régua ≥ 8/10) |
+| top 20 | 18/20 |
+| top 100 | 97/100 |
+
+A métrica principal se manteve no cron: 0 stale no top 100, média de 64 dias, 1º ativo no rank 1,
+552 notas distintas. Ressalva: é 1 par de dias, separados por ~9h e sem dia útil inteiro entre eles —
+mede a estabilidade da regra, não a do comportamento de compra.
 
 ## Reserva de reativação no Meu dia (decisão do founder, 2026-11-24)
 

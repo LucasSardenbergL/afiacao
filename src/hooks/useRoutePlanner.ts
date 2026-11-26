@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { enderecoPrincipal, lerContatoOperacional, lerEnderecosContato, lerPerfisContato, type EnderecoContato } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
@@ -48,6 +49,9 @@ import { interpretarResolver } from '@/lib/route/cep-resolver';
 import { normalizarCep } from '@/lib/route/cep';
 import { fetchAllPages } from '@/lib/postgrest';
 import { hojeSP } from '@/lib/time/sp-day';
+
+/** Endereço de parada (view mascarada ou RPC operacional — mesmas chaves). */
+type EnderecoDaParada = Pick<EnderecoContato, 'user_id' | 'street' | 'number' | 'neighborhood' | 'city' | 'state' | 'zip_code' | 'complement' | 'is_default'>;
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
 // Divinópolis (673) cabe inteira; metrópole mostra os 1000 mais quentes — e são MUITAS: em
@@ -309,17 +313,20 @@ export function useRoutePlanner() {
       }
 
       const userIds = [...new Set(orders.map(o => o.user_id))];
-      const [{ data: profiles }, { data: addresses }] = await Promise.all([
-        supabase.from('profiles').select('user_id, name, phone, business_hours_open, business_hours_close').in('user_id', userIds),
-        supabase.from('addresses').select('*').in('user_id', userIds),
+      // Telefone/endereço do cliente pelo contexto OPERACIONAL da OS (onda D: objeto = a OS a
+      // coletar/entregar; fora da carteira grava no ledger). Identidade e horário seguem de profiles.
+      const [{ data: profiles }, contatoPorOs] = await Promise.all([
+        supabase.from('profiles').select('user_id, name, business_hours_open, business_hours_close').in('user_id', userIds),
+        lerContatoOperacional('ordem_servico', orders.map(o => o.id), 'roteirizar_entrega'),
       ]);
 
       const stops: RouteStop[] = orders.flatMap(order => {
         const tipo = tipoDeParadaDaOs(order.delivery_option, order.status);
         if (!tipo) return [];
         const profile = profiles?.find(p => p.user_id === order.user_id);
+        const contato = contatoPorOs.get(order.id);
         const orderAddress = lerEnderecoPedido(order.address);
-        const defaultAddr = addresses?.find(a => a.user_id === order.user_id && a.is_default) || addresses?.find(a => a.user_id === order.user_id);
+        const defaultAddr = enderecoPrincipal(contato?.enderecos ?? []);
         const addr = orderAddress || defaultAddr;
 
         const isDelivery = tipo === 'deliver_tools';
@@ -329,7 +336,7 @@ export function useRoutePlanner() {
           stopType: tipo as StopType,
           customerUserId: order.user_id,
           customerName: profile?.name || 'Cliente',
-          phone: profile?.phone || null,
+          phone: contato?.phone || null,
           address: addr ? {
             street: addr.street || '', number: addr.number || '', neighborhood: addr.neighborhood || '',
             city: addr.city || '', state: addr.state || '', zip_code: addr.zip_code || '',
@@ -360,7 +367,7 @@ export function useRoutePlanner() {
       // Load all approved non-employee customers
       const { data: profiles, error: profileError } = await supabase
         .from('profiles')
-        .select('user_id, name, phone, customer_type')
+        .select('user_id, name, customer_type')
         .or('is_employee.is.null,is_employee.eq.false')
         .order('name');
 
@@ -372,12 +379,12 @@ export function useRoutePlanner() {
 
       const userIds = profiles.map(p => p.user_id);
 
-      // Load addresses (best effort — customers may not have one yet)
-      const { data: addresses } = await supabase
-        .from('addresses')
-        .select('*')
-        .in('user_id', userIds)
-        .order('is_default', { ascending: false });
+      // Telefone e endereço pela view MASCARADA (onda D: planejar rota é tela de carteira — fora
+      // dela vem cidade/UF, sem rua/telefone). Best effort como antes: falha não derruba a lista.
+      const [contatos, addresses] = await Promise.all([
+        lerPerfisContato(userIds).catch((e) => { console.error('Error loading customer contacts:', e); return new Map<string, never>(); }),
+        lerEnderecosContato(userIds).catch((e) => { console.error('Error loading addresses:', e); return []; }),
+      ]);
 
       // Load last visit dates
       const { data: lastVisits } = await supabase
@@ -430,7 +437,7 @@ export function useRoutePlanner() {
         return {
           user_id: profile.user_id,
           name: profile.name,
-          phone: profile.phone,
+          phone: contatos.get(profile.user_id)?.phone ?? null,
           city: addr?.city || '',
           neighborhood: addr?.neighborhood || '',
           hasAddress: !!addr,
@@ -686,24 +693,26 @@ export function useRoutePlanner() {
 
       const customerIds = [...new Set(rows.map(r => r.customer_user_id))];
 
-      const [{ data: profiles }, { data: addresses }] = await Promise.all([
+      // Telefone/endereço pelo contexto OPERACIONAL da visita agendada (onda D: objeto = a visita que
+      // ESTE usuário agendou; fora da carteira grava no ledger). Identidade/horário de profiles.
+      const [{ data: nomes }, contatoPorVisita] = await Promise.all([
         supabase
           .from('profiles')
-          .select('user_id, name, phone, business_hours_open, business_hours_close')
+          .select('user_id, name, business_hours_open, business_hours_close')
           .in('user_id', customerIds),
-        supabase
-          .from('addresses')
-          .select('*')
-          .in('user_id', customerIds)
-          .order('is_default', { ascending: false }),
+        lerContatoOperacional('rota', rows.map(r => r.id), 'visita_agendada'),
       ]);
+      const contatoPorCliente = new Map([...contatoPorVisita.values()].map(c => [c.customer_user_id, c]));
+      const profiles = (nomes ?? []).map(p => ({ ...p, phone: contatoPorCliente.get(p.user_id)?.phone ?? null }));
+      const addresses: EnderecoDaParada[] = [...contatoPorCliente.values()]
+        .flatMap(c => c.enderecos.map(e => ({ ...e, user_id: c.customer_user_id })));
 
       const profileMap = new Map((profiles || []).map(p => [p.user_id, p]));
       // Pick first address per customer (default if available, then any)
       const addressMap = (addresses || []).reduce((map, addr) => {
         if (!map.has(addr.user_id)) map.set(addr.user_id, addr);
         return map;
-      }, new Map<string, Tables<'addresses'>>());
+      }, new Map<string, EnderecoDaParada>());
 
       const stops: RouteStop[] = rows.map(row => {
         const profile = profileMap.get(row.customer_user_id);
@@ -721,12 +730,12 @@ export function useRoutePlanner() {
             : undefined,
           addr
             ? {
-                street: addr.street,
-                number: addr.number,
-                neighborhood: addr.neighborhood,
-                city: addr.city,
-                state: addr.state,
-                zip_code: addr.zip_code,
+                street: addr.street ?? '',
+                number: addr.number ?? '',
+                neighborhood: addr.neighborhood ?? '',
+                city: addr.city ?? '',
+                state: addr.state ?? '',
+                zip_code: addr.zip_code ?? '',
                 complement: addr.complement,
               }
             : undefined,
@@ -787,10 +796,14 @@ export function useRoutePlanner() {
       }
 
       // Load profiles & addresses for commercial customers
-      const [{ data: profiles }, { data: addresses }] = await Promise.all([
-        supabase.from('profiles').select('user_id, name, phone, business_hours_open, business_hours_close').in('user_id', allCommercialIds),
-        supabase.from('addresses').select('*').in('user_id', allCommercialIds).order('is_default', { ascending: false }),
+      // Agenda/atrasos do PRÓPRIO usuário = tela de carteira: contato pela view MASCARADA (onda D —
+      // fora da carteira vem cidade/UF, sem rua nem telefone). Erro LANÇA (cai no catch da carga).
+      const [{ data: nomes }, contatos, addresses] = await Promise.all([
+        supabase.from('profiles').select('user_id, name, business_hours_open, business_hours_close').in('user_id', allCommercialIds),
+        lerPerfisContato(allCommercialIds),
+        lerEnderecosContato(allCommercialIds) as Promise<EnderecoDaParada[]>,
       ]);
+      const profiles = (nomes ?? []).map(p => ({ ...p, phone: contatos.get(p.user_id)?.phone ?? null }));
 
       const profileMap = new Map((profiles || []).map(p => [p.user_id, p]));
       // Pick first address per user (default if exists, otherwise any)
@@ -799,7 +812,7 @@ export function useRoutePlanner() {
           map.set(addr.user_id, addr);
         }
         return map;
-      }, new Map<string, Tables<'addresses'>>());
+      }, new Map<string, EnderecoDaParada>());
 
       // Deduplicate: build one stop per customer
       const seen = new Set<string>();
@@ -850,8 +863,8 @@ export function useRoutePlanner() {
           customerName: profile?.name || 'Cliente',
           phone: profile?.phone || null,
           address: {
-            street: addr.street, number: addr.number, neighborhood: addr.neighborhood,
-            city: addr.city, state: addr.state, zip_code: addr.zip_code,
+            street: addr.street ?? '', number: addr.number ?? '', neighborhood: addr.neighborhood ?? '',
+            city: addr.city ?? '', state: addr.state ?? '', zip_code: addr.zip_code ?? '',
             complement: addr.complement || undefined,
           },
           timeSlot: null,

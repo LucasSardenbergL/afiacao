@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { format, subDays, subMonths } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
@@ -386,13 +387,14 @@ export async function lerUtiContas(): Promise<UtiContasResult> {
   const ids = [...new Set(scores.map((s) => s.customer_user_id))];
   const profileChunks = await Promise.all(
     chunk(ids, 150).map((c) =>
-      supabase.from('profiles').select('user_id, name, razao_social, document, cnpj').in('user_id', c),
+      supabase.from('profiles').select('user_id, name, razao_social').in('user_id', c),
     ),
   );
   const perfis: ProfileRow[] = [];
   for (const res of profileChunks) {
     if (res.error) throw new Error(res.error.message);
-    perfis.push(...((res.data ?? []) as ProfileRow[]));
+    // Documento pela view MASCARADA (onda D).
+    perfis.push(...((await comContatoMascarado(res.data ?? [])) as ProfileRow[]));
   }
 
   const { contas, scoresCalculatedAt, positivacaoMes, recebiveisSemCliente } = montarContasUti({

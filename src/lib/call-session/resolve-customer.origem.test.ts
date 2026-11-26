@@ -21,8 +21,8 @@ function chain(tabela: string) {
     c[m] = (...args: unknown[]) => { registro.ops.push([m, args]); return c; };
   }
   c.then = (resolve: (v: unknown) => void) => {
-    if (tabela === 'customer_contacts') return resolve(h.contatos);
-    if (tabela === 'profiles') return resolve(h.perfil);
+    if (tabela === 'v_cliente_contatos') return resolve(h.contatos); // onda D: pelas views
+    if (tabela === 'v_perfil_contato') return resolve(h.perfil);
     return resolve(h.carteira);
   };
   return c;

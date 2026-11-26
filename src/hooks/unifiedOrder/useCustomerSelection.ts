@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { clientePorDocumento, lerContatoNovoPedido } from '@/lib/contato-cliente';
 import type { Json } from '@/integrations/supabase/types';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
@@ -8,7 +10,6 @@ import { logger } from '@/lib/logger';
 import { marcaParcelaManualVazia, podeSugerirParcela, parcelasManuaisParaRascunho, type MarcaParcelaManual } from './parcela-manual';
 import { codigoParaParcelaColacor, type LookupClienteColacor } from './parcela-colacor';
 import { maskDocument } from '@/lib/format';
-import { eqText, orFilter } from '@/lib/postgrest';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
 import {
   avisoFalhaAutoCadastro,
@@ -143,21 +144,19 @@ export function useCustomerSelection({
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
 
   /* ─── Addresses (react-query, 5min stale) ─── */
+  // Endereço de entrega (onda D): o próprio cliente lê pela view; staff pelo contexto `novo_pedido`
+  // (objeto = o cliente do pedido em montagem; fora da carteira grava no ledger). Falha LANÇA.
+  const { user: authUser } = useAuth();
   const { data: addresses = [] } = useQuery<AddressData[]>({
-    queryKey: ['customer-addresses', customerUserId],
+    queryKey: ['customer-addresses', customerUserId, authUser?.id],
     enabled: !!customerUserId,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('addresses')
-        .select('*')
-        .eq('user_id', customerUserId!)
-        .order('is_default', { ascending: false });
-      if (error) throw error;
-      return (data || []).map((addr) => ({
-        id: addr.id, label: addr.label, street: addr.street, number: addr.number,
-        complement: addr.complement, neighborhood: addr.neighborhood, city: addr.city,
-        state: addr.state, zipCode: addr.zip_code,
+      const contato = await lerContatoNovoPedido(customerUserId!, customerUserId === authUser?.id, 'novo_pedido');
+      return (contato?.enderecos ?? []).map((addr) => ({
+        id: addr.id, label: addr.label ?? '', street: addr.street ?? '', number: addr.number ?? '',
+        complement: addr.complement, neighborhood: addr.neighborhood ?? '', city: addr.city ?? '',
+        state: addr.state ?? '', zipCode: addr.zip_code ?? '',
       }));
     },
   });
@@ -290,8 +289,8 @@ export function useCustomerSelection({
   // loadAddresses agora é o useQuery acima (key: ['customer-addresses', customerUserId])
 
 
-  /** Resolve local user id from omie_clientes mapping or profiles.document.
-   *  Also captures requires_po flag when fetched from profiles. */
+  /** Resolve o user_id local pelo mapping Omie ou pelo documento (RPC de identidade).
+   *  Também captura requires_po do perfil resolvido. */
   const resolveLocalUserId = useCallback(async (cust: OmieCustomer): Promise<string | null> => {
     let localUserId = cust.local_user_id || null;
     if (!localUserId) {
@@ -308,17 +307,12 @@ export function useCustomerSelection({
     if (!localUserId && cust.cnpj_cpf) {
       const docClean = chaveDocumentoParaBusca(cust.cnpj_cpf);
       if (docClean) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('user_id, requires_po')
-          .or(orFilter(eqText('document', docClean), eqText('document', cust.cnpj_cpf)))
-          .limit(1)
-          .maybeSingle();
-        if (profile?.user_id) localUserId = profile.user_id;
-        if (profile?.requires_po) setRequiresPo(true);
+        // Onda D fatia 3: profiles.document não é legível pela API — o vínculo sai pela RPC de
+        // identidade (erro LANÇA para o catch do selectCustomer; nunca vira "cliente novo").
+        localUserId = await clientePorDocumento([docClean, cust.cnpj_cpf]);
       }
     }
-    // If we found localUserId via mapping route, fetch requires_po now
+    // requires_po (identidade, coluna aberta) de quem foi resolvido — por mapping OU por documento
     if (localUserId) {
       const { data: poProfile } = await supabase
         .from('profiles')

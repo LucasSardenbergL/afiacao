@@ -17,6 +17,8 @@ export interface GrupoContato {
   endereco: string | null;
   omie_codigo_vendedor: number | null;
   empresa_omie: string | null;
+  /** Onda D fatia 3: false = telefone/e-mail ocultos (fora da carteira) — ≠ "sem telefone". */
+  contato_visivel: boolean | null;
 }
 
 export function useGrupoContatos(grupoId: string | undefined) {

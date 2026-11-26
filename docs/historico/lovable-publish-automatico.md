@@ -87,3 +87,67 @@ de `origin/main` a cada tick — nunca um worktree de sessão); estado/log em
   migration → 1 aviso em 2 ticks, sem publicar; `claude` falso com erro → `1/3` e o tick seguinte
   não re-chama; ar em dia → NADA_A_PUBLICAR.
 - **Fora do alcance:** Mac desligado/dormindo = sem Publish (o workflow do GitHub segue sem chave).
+- **Sessão espera sem polling (2026-11-25):** `lovable-publish.sh --esperar <sha-merge>` em background (shell, sem LLM) sai `NO_AR`/`NADA_A_PUBLICAR` (0), `RETIDO=<camada>` (10, lendo `liberar`/`pendencias-<sha>` do vigia), `TIMEOUT` (30) — uso em `docs/agent/deploy.md` Camada 2.
+
+## 1ª medição em produção (2026-11-22 → 25)
+
+407 ticks, **8 `PUBLICADO` provados pelo ar** (40–80 s após o disparo; 1º: `ecefeb53`), nenhum SHA
+desistido (3x). Retenções por migration avisaram 1x/SHA e foram publicadas à mão depois da DDL —
+o comportamento desenhado. Mas **11 de 19 chamadas ao `claude -p` falharam na 1ª**: o MCP `lovable`
+ainda não estava conectado quando o modelo começou ("ferramentas_mcp_nao_disponiveis", "session
+tools unavailable", timeout 124). O backoff segurou o custo, mas cada uma atrasava o Publish 5 min.
+Correção: `MCP_TIMEOUT=60000` + 2ª chamada no MESMO tick (publicar 2x o mesmo commit é idempotente).
+Ensaio: `claude` falso que falha na 1ª e dispara na 2ª → 2 chamadas, `DISPARADO`.
+
+## Causa raiz das falhas do `claude -p` (2026-11-25) — não era conexão
+
+A hipótese acima ("MCP ainda não conectado") **caiu com evidência**: em 30 de 33 transcrições do
+vigia, e em 24/24 sondas com `stream-json` (`system/init`), o `lovable` estava `connected`. O defeito
+era o **contexto**: sem flags, o `-p` herda a sessão interativa inteira (21 plugins com hooks, um deles
+injetando "invoque skills antes de responder"; ~10 MCPs de plugin; ~100 ferramentas ADIADAS atrás do
+`ToolSearch`). O Haiku carregava o `get_project` pelo `ToolSearch` e, na maioria, NÃO o invocava: ia pro
+`Bash` (`echo`, `curl` no Lovable) e numa sonda chegou a `Agent`/`ListAgents`/**`SendMessage`** para
+outras sessões. Na 2.1.283 o `MCP_TIMEOUT` nem governa a espera do 1º turno sem `--mcp-config`.
+
+**Medição A/B** (prompt REAL do vigia com main fictícia `000…` — exige `get_project`, nunca publica;
+`env -i` + PATH/HOME/USER do launchd; intercalado; sucesso = `tool_result` com `latest_commit_sha`):
+
+| braço | `get_project` na 1ª | init `connected` | desvio Bash/Agent | mediana | custo (12) |
+|---|---|---|---|---|---|
+| antes (invocação da main) | **7/12** | 12/12 | 9/12 | 57 s | US$ 0,51 |
+| depois (invocação mínima) | **12/12** | 12/12 | 0/12 | 16 s | US$ 0,15 |
+
+**Conserto** (`scripts/lovable-vigia.sh`): `--strict-mcp-config` com SÓ o `lovable` (o OAuth do Keychain
+é achado igual — a chave é `lovable|<hash da config>`), `ENABLE_TOOL_SEARCH=false`, `--tools ""`,
+`--setting-sources ""`. E o **veredito sai do protocolo**, não do texto: `DISPARADO` só com `tool_result`
+do `deploy_project` trazendo `deployment_id`; `NAO_SINCRONIZADO` só com `latest_commit_sha` lido ≠ main
+(o modelo já tinha cravado `NAO_SINCRONIZADO` sem chamar ferramenta — adiava o SHA sem debitar);
+deploy emitido sem aceite lido (`timeout` no meio) = `INDETERMINADO` → o ar decide, nunca redisparo.
+Challenge Codex (gpt-6.2-astra/high, 202 s): aprovou o isolamento; exigiu o veredito por `tool_result`
+casado por `tool_use_id`, o não-redisparo pós-deploy e o aviso por EPISÓDIO — todos adotados.
+Teste: `scripts/test-lovable-vigia.sh` (no `test:hooks`) roda o vigia INTEIRO com falsos; contra o
+vigia anterior os 6 casos reprovam, com controle verde na mesma invocação.
+
+**Mordida secundária — `needs-auth` em cascata, compartilhado por TODA sessão Claude.** Uma única
+leitura do Keychain que falhe (o token estava gravado e válido: 80/80 amostras em 20 min, e nenhuma
+escrita no item no intervalo) faz o CLI gravar `lovable` em `~/.claude/mcp-needs-auth-cache.json`; daí
+em diante todo `claude` pula a conexão ("Skipping connection (cached needs-auth)") por ≥6 min —
+medido: 1 falha às 20:21 derrubou as 18 chamadas seguintes dos DOIS braços. O vigia agora lê o status
+no `init`: `needs-auth` não debita o SHA, re-tenta em 10 min e avisa 1x por episódio. **Não** limpamos
+o cache (estado compartilhado de dezenas de sessões). Isolar de vez = `CLAUDE_CONFIG_DIR` próprio do
+vigia com login OAuth próprio no Lovable (exige 1 clique do founder) — só se o episódio se repetir.
+**Armadilha de sonda:** `env -i` sem `USER` grava a entrada `acct=unknown` no Keychain e envenena o
+cache acima — reproduza o launchd com `USER`/`LOGNAME` explícitos (o vigia agora os exporta).
+
+### 1º PUBLICAR real pós-#4189 caiu no `needs-auth` — e desta vez o token SUMIU (2026-11-25 23:05)
+
+`claude (1/2) rc=0 mcp=needs-auth usos=nenhum → NEEDS_AUTH`: o vigia reagiu como desenhado (sem debitar
+o SHA, re-tenta em 10 min, 1 aviso). Mas a causa não era leitura transitória: a entrada `lovable` do
+item `Claude Code-credentials` ficou só com `discoveryState` (sem access nem refresh token), gravada às
+22:33 — o mesmo minuto em que o cache marcou `needs-auth`. O item é UM blob JSON (79 MCPs + login)
+reescrito por dezenas de sessões Claude; com refresh token rotativo, quem renova em paralelo ou grava
+cópia velha apaga o token de todo mundo. **Conserto: store próprio do vigia** — `CLAUDE_CONFIG_DIR`
+(provado: o CLI cria outro item, `Claude Code-credentials-<hash>`, e outro `mcp-needs-auth-cache.json`),
+com 1 escritor (o lock do vigia). Ativação única pelo founder: `scripts/lovable-vigia-instalar.sh --login`
+(OAuth no navegador); o vigia só passa a usar o store quando existe `.vigia-pronto` — sem ele, segue no
+padrão. As sessões interativas também perderam o `lovable` nesse episódio: `/mcp` → lovable para religar.

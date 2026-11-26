@@ -63,7 +63,15 @@ const CLIENTE = {
   valorDaLigacao: 1000,
 };
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+// Onda D: o documento do cliente vem pela RPC operacional; aqui ela responde normal (o teste é da cesta).
+function rpc(_n: string, a: { p_objeto_ids: string[] }) {
+  return Promise.resolve({
+    data: a.p_objeto_ids.map((id) => ({ objeto_id: id, customer_user_id: id, via_excecao: false, document: null,
+      cnpj: null, phone: null, email: null, enderecos: [] })),
+    error: null,
+  });
+}
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t), rpc } }));
 vi.mock('@/queries/useRouteContactList', () => ({
   useRouteContactList: () => ({
     data: { whatsappQueue: [CLIENTE], callQueue: [], resolvidosQueue: [], excluidos: [], routeDate: null, cidades: [], dailyOnly: true },

@@ -31,7 +31,7 @@ import type {
 const COMPRADORES_SEL =
   'documento, empresa, cidade_uf, ramo, ticket_faixa, familias, volume, n_pedidos, recencia_dias, lucro_proxy, lucro_cobertura';
 const CANDIDATOS_SEL =
-  'documento, empresa_alvo, cidade_uf, ramo, ticket_faixa, familias, compra_em_outra_empresa, ultima_compra_grupo_dias, nome, telefone, cliente_user_id';
+  'documento, empresa_alvo, cidade_uf, ramo, ticket_faixa, familias, compra_em_outra_empresa, ultima_compra_grupo_dias, nome, telefone, cliente_user_id, contato_visivel';
 
 /**
  * Pagina as views inteiras via `.range()`. Ordena por `(documento, empresa*)` — chave ÚNICA por

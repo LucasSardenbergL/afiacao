@@ -182,7 +182,7 @@ export function ActivityColumn({
                         {formatRelative(it.at)}
                       </span>
                       {it.revenue != null && it.revenue > 0 && (
-                        <Badge className="text-[9px] uppercase bg-status-success-bg text-status-success-bold hover:bg-status-success-bg">
+                        <Badge className="text-[9px] uppercase bg-status-success-bg text-status-success-foreground hover:bg-status-success-bg">
                           +{formatBRL(it.revenue)}
                         </Badge>
                       )}

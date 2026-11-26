@@ -23,7 +23,7 @@ export function useFarmerCopilot() {
   // lente, o próprio usuário fora). Iniciar a sessão (startSession persiste + invoca
   // edge) é write — bloqueado na lente pelo write-guard + botão "Iniciar" disabled.
   const { effectiveUserId, isImpersonating } = useImpersonation();
-  // Cobertura: dropdown inclui clientes que EU cubro agora (paridade com useMyCarteiraScores).
+  // Cobertura: dropdown inclui clientes que EU cubro agora (mesma regra de escopo da carteira: [eu, ...cobertos]).
   const { coveredIds, coberturaIndisponivel } = useCarteirasQueEuCubro();
   const coveredKey = coveredIds.join(',');
   const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);

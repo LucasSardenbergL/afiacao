@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { KanbanBoard } from '@/components/KanbanBoard';
 import { supabase } from '@/integrations/supabase/client';
+import { lerPerfisContato } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Users, ChevronRight, Clock, MapPin, Mail, BarChart3, Trophy, Gamepad2, BookOpen, DollarSign, Phone, FlaskConical, Crown } from 'lucide-react';
@@ -46,16 +47,19 @@ const Admin = () => {
       if (error) throw error;
 
       const userIds = [...new Set(ordersOnly.map((o) => o.user_id))];
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('user_id, name, document, phone')
-        .in('user_id', userIds);
+      // Lista = tela: documento/telefone pela view mascarada (onda D — fora da carteira vem null).
+      // O detalhe da OS lê pelo contexto operacional.
+      const [{ data: profiles, error: profilesError }, contatos] = await Promise.all([
+        supabase.from('profiles').select('user_id, name').in('user_id', userIds),
+        lerPerfisContato(userIds),
+      ]);
       if (profilesError) throw profilesError;
 
-      setOrders(ordersOnly.map((order) => ({
-        ...order,
-        profiles: profiles.find((p) => p.user_id === order.user_id),
-      })));
+      setOrders(ordersOnly.map((order) => {
+        const p = profiles.find((x) => x.user_id === order.user_id);
+        const c = contatos.get(order.user_id);
+        return { ...order, profiles: p ? { ...p, document: c?.document ?? null, phone: c?.phone ?? null } : undefined };
+      }));
     } catch (error) {
       // Falha de leitura AVISA: lista vazia calada seria indistinguível de "nenhum pedido".
       console.error('Error loading orders:', error);

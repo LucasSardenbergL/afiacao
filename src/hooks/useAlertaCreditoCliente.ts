@@ -10,8 +10,9 @@ import { addDias, hojeSP } from '@/lib/time/sp-day';
  *
  * Critério: cliente com saldo em aberto vencido há 60+ dias — `data_vencimento <= hoje_SP - 60`
  * (onda B: o título no 60º dia ENTRA; antes `<` o deixava de fora e o rótulo "60+" mentia por um dia).
- * ⚠️ O gate da Fase 2 (`venda_gate_credito_grupo`) ainda bloqueia só com > 60 d (`< hoje_SP - 60`):
- * no 60º dia este alerta aparece e o pedido NÃO é bloqueado. Divergência registrada no PR da onda B.
+ * O gate da Fase 2 (`venda_gate_credito_grupo` e o PR 2 `credito_avaliar_reservar`) usa a MESMA
+ * FRONTEIRA (`<= hoje_SP - 60`) desde a migration 20261124170000. O alerta é mais estreito que o
+ * gate: só lê saldo > 0 e não lê PAGTO PARCIAL — o gate pode bloquear com este alerta silencioso.
  *
  * ⚠️ Join por (company, omie_codigo_cliente), NUNCA por CNPJ: o ListarContasReceber
  * do Omie não retorna cnpj_cpf (verificado em prod: vazio nos 43k títulos, código

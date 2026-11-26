@@ -308,6 +308,26 @@ na entrada; `nPercentual` (33,33/33,33/33,34) divergia do valor rateado → `par
 percentual do valor, saldo na última fecha 100,00. Falsificado uma camada por vez, controle verde na
 mesma invocação.
 
+**PR 2.2 — PV duplicado entre abas: FECHADO sem merge, adiado para a Onda 3** (#4138, decisão do founder
+em 25/11). O P0 era o envelope de envio `{checkoutId, fingerprint, committed}` numa chave FIXA do
+localStorage, com o `checkoutId` sorteado no clique: duas abas, ou um refresh que perdesse o envelope,
+geravam 2 PVs. A ideia central era derivar o id: `SHA-256(nonce do rascunho, itens)`, com o envelope por
+usuário e a reserva feita sob Web Locks. Entre 22 e 25/11 o PR teve 6 versões, e o Codex achou P0 em
+todas: 4 → 4 → 6 → 8 → 7 → 6. A última versão separava o id por conta (Oben, Colacor e OS) e criou 6 P0
+que deixavam o envio PIOR que a main:
+- OS duplicada quando o vendedor muda a quantidade antes de reenviar;
+- reenvio do PV Colacor barrado depois do autocadastro;
+- 2º PV numa conta já confirmada quando o código do cliente é corrigido;
+- id inválido que ainda libera o envio;
+- mesma tinta com dois ids entre abas;
+- cor com `#` que muda o id da outra conta.
+
+**Lição:** idempotência de dinheiro calculada no navegador, com três contas, várias abas e cadastro que
+muda no meio do envio, não fecha. Cada borda corrigida abre outra, porque o navegador não tem uma fonte
+única de verdade. A Onda 3 resolve com o rascunho no servidor: "já enviado" é o ESTADO da linha, e o
+`nonce` é o id dela. Até lá vale a regra da main. Se a série de P0 por rodada não cai, a saída é mudar de
+camada, não fazer a 7ª rodada.
+
 **PR 2.3 — o que vai ao Omie** (edges `omie-vendas-sync` v1.47 e `omie-sync` v1.17, front 1 campo).
 (a) Tinta COM ordem de compra saía SEM a cor no item: `if (ordemCompra) … else if (cor)` — a NF e a
 observação do item (a que a produção lê para tingir) perdiam a cor. `infoAdicionalItem`
@@ -325,16 +345,40 @@ app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; fr
 `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
 Deno (a edge inteira não é importável no teste).
 
-**PR 8.4 — ordem de produção honesta** (edge `omie-vendas-sync` v1.48 + front). O `catch` do
-`IncluirOrdemProducao` só logava, a OP local nascia com número `"null"` (`String(null)`), a resposta era
-`success: true` incondicional e o front nem lia o retorno do invoke. Agora cada produto volta com desfecho
-(`criada` · `falhou` + motivo + chave `cCodIntOP`), `success` só sem falha, e o envio mostra a falha por
-produto mandando PROCURAR pela chave antes de criar à mão (falha pode ser timeout depois de o Omie gravar).
-O mesmo produto em duas linhas vira uma OP com a soma (o `cCodIntOP` é por produto e a 2ª era recusada);
-linha com quantidade inválida derruba o produto inteiro. O front lê também a resposta da v1.47.
-Lição: a 1ª rodada do Codex achou 6 P0, 3 deles na "idempotência local" (reaproveitar linha) que este PR
-tinha criado sem que nenhum caminho do app chamasse a OP duas vezes — cortada, como o 2.2. Fora do PR:
-reenvio da OP pela tela (a falha não segura o pedido, e mudar isso mexe no envelope do 2.2);
-`production_orders` tem 0 linhas em prod, então não há uso para medir. Falsificação 28/28 vermelha
-(14 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação; a ligação no `index.ts` tem
-teste Deno de fiação.
+**PR 2.5 — reenvio honesto, parte das edges** (edges `omie-vendas-sync` v1.48 e `omie-sync` v1.18;
+o front fica para a Onda 3, com o 2.2). Os dois reenvios que reconciliam (PV por duplicata, OS pela
+chave) passam a AVISAR o que deste envio não entrou, e o `omie_payload` passa a dizer a verdade.
+(A) O PV vinculado só era comparado por SKU e quantidade: a data prometida trocada saía como sucesso.
+`compararPrevisaoEntregaPv` (`_shared/atp-pv-omie.ts`) confere `frete.previsao_entrega` (na doc do Omie,
+string10 SEM formato documentado; 0 ConsultarPedido real em prod). Só a divergência PROVADA conta —
+envio com data legível × PV com outra data legível ou o campo presente e vazio; ausente, ilegível, envio
+sem data ou objeto sem `cabecalho` = não conferível, nunca "igual". Ela volta como `aviso_previsao` no
+resultado do `criar_pedido` (e log), SEM lançar. O `omie_payload` gravava o payload que o Omie RECUSOU
+como duplicata; passa a gravar o PV que o Omie tem (`pedido_venda_produto` da consulta, mesmo objeto da
+comparação; `null` sem `cabecalho`), no write-back atômico e no legado. (B) No reenvio que reconcilia a
+OS, o upsert `ignoreDuplicates` de `orders` mantinha o endereço/turno da tentativa anterior em silêncio;
+`avisoEnderecoTurnoOs` (`omie-sync/reenvio-os-local.ts`) devolve `aviso_local` quando o deste envio
+difere (só com a modalidade declarada e igual à gravada), SEM regravar. Endereço/turno seguem FORA da
+assinatura da OS. **Por que só avisar** (decisão do founder, 2026-11-25): 2 rodadas do Codex, 3 P0 cada,
+todos nas BORDAS da própria correção. Lançar na data pulava a OP da Colacor (o front não cria a OP num
+envio com erro, e o clique seguinte cai em "já enviado"); regravar `orders` apagava o endereço quando
+o front mandava `null` (bundle antigo ou consulta de endereço que falhou) e dois reenvios concorrentes
+se desfaziam mesmo gravando só o campo que mudou. Sem lançar e sem escrever, os 6 somem por construção.
+Lacuna: o front ainda não mostra `aviso_previsao`/`aviso_local` (Onda 3); até lá, a trilha é o log e o
+`omie_payload`. Falsificação 26/26 vermelha (13 sabotagens, uma por camada e uma por P0/P1 do Codex, × `C`
+e `pt_BR.UTF-8`), controle verde na mesma invocação.
+
+**PR 8.4 — ordem de produção honesta** (edge `omie-vendas-sync` v1.49 + front; a v1.48 ficou com o 2.5). O
+`catch` do `IncluirOrdemProducao` só logava, a OP local nascia com número `"null"` (`String(null)`), a resposta
+era `success: true` incondicional e o front nem lia o retorno do invoke. Agora cada produto volta com desfecho
+(`criada` · `falhou` + tipo + motivo), `success` só sem falha, produto inválido não vai ao Omie nem grava linha
+local executável, e o mesmo produto em duas linhas vira uma OP com a soma (o `cCodIntOP` é por produto e a 2ª
+era recusada). O envio mostra a falha por produto, e o front lê também a resposta da v1.47.
+Lição (núcleo): o Codex achou P0 em 4 rodadas seguidas (6 → 2 → 2 → 2), sempre na instrução ao vendedor —
+"procure pela chave", "confira por produto e quantidade", "N no total" — porque cada uma falha numa borda
+(timeout que grava depois, OP agregada × linhas, edge antiga × nova, envio ainda em curso). Corte: OP existente
+→ "não crie outra, peça a conferência do vínculo"; qualquer outra falha → "não confirmada — não crie à mão, peça
+a quem cuida da produção para conferir no Omie". Antes disso, a 1ª rodada já tinha cortado uma "idempotência
+local" que nenhum caminho do app usava. Fora do PR: reenvio da OP pela tela (a falha não segura o pedido);
+`production_orders` tem 0 linhas em prod. Falsificação 50/50 vermelha (25 sabotagens × `C` e `pt_BR.UTF-8`),
+controle verde na mesma invocação; a ligação no `index.ts` tem teste Deno de fiação.

@@ -22,6 +22,7 @@ import { HelpDrawer } from '@/components/help/HelpDrawer';
 import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
+import { useContagemFilaCredito } from '@/components/shell/useContagemFilaCredito';
 import { useTintAlertas } from '@/hooks/useTintAlertas';
 import { useOportunidadesAtivasCount } from '@/hooks/useReposicaoSessao';
 import { ShortcutsRegistryProvider } from '@/components/shell/ShortcutsRegistry';
@@ -190,6 +191,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Financeiro',
     items: [
       { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', staffOnly: true },
+      { icon: Shield, label: 'Limites de crédito', path: '/credito/limites', staffOnly: true },
       { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', staffOnly: true },
       { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', staffOnly: true },
       { icon: Target, label: 'Orçamento', path: '/financeiro/orcamento', staffOnly: true },
@@ -198,6 +200,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Landmark, label: 'Extrato Bancário', path: '/financeiro/extrato-bancario', staffOnly: true },
       { icon: Landmark, label: 'Custo de Funding', path: '/financeiro/funding', masterOnly: true },
       { icon: Banknote, label: 'Antecipação', path: '/financeiro/antecipacao', masterOnly: true },
+      { icon: ShieldCheck, label: 'Fila de crédito', path: '/credito/fila', staffOnly: true },
       { icon: Crosshair, label: 'Cockpit de Valor', path: '/financeiro/valor-cockpit', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Próxima Ação', path: '/financeiro/proxima-acao', gestorComercialOuMaster: true },
     ],
@@ -526,6 +529,9 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // PRÓPRIOS abertos (RLS) e mostraria badge errado.
   // Contrato de 3 faces (plano v7, C11): número / oculto / "?" quando a leitura falhou.
   const melhoriasQuery = useMelhoriasBadge(enableStaffPolls && isMaster);
+  // Fila de crédito: solicitações EFETIVAS abertas (RLS: só gestor/master conta). Erro → badge some.
+  const { data: filaCreditoAbertas } = useContagemFilaCredito(enableStaffPolls);
+
   const melhoriasFace = faceDoBadge(melhoriasQuery);
   // Primitivos para o useMemo abaixo: o objeto da face é novo a cada render e invalidaria o memo
   // dos itens da nav (plano v4, lote 10 — C8).
@@ -588,6 +594,9 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         if (it.path === '/whatsapp' && waSlaMeusVermelhos && waSlaMeusVermelhos > 0) {
           return { ...it, badge: waSlaMeusVermelhos, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/credito/fila' && filaCreditoAbertas && filaCreditoAbertas > 0) {
+          return { ...it, badge: filaCreditoAbertas, badgeVariant: 'destructive' as const };
+        }
         if (it.path === '/gestao/melhorias' && melhoriasIndisponivel) {
           return { ...it, badgeIndisponivel: melhoriasIndisponivel };
         }
@@ -597,7 +606,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         return it;
       }),
     })),
-    [pedidosPendentes, pedidosPendentesIndisponivel, aumentosAtivos, aumentosAtivosIndisponivel, oportunidadesAtivas, negociacaoNovasCount, negociacaoNovasIndisponivel, notificacoesPendentes, notificacoesPendentesIndisponivel, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, isImpersonating],
+    [pedidosPendentes, pedidosPendentesIndisponivel, aumentosAtivos, aumentosAtivosIndisponivel, oportunidadesAtivas, negociacaoNovasCount, negociacaoNovasIndisponivel, notificacoesPendentes, notificacoesPendentesIndisponivel, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, filaCreditoAbertas, isImpersonating],
   );
 
   const isActive = (path: string) => itemNavAtivo(location.pathname, path, TODOS_PATHS_NAV);
@@ -780,7 +789,7 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" aria-label="Menu da conta">
               <User className="w-4 h-4" />
             </Button>
           </DropdownMenuTrigger>

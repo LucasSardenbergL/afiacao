@@ -341,9 +341,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const createProfileIfNotExists = async (userId: string, email?: string) => {
     try {
+      // Onda D: o documento do PRÓPRIO usuário pela view (self é sempre visível).
       const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('id, document')
+        .from('v_perfil_contato')
+        .select('user_id, document')
         .eq('user_id', userId)
         .maybeSingle();
 

@@ -35,6 +35,26 @@ describe('paridade do vocabulário de status (gate de crédito)', () => {
     expect(doSql).toEqual([...OPEN_TITLE_STATUSES, 'PAGTO PARCIAL'].sort());
     expect(OPEN_TITLE_STATUSES as readonly string[]).not.toContain('PAGTO PARCIAL');
   });
+
+  // 20261124170000: só a fronteira mudou (< → <=); o vocabulário do piso vigente segue o mesmo.
+  it('o piso vigente (20261124170000) lê EXATAMENTE OPEN_TITLE_STATUSES + PAGTO PARCIAL e o corte é inclusivo', () => {
+    const sql = readFileSync('supabase/migrations/20261124170000_credito_gate_fronteira_60_inclusiva.sql', 'utf8');
+    const m = sql.match(/status_titulo IN \(([^)]+)\)/);
+    expect(m, 'filtro status_titulo IN (...) não encontrado na migration').toBeTruthy();
+    const doSql = m![1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).sort();
+    expect(doSql).toEqual([...OPEN_TITLE_STATUSES, 'PAGTO PARCIAL'].sort());
+    // Por CORPO de função (o cabeçalho e a pós-condição também citam os literais): 5 / 3 / 1.
+    const corpo = (fn: string) => {
+      const a = sql.indexOf(`CREATE OR REPLACE FUNCTION ${fn}(`);
+      expect(a, `${fn} ausente`).toBeGreaterThanOrEqual(0);
+      return sql.slice(a, sql.indexOf('$function$;', a));
+    };
+    for (const [fn, n] of [['public.venda_gate_credito_grupo', 5], ['private.credito_avaliar_reservar', 3], ['public.venda_gate_credito', 1]] as const) {
+      const c = corpo(fn);
+      expect(c, fn).not.toContain('data_vencimento < v_corte');
+      expect(c.match(/data_vencimento <= v_corte/g) ?? [], fn).toHaveLength(n);
+    }
+  });
 });
 
 // Frente B (PR1, 2026-10-31): a RPC venda_prazo_aviso lê fin_contas_receber com o MESMO vocabulário

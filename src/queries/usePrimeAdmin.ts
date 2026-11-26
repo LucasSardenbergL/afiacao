@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { track } from '@/lib/analytics';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { traduzirErroPrime } from '@/lib/prime/erros';
@@ -81,10 +82,11 @@ export function usePrimeAssinaturas() {
       if (ids.length > 0) {
         const { data: perfis, error: erroPerfis } = await supabase
           .from('profiles')
-          .select('user_id, name, razao_social, document')
+          .select('user_id, name, razao_social')
           .in('user_id', ids);
         if (erroPerfis) throw erroPerfis;
-        for (const p of perfis ?? []) clientes[p.user_id] = p as ClienteResumo;
+        // Documento pela view MASCARADA (onda D).
+        for (const p of await comContatoMascarado(perfis ?? [])) clientes[p.user_id] = p as ClienteResumo;
       }
 
       return assinaturas.map((a) => ({
@@ -146,15 +148,26 @@ export function useBuscarClientes(termo: string) {
     queryKey: ['prime', 'clientes-busca', termoLimpo],
     enabled: termoLimpo.length >= 2 && isSearchablePostgrestTerm(termoLimpo),
     queryFn: async (): Promise<ClienteResumo[]> => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id, name, razao_social, document')
-        .eq('is_approved', true)
-        .or(ilikeOr(['name', 'razao_social', 'document'], termoLimpo))
-        .order('name')
-        .limit(20);
-      if (error) throw error;
-      return (data ?? []) as ClienteResumo[];
+      // Onda D: nome/razão social casam em qualquer cliente; documento só casa onde o contato é
+      // visível (filtro na view MASCARADA — documento oculto responde igual a termo ausente).
+      const [porNome, porDoc] = await Promise.all([
+        supabase.from('profiles').select('user_id, name, razao_social')
+          .eq('is_approved', true).or(ilikeOr(['name', 'razao_social'], termoLimpo)).order('name').limit(20),
+        supabase.from('v_perfil_contato').select('user_id')
+          .or(ilikeOr(['document'], termoLimpo)).limit(20),
+      ]);
+      if (porNome.error) throw porNome.error;
+      if (porDoc.error) throw porDoc.error;
+      const jaTem = new Set((porNome.data ?? []).map((p) => p.user_id));
+      const extras = (porDoc.data ?? []).map((p) => p.user_id).filter((id): id is string => !!id && !jaTem.has(id));
+      let linhas = porNome.data ?? [];
+      if (extras.length > 0) {
+        const { data: maisPerfis, error: e2 } = await supabase.from('profiles').select('user_id, name, razao_social')
+          .eq('is_approved', true).in('user_id', extras).order('name');
+        if (e2) throw e2;
+        linhas = [...linhas, ...(maisPerfis ?? [])].slice(0, 20);
+      }
+      return (await comContatoMascarado(linhas)) as ClienteResumo[];
     },
   });
 }

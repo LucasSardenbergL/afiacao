@@ -1,4 +1,6 @@
 import { diaDoPedido, rotuloDiaPedido } from '@/lib/pedido/data-pedido';
+import { BLOCKED_STATUSES } from '@/components/salesOrderEdit/types';
+import { format } from 'date-fns';
 // Tipos + constantes + helpers da listagem de pedidos de venda.
 // Extraídos verbatim de src/pages/SalesOrders.tsx (god-component split).
 import type { Tables } from '@/integrations/supabase/types';
@@ -238,4 +240,50 @@ export function agruparPorDia(pedidos: OrderFeedRow[], hoje?: string): GrupoDia[
   return [...porDia.entries()]
     .sort(([a], [b]) => (a === 'sem-data' ? 1 : b === 'sem-data' ? -1 : b.localeCompare(a)))
     .map(([dia, lista]) => ({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia, hoje), pedidos: lista }));
+}
+
+/**
+ * Pedido de venda editável: a MESMA lista que a tela de edição usa para bloquear
+ * (`BLOCKED_STATUSES`). Antes havia três cópias (card, painel, edição), e mudar uma só
+ * deixava a lista oferecer "Editar" onde a edição recusa. Afiação não se edita por aqui.
+ */
+export function podeEditarPedido(order: { status: string; _source?: string; origin?: string }): boolean {
+  if (order.origin === 'afiacao' || order._source === 'afiacao') return false;
+  return !BLOCKED_STATUSES.includes(order.status);
+}
+
+const pedidos = (n: number) => `${n.toLocaleString('pt-BR')} ${n === 1 ? 'pedido' : 'pedidos'}`;
+
+/** Toast do fim da exclusão em lote, com concordância (era "pedido(s) excluído(s)"). */
+export function mensagemDoLote(sucesso: number, falhas: number): string {
+  const excluidos = `${pedidos(sucesso)} ${sucesso === 1 ? 'excluído' : 'excluídos'}`;
+  if (falhas === 0) return excluidos;
+  const recusados = `${pedidos(falhas)} não ${falhas === 1 ? 'pôde' : 'puderam'} ser ${falhas === 1 ? 'excluído' : 'excluídos'}`;
+  return sucesso === 0 ? recusados : `${excluidos}; ${recusados}`;
+}
+
+/**
+ * Último dia que AINDA pode receber pedidos das próximas páginas. O feed vem por `created_at` DESC,
+ * então todo pedido não carregado tem `created_at` ≤ o do último carregado (T). O dia dele é o local
+ * ou, se for data-pura do Omie, o UTC — os dois nunca passam do maior entre o dia local e o UTC de T.
+ * Um grupo com dia ESTRITAMENTE maior que esse está completo; os outros podem crescer.
+ */
+export function ultimoDiaAberto(ultimoCarregado: string): string | null {
+  const d = new Date(ultimoCarregado);
+  if (Number.isNaN(d.getTime())) return null;
+  const local = format(d, 'yyyy-MM-dd');
+  // UTC de propósito (data-pura do Omie É dia UTC), montado como em `diaDoPedido`.
+  const utc = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return local > utc ? local : utc;
+}
+
+/**
+ * Contagem do cabeçalho do dia ("12 pedidos"), ou `null` quando o grupo pode estar incompleto
+ * (ainda há página e o dia não está garantidamente fechado): contagem parcial com cara de total
+ * é número fabricado. Sem soma em R$ de propósito: o grupo mistura cancelado e afiação, e o valor
+ * do recorte (servidor) já existe na barra de filtros.
+ */
+export function contagemDoDia(grupo: GrupoDia, temMaisPaginas: boolean, limiteAberto: string | null): string | null {
+  if (temMaisPaginas && (grupo.dia === 'sem-data' || limiteAberto === null || grupo.dia <= limiteAberto)) return null;
+  return pedidos(grupo.pedidos.length);
 }

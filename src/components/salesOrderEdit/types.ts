@@ -24,6 +24,13 @@ export interface SalesOrder {
   omie_numero_pedido: string | null;
   omie_payload: OmiePayloadJson | null;
   created_at: string;
+  /**
+   * Pedido CRIADO no Omie e trazido pelo sync (`hash_payload` = `omie_<conta>_<pid>`, determinístico;
+   * pedido do app tem `hash_payload` NULL). É fato de ORIGEM — o status muda com a etapa do Omie
+   * ("importado" → "separacao"/"enviado"), a origem não. Opcional: ausente = não sabido = trata como
+   * do app (o status ainda bloqueia o que já bloqueava).
+   */
+  origem_omie?: boolean;
 }
 
 /**
@@ -45,4 +52,25 @@ export type OmieProduct = Pick<
   | 'account' | 'is_tintometric' | 'tint_type'
 >;
 
-export const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
+/**
+ * Status em que o app NÃO edita o pedido. `importado` = pedido criado direto no Omie por outra
+ * pessoa: salvar aqui chamaria `alterar_pedido` e mudaria item/preço/prazo NO OMIE sem o dono saber
+ * (decisão do founder, 2026-11-25). É o mesmo critério da exclusão: o app espelha, quem altera é o Omie.
+ */
+export const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado', 'importado'];
+
+/**
+ * Por que a edição está travada, ou `null` se não está. Bloqueia por STATUS e por ORIGEM: um pedido
+ * criado no Omie que avançou para "separacao" deixou de ser `importado`, mas continua sendo de outra
+ * pessoa — salvar aqui faria `alterar_pedido` nele (Codex P0-5, 15 casos na prod em 2026-11-25).
+ */
+export function bloqueioDaEdicao(order: Pick<SalesOrder, 'status' | 'origem_omie'>): string | null {
+  if (order.origem_omie) return motivoEdicaoBloqueada('importado');
+  return BLOCKED_STATUSES.includes(order.status) ? motivoEdicaoBloqueada(order.status) : null;
+}
+
+/** Por que a edição está travada — o importado diz ONDE alterar, em vez de só "não pode". */
+export function motivoEdicaoBloqueada(status: string): string {
+  if (status === 'importado') return 'Pedido importado do Omie: o app só espelha. Para alterar, altere no Omie.';
+  return `Este pedido está com status "${status}" e não pode ser editado.`;
+}

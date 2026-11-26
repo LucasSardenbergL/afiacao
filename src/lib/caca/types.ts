@@ -74,6 +74,8 @@ export interface CandidatoRow {
   nome: string | null;
   telefone: string | null;
   cliente_user_id: string;
+  /** Onda D fatia 3: false = telefone oculto (fora da carteira/cobertura) — ≠ "sem telefone". */
+  contato_visivel?: boolean | null;
 }
 
 /** Snapshot de um "melhor cliente" para construção do perfil. */
@@ -124,6 +126,8 @@ export interface CacaCandidatoDisplay extends CacaResultado {
   nome: string | null;
   /** Telefone em qualquer formato (dígitos ou E.164); null = sem telefone. */
   telefone: string | null;
+  /** true = há telefone, mas só a carteira/cobertura do cliente vê (onda D fatia 3). */
+  telefoneOculto?: boolean;
   /** User ID no app (vinculado); null = cliente não possui conta no app. */
   clienteUserId: string | null;
 }

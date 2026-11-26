@@ -6,7 +6,7 @@ export type CategoriaAcao = 'prazo' | 'certo' | 'esperado' | 'risco';
 export type FonteAcao = 'tarefa' | 'rota' | 'whatsapp_pendente' | 'mixgap' | 'recompra';
 /** `piso`: soma só da parte com valor conhecido (há item sem preço) — limite inferior, exibido "≥". */
 type TipoValor = 'certo' | 'estimado' | 'piso' | 'sem_valor';
-export type TipoCta = 'ligar' | 'whatsapp' | 'pedido' | 'tarefa' | 'abrir_cliente';
+type TipoCta = 'ligar' | 'whatsapp' | 'pedido' | 'tarefa' | 'abrir_cliente';
 
 export type AcaoPayload =
   | { kind: 'tarefa'; tarefaId: string }

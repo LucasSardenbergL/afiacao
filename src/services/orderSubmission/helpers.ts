@@ -154,12 +154,24 @@ export async function resolveCustomerPhone(
   const uid = customerUserId || fallbackUserId;
   if (uid) {
     try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('phone')
-        .eq('user_id', uid)
-        .maybeSingle();
-      if (data?.phone) phone = data.phone;
+      // Onda D: o próprio cliente lê o próprio telefone pela view; staff pedindo PARA um cliente lê
+      // pelo contexto operacional `novo_pedido` (fora da carteira, a leitura fica no ledger).
+      if (uid === fallbackUserId) {
+        const { data, error } = await supabase
+          .from('v_perfil_contato')
+          .select('phone')
+          .eq('user_id', uid)
+          .maybeSingle();
+        if (error) throw error;
+        if (data?.phone) phone = data.phone;
+      } else {
+        const { data, error } = await supabase.rpc('contato_cliente_operacional', {
+          p_objeto_tipo: 'novo_pedido', p_objeto_ids: [uid], p_motivo: 'novo_pedido',
+        });
+        if (error) throw error;
+        const fone = data?.[0]?.phone;
+        if (fone) phone = fone;
+      }
     } catch (e) {
       logger.warn('Failed to resolve customer phone (using fallback)', {
         userId: uid,
