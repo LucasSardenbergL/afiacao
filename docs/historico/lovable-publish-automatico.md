@@ -138,3 +138,16 @@ o cache (estado compartilhado de dezenas de sessões). Isolar de vez = `CLAUDE_C
 vigia com login OAuth próprio no Lovable (exige 1 clique do founder) — só se o episódio se repetir.
 **Armadilha de sonda:** `env -i` sem `USER` grava a entrada `acct=unknown` no Keychain e envenena o
 cache acima — reproduza o launchd com `USER`/`LOGNAME` explícitos (o vigia agora os exporta).
+
+### 1º PUBLICAR real pós-#4189 caiu no `needs-auth` — e desta vez o token SUMIU (2026-11-25 23:05)
+
+`claude (1/2) rc=0 mcp=needs-auth usos=nenhum → NEEDS_AUTH`: o vigia reagiu como desenhado (sem debitar
+o SHA, re-tenta em 10 min, 1 aviso). Mas a causa não era leitura transitória: a entrada `lovable` do
+item `Claude Code-credentials` ficou só com `discoveryState` (sem access nem refresh token), gravada às
+22:33 — o mesmo minuto em que o cache marcou `needs-auth`. O item é UM blob JSON (79 MCPs + login)
+reescrito por dezenas de sessões Claude; com refresh token rotativo, quem renova em paralelo ou grava
+cópia velha apaga o token de todo mundo. **Conserto: store próprio do vigia** — `CLAUDE_CONFIG_DIR`
+(provado: o CLI cria outro item, `Claude Code-credentials-<hash>`, e outro `mcp-needs-auth-cache.json`),
+com 1 escritor (o lock do vigia). Ativação única pelo founder: `scripts/lovable-vigia-instalar.sh --login`
+(OAuth no navegador); o vigia só passa a usar o store quando existe `.vigia-pronto` — sem ele, segue no
+padrão. As sessões interativas também perderam o `lovable` nesse episódio: `/mcp` → lovable para religar.

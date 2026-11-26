@@ -6,6 +6,7 @@
 # o LaunchAgent `dev.afiacao.lovable-vigia` (a cada 180 s). Idempotente.
 # Pré-requisito: token de 1 ano do `claude setup-token` no Keychain, serviço `claude-vigia-lovable`.
 # Uso: scripts/lovable-vigia-instalar.sh            · desinstalar: scripts/lovable-vigia-instalar.sh --remover
+#      scripts/lovable-vigia-instalar.sh --login    · login OAuth do Lovable num store só do vigia (1x)
 set -eu
 
 ROTULO=dev.afiacao.lovable-vigia
@@ -14,6 +15,19 @@ BASE="$HOME/.local/share/afiacao"
 WT="$BASE/vigia-repo"
 EST="$HOME/.local/state/afiacao/lovable-vigia"
 AQUI="$(cd "$(dirname "$0")/.." && pwd)"
+
+# --login: store PRÓPRIO do claude para o vigia (CLAUDE_CONFIG_DIR → item de Keychain e cache de
+# needs-auth só dele). O blob padrão é reescrito por dezenas de sessões e já perdeu o token do lovable
+# (docs/historico/lovable-publish-automatico.md). Interativo: abre o navegador para o OAuth do Lovable.
+if [ "${1:-}" = --login ]; then
+  CFG_DIR=${LV_CLAUDE_DIR:-$BASE/vigia-claude}
+  mkdir -p "$CFG_DIR"
+  CLAUDE_CONFIG_DIR="$CFG_DIR" claude mcp get lovable >/dev/null 2>&1 \
+    || CLAUDE_CONFIG_DIR="$CFG_DIR" claude mcp add --transport http -s user lovable https://mcp.lovable.dev
+  CLAUDE_CONFIG_DIR="$CFG_DIR" claude mcp login lovable
+  date '+%F %T' > "$CFG_DIR/.vigia-pronto"
+  echo "store próprio ativo em $CFG_DIR — o próximo PUBLICAR do vigia já usa (log: mcp=connected)"; exit 0
+fi
 
 if [ "${1:-}" = --remover ]; then
   launchctl bootout "gui/$(id -u)/$ROTULO" 2>/dev/null || true

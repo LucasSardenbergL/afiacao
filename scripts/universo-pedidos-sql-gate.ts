@@ -96,13 +96,6 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   },
   // ── canônico por parâmetro ──────────────────────────────────────────────────────────────────
   'public.apriori_universo_snapshot': { tipo: 'canonico_por_parametro', motivo: 'recebe p_status_nao_venda e o VALIDA contra STATUS_NAO_VENDA antes de ler' },
-  // ── crédito-IA PR 5 (sombra) — exposição de crédito NÃO é universo de venda ─────────────
-  'private.credito_sombra_versao': { tipo: 'lookup', motivo: 'Crédito-IA PR 5: versão corrente de UM pedido (por id) — app = revisão, importado = conteúdo' },
-  'private.credito_sombra_titulos_pv': { tipo: 'lookup', motivo: 'Crédito-IA PR 5: unicidade do número do PV na empresa (vínculo PV→título); duplicata = vínculo não comprovável' },
-  'private.credito_sombra_residual': { tipo: 'lookup', motivo: 'Crédito-IA PR 5: número do PV de UMA reserva (por id), para derivar o residual' },
-  'private.credito_sombra_avaliar': { tipo: 'proposito', motivo: 'Crédito-IA PR 5: exposição do grupo — PV excluído no app (deleted_at) segue exposição até o Omie cancelar (Codex P1); a denylist de venda é aplicada, o deleted_at não por desenho' },
-  'private.credito_sombra_lote': { tipo: 'proposito', motivo: 'Crédito-IA PR 5: candidatos e conciliação da sombra — avalia PV excluído no app (ausente ≠ cancelado) e libera reserva só pelo status cancelado do Omie' },
-  'public.credito_sombra_saude': { tipo: 'proposito', motivo: 'Crédito-IA PR 5: sensor — conta carga pendente e reserva ativa de PV excluído no app (justamente o que o universo de venda esconde)' },
 };
 
 export function lerMigrations(raiz: string): Array<{ nome: string; sql: string }> {
