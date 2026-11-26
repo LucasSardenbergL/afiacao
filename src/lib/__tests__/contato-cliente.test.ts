@@ -17,7 +17,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 import {
-  comContatoMascarado, enderecoPrincipal, lerContatoOperacional, LOTE_OPERACIONAL, ordenarEnderecos,
+  clientePorDocumento, comContatoMascarado, enderecoPrincipal, lerContatoOperacional, LOTE_OPERACIONAL, ordenarEnderecos,
 } from '@/lib/contato-cliente';
 
 beforeEach(() => { rpc.mockReset(); inFn.mockReset(); });
@@ -82,5 +82,22 @@ describe('endereços', () => {
     expect(enderecoPrincipal(xs)?.id).toBe('c');
     expect(enderecoPrincipal([{ id: 'z', is_default: null }])?.id).toBe('z');
     expect(enderecoPrincipal([])).toBeNull();
+  });
+});
+
+describe('clientePorDocumento (fatia 3: documento → identidade, sem ler profiles.document)', () => {
+  it('manda as variantes limpas e sem repetição; vazio não chama o servidor', async () => {
+    rpc.mockResolvedValue({ data: 'uid-1', error: null });
+    expect(await clientePorDocumento(['12345678000199', ' 12345678000199 ', '', null, '12.345.678/0001-99'])).toBe('uid-1');
+    expect(rpc).toHaveBeenCalledWith('cliente_por_documento', { p_documentos: ['12345678000199', '12.345.678/0001-99'] });
+    rpc.mockReset();
+    expect(await clientePorDocumento(['', null, undefined])).toBeNull();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it('sem cadastro → null; erro do servidor LANÇA (nunca vira "não vinculado")', async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    expect(await clientePorDocumento(['999'])).toBeNull();
+    rpc.mockResolvedValue({ data: null, error: { code: '42501', message: 'cliente_por_documento: so staff' } });
+    await expect(clientePorDocumento(['999'])).rejects.toMatchObject({ code: '42501' });
   });
 });

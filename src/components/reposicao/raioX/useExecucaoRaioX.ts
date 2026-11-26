@@ -52,7 +52,7 @@ export function useEquipeRaioX(): MembroEquipe[] {
         // Sem nomes (falha de leitura) a equipe aparece pelo id — nunca some da lista.
         const perfis = await fetchAllPages(
           (de, ate) =>
-            supabase.from('profiles').select('user_id, name, email').in('user_id', ids).order('user_id', { ascending: true }).range(de, ate),
+            supabase.from('v_perfil_equipe').select('user_id, name, email').in('user_id', ids).order('user_id', { ascending: true }).range(de, ate),
           'profiles',
         ).catch((e: unknown) => {
           logger.warn('raio-x: nomes da equipe indisponíveis', { error: String(e) });

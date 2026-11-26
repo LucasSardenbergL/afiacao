@@ -107,7 +107,7 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/hooks/useLastVisit.ts', 1],
   ['src/pages/Addresses.tsx', 2],
   ['src/pages/AdminApprovals.tsx', 1],
-  ['src/pages/Auth.tsx', 3],
+  ['src/pages/Auth.tsx', 2],
   ['src/pages/FinanceiroConciliacao.tsx', 1],
   ['src/pages/GovernanceMathParams.tsx', 3],
   ['src/pages/GovernancePermissions.tsx', 1],

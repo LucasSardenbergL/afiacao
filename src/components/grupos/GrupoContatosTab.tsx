@@ -17,6 +17,11 @@ function ContatoLinha({ c }: { c: GrupoContato }) {
             <Phone className="h-3.5 w-3.5" /> {c.phone}
           </span>
         )}
+        {c.contato_visivel === false && (
+          <span className="inline-flex items-center gap-1 text-xs">
+            <Phone className="h-3.5 w-3.5" /> Contato visível só para a carteira deste cliente
+          </span>
+        )}
         {(c.cidade || c.endereco) && (
           <span className="inline-flex items-center gap-1">
             <MapPin className="h-3.5 w-3.5" /> {[c.endereco, c.cidade && `${c.cidade}${c.uf ? '/' + c.uf : ''}`].filter(Boolean).join(' — ')}
