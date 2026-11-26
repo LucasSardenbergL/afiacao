@@ -326,8 +326,10 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
     // A que degrada em vez de lançar continua degradando COM motivo (prazos: o leitor estrito
     // da RPC fin_capital_giro_prazos_empresa, ver fin-cashflow-engine/prazos-empresa.ts).
     expect(/lerPrazosEmpresa\(prazosRes\)/.test(fonte)).toBe(true);
-    // E a coluna opcional continua tolerando SÓ coluna ausente (não qualquer erro).
-    expect(/tolerarColunaAusente\(folhaCatRes,/.test(fonte)).toBe(true);
+    // v2.7: o mapa de folha/tributos da NCG LANÇA na falha — um timeout não pode virar folha zero medida
+    // (empresas de folha centralizada) nem composição "não medida" calada. (A coluna opcional
+    // fin_config_cashflow.folha_categorias_codigos, antes tolerada, deixou de ser lida.)
+    expect(/exigirLeitura\(mapaRes, 'fin_categoria_fluxo_mapping'\)/.test(fonte)).toBe(true);
     // Nenhum `.data` cru sobrou no arquivo-âncora: o pin acima garante QUAIS fontes estão
     // cobertas, este garante que não nasceu uma 9ª leitura fora do contrato.
     expect(fonte.match(/(?<!\?)\.data\s*(?:\?\?|\|\|)/g) ?? []).toEqual([]);

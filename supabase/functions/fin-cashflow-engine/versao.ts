@@ -67,7 +67,13 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // gravou folha 0 e tributos 0 afirmados nas 3 empresas em 25/11: tributos lidos de `3.99` (inexistente
 // no plano Omie) e folha só por config vazia/recorrente inexistente. Só medida: `ncg`, PCO, semanas,
 // saldos e `saldo_tesouraria` IDÊNTICOS à v2.5. Sem migration (o CHECK já aceita as 6 NULL).
-export const VERSAO = "v2.6-ncg-fonte-vazia";
+// v2.6 → v2.7: folha_30d e tributos_a_pagar pelo mapa curado por empresa + código `fin_categoria_fluxo_mapping`
+// (./ncg-folha-tributos.ts). Tributos = op_impostos + op_impostos_lucro abertos; folha = op_pessoal aberto com
+// vencimento em [hoje−30, hoje+30] + recorrente VIGENTE; folha centralizada na colacor_sc (nas outras, zero
+// medido). Os títulos saem de cp_fornecedor: o TOTAL `ncg` não muda (sem recorrente de folha em prod), mas
+// `saldo_tesouraria` (saldo − folha_30d) passa a descontar a folha medida. Lê fin_categoria_fluxo_mapping
+// (service_role); deixa de ler fin_config_cashflow.folha_categorias_codigos. Sem migration.
+export const VERSAO = "v2.7-ncg-mapa-fluxo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

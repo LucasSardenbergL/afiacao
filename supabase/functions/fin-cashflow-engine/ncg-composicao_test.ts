@@ -6,6 +6,10 @@
 //   2. sem estoque: `ncg_estoque` é NULL (nunca 0) e as outras 5 continuam medidas — NCG PARCIAL;
 //   3. o helper puro: fora de faixa (NaN, negativo, teto) ou composição que não fecha com o total → as
 //      6 colunas NULL ("não medido"), nunca um número que não bate.
+//   4. (v2.7) folha/tributos pelo mapa por empresa + código: os títulos saem de cp_fornecedor sem mudar o
+//      total; folha só na janela [hoje−30, hoje+30]; colacor_sc sem fonte = não medido, oben = zero medido;
+//      mapa ilegível LANÇA. Falsificado em 26/11 (10 sabotagens, uma camada por vez, controle verde antes e
+//      depois na mesma invocação — ver docs/historico/ncg-folha-tributos-fonte-vazia.md).
 // Linha de base: os casos 1 e 2 ficam VERMELHOS no código de antes (o INSERT não nomeava `ncg_*`); o
 // CONTROLE VERDE é "a coluna `ncg` (total) do snapshot = `ncg.valor` da resposta", que já valia.
 // Roda com: deno test --no-remote --allow-read=supabase/functions supabase/functions/fin-cashflow-engine/
