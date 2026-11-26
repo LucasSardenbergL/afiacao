@@ -246,8 +246,8 @@ export const MODULOS: ModuloApp[] = [
     rotaPrefixos: ["/credito"],
     gates: ["RequireStaff"],
     status: "ativo",
-    codigo: ["src/lib/credito/**", "src/pages/CreditoFila.tsx"],
-    testes: ["src/lib/credito/fila.test.ts"],
+    codigo: ["src/lib/credito/**", "src/pages/CreditoFila.tsx", "src/pages/CreditoLimites.tsx"],
+    testes: ["src/lib/credito/fila.test.ts", "src/lib/credito/limites.test.ts"],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
   },
   {

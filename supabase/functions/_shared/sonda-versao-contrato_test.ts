@@ -94,6 +94,7 @@ import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
 import * as enviarPush from "../enviar-push/versao.ts";
 import * as creditoFilaRecomendar from "../credito-fila-recomendar/versao.ts";
+import * as creditoIaAvaliar from "../credito-ia-avaliar/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
 import * as nvoipSipCreds from "../nvoip-sip-creds/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
@@ -300,6 +301,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "whatsapp-send-template", mod: whatsappTemplate },
   { nome: "enviar-push", mod: enviarPush },
   { nome: "credito-fila-recomendar", mod: creditoFilaRecomendar },
+  { nome: "credito-ia-avaliar", mod: creditoIaAvaliar },
   { nome: "nvoip-calls", mod: nvoipCalls },
   { nome: "nvoip-sip-creds", mod: nvoipSipCreds },
   { nome: "dispatch-notifications", mod: dispatchNotif },

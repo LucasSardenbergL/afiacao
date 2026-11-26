@@ -166,3 +166,6 @@ verify_jwt = false
 
 [functions.credito-fila-recomendar]
 verify_jwt = false
+
+[functions.credito-ia-avaliar]
+verify_jwt = false
