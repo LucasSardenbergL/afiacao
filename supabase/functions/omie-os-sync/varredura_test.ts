@@ -17,7 +17,7 @@ async function aborta(p: Promise<unknown>, marca: string) {
   throw new Error(`esperava abortar com "${marca}", mas terminou`);
 }
 
-const os = (n: number) => ({ Cabecalho: { nCodOS: n, cNumOS: String(n), nCodCli: 7, nValorTotal: 10 },
+const os = (n: number) => ({ Cabecalho: { nCodOS: n, cNumOS: String(n), nCodCli: 7, cEtapa: "20", nValorTotal: 10 },
   InfoCadastro: { cFaturada: "N", cCancelada: "N", dDtInc: "01/11/2026" }, Parcelas: [{ nDias: 30 }] });
 const pagina = (cods: number[], tp: unknown = 2, tr: unknown = 3) => ({ total_de_paginas: tp, total_de_registros: tr, osCadastro: cods.map(os) });
 const sem = async () => {};
@@ -89,4 +89,19 @@ Deno.test("relógio esgotado aborta com o parcial", async () => {
 Deno.test("catálogo vazio declarado (0 registros) é íntegro", async () => {
   const r = await varrer(fonte([{ total_de_paginas: 0, total_de_registros: 0, osCadastro: [] }]), sem, longe);
   assertEquals([r.integra, r.distintas], [true, 0]);
+});
+
+Deno.test("chave do contrato AUSENTE (forma nova do payload) → termina, mas NÃO íntegra (não sobrescreve o espelho)", async () => {
+  const semFlag = { total_de_paginas: 1, total_de_registros: 1,
+    osCadastro: [{ Cabecalho: { nCodOS: 1, cNumOS: "1", nCodCli: 7, cEtapa: "20", nValorTotal: 10 }, InfoCadastro: { dDtInc: "01/11/2026" } }] };
+  const r = await varrer(fonte([semFlag]), sem, longe);
+  assertEquals([r.integra, r.contrato_err], [false, 1]);
+  const soId = { total_de_paginas: 1, total_de_registros: 1, osCadastro: [{ Cabecalho: { nCodOS: 1 } }] };
+  assertEquals((await varrer(fonte([soId]), sem, longe)).integra, false);
+});
+
+Deno.test("registros/pagina declarados têm de bater; total_de_registros não muda no meio do run", async () => {
+  await aborta(varrer(fonte([{ pagina: 1, registros: 5, total_de_paginas: 0, total_de_registros: 0, osCadastro: [] }]), sem, longe), "registros=5");
+  await aborta(varrer(fonte([{ ...pagina([1, 2]), pagina: 2 }]), sem, longe), "resposta da página 2");
+  await aborta(varrer(fonte([pagina([1, 2], 2, 3), pagina([3], 2, 2)]), sem, longe), "mudou no meio do run");
 });

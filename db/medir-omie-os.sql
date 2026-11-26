@@ -80,24 +80,33 @@ SELECT (SELECT count(*) FROM os WHERE faturada) AS os_faturadas,
        (SELECT count(*) FROM venr v WHERE EXISTS (SELECT 1 FROM os o WHERE o.num = v.num)
           AND NOT EXISTS (SELECT 1 FROM os o WHERE o.num = v.num AND o.n_cod_cli = v.omie_codigo_cliente)) AS venr_numero_de_outro_cliente;
 
--- 3b. Valor conciliado do elo: OS faturada × Σ VENR ligados (parcelas) — diferença indica elo parcial
+-- 3b. Valor conciliado do elo: só lançamento VENR com UMA ÚNICA OS candidata (empresa + cliente + nº normalizado)
+--     entra na soma; o ambíguo fica numa coluna própria (Codex diff P2-9: senão o mesmo VENR contaria 2×)
 WITH os AS (
-  SELECT e.n_cod_os, e.c_num_os, e.n_cod_cli, e.valor_total, public.omie_os_numero_normalizado(e.c_num_os) AS num
-    FROM public.omie_os_espelho e WHERE e.company = 'colacor_sc' AND e.faturada
+  SELECT e.n_cod_os, e.n_cod_cli, e.valor_total, e.faturada, public.omie_os_numero_normalizado(e.c_num_os) AS num
+    FROM public.omie_os_espelho e WHERE e.company = 'colacor_sc'
 ), venr AS (
-  SELECT DISTINCT ON (f.omie_codigo_lancamento) f.omie_codigo_cliente, f.valor_documento,
-         public.omie_os_numero_normalizado(f.numero_pedido) AS num
-    FROM public.fin_contas_receber f
-   WHERE f.company = 'colacor_sc' AND f.id_origem = 'VENR' AND f.status_titulo IS DISTINCT FROM 'CANCELADO'
-   ORDER BY f.omie_codigo_lancamento, f.updated_at DESC NULLS LAST
+  SELECT x.* FROM (
+    SELECT DISTINCT ON (f.omie_codigo_lancamento) f.omie_codigo_lancamento, f.omie_codigo_cliente, f.valor_documento,
+           f.status_titulo, public.omie_os_numero_normalizado(f.numero_pedido) AS num
+      FROM public.fin_contas_receber f
+     WHERE f.company = 'colacor_sc' AND f.id_origem = 'VENR'
+     ORDER BY f.omie_codigo_lancamento, f.updated_at DESC NULLS LAST) x
+   WHERE x.status_titulo IS DISTINCT FROM 'CANCELADO'
+), lig AS (
+  SELECT v.omie_codigo_lancamento, v.valor_documento, min(o.n_cod_os) AS n_cod_os, count(o.n_cod_os) AS candidatas
+    FROM venr v JOIN os o ON o.num = v.num AND o.n_cod_cli = v.omie_codigo_cliente
+   GROUP BY 1, 2
+), por_os AS (
+  SELECT l.n_cod_os, sum(l.valor_documento) AS soma FROM lig l WHERE l.candidatas = 1 GROUP BY 1
 )
-SELECT count(*) FILTER (WHERE t.soma IS NOT NULL AND t.soma = o.valor_total) AS valor_bate,
-       count(*) FILTER (WHERE t.soma IS NOT NULL AND t.soma <> o.valor_total) AS valor_diverge,
-       count(*) FILTER (WHERE t.soma IS NULL) AS sem_titulo,
-       round(sum(o.valor_total)) AS brl_os, round(sum(t.soma)) AS brl_titulos
-  FROM os o
-  LEFT JOIN LATERAL (SELECT sum(v.valor_documento) AS soma FROM venr v
-                      WHERE v.num = o.num AND v.omie_codigo_cliente = o.n_cod_cli) t ON true;
+SELECT count(*) FILTER (WHERE p.soma IS NOT NULL AND p.soma = o.valor_total) AS valor_bate,
+       count(*) FILTER (WHERE p.soma IS NOT NULL AND p.soma <> o.valor_total) AS valor_diverge,
+       count(*) FILTER (WHERE p.soma IS NULL) AS sem_titulo,
+       round(sum(o.valor_total)) AS brl_os, round(sum(p.soma)) AS brl_titulos_elo_unico,
+       (SELECT round(sum(valor_documento)) FROM lig WHERE candidatas > 1) AS brl_venr_ambiguo
+  FROM os o LEFT JOIN por_os p ON p.n_cod_os = o.n_cod_os
+ WHERE o.faturada;
 
 -- 3c. Caso conhecido: OS 461 ↔ RPS 278 / NFS-e 302
 SELECT e.n_cod_os, e.c_num_os, e.n_cod_cli, e.faturada, e.valor_total,

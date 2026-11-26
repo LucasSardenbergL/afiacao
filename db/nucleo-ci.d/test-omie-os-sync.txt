@@ -2,4 +2,6 @@
 # só service_role sob lock por empresa; o BANCO decide a integridade (staging = distintas = total declarado); só o
 # run íntegro promove a geração; sumiço só na 2ª varredura íntegra com a 1ª data preservada; reaparecer zera; fechar
 # repetido é no-op; ausente ≠ zero (tipo jsonb errado → NULL); view com faturada/cancelada IS FALSE; elo normalizado.
-db/test-omie-os-sync.sh 40  falsificar=13
+db/test-omie-os-sync.sh 45  falsificar=19
+# Codex de código: leitura só de gestor (não fin_user_can_access), contrato do payload, lidas=distintas=total no banco,
+# queda implausível, sequência fechada, staging fora do claude_ro.

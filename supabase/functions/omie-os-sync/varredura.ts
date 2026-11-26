@@ -27,6 +27,8 @@ export interface Resumo {
   distintas: number;
   shape_err: number;
   amostra_shape_err: string | null;
+  contrato_err: number;
+  amostra_contrato_err: string | null;
   total_registros_declarado: number | null;
   total_paginas_declarado: number | null;
   valor_ilegivel: number;
@@ -51,6 +53,7 @@ export async function varrer(listar: Listar, gravar: Gravar, opts: { deadline: n
   let fimVisto = false;
   const r = {
     paginas: 0, lidas: 0, distintas: 0, shape_err: 0, amostra_shape_err: null as string | null,
+    contrato_err: 0, amostra_contrato_err: null as string | null,
     total_registros_declarado: null as number | null, total_paginas_declarado: null as number | null,
     valor_ilegivel: 0, prazo_ilegivel: 0, cliente_ilegivel: 0, datas_ilegiveis: 0, status_ilegivel: 0,
   };
@@ -74,13 +77,23 @@ export async function varrer(listar: Listar, gravar: Gravar, opts: { deadline: n
       pisoPaginas = Math.max(pisoPaginas, tp);
       r.total_paginas_declarado = pisoPaginas;
     }
+    // total_de_registros tem de ser o MESMO em todas as páginas (Codex diff P1-3: um total que cai no meio do run,
+    // ou um 0 contraditório, confirmaria sumiço em massa)
     const tr = totalDeclarado(resp, "total_de_registros");
     if (tr !== undefined) {
-      pisoRegistros = Math.max(pisoRegistros ?? 0, tr);
+      if (pisoRegistros !== null && tr !== pisoRegistros) {
+        abortar(`total_de_registros mudou no meio do run (${pisoRegistros} → ${tr} na página ${pagina})`);
+      }
+      pisoRegistros = tr;
       r.total_registros_declarado = pisoRegistros;
     }
     const lista = extrairLista(resp);
     if (lista === null) abortar(`página ${pagina}: resposta sem osCadastro (malformada ≠ fim)`);
+    // `pagina` e `registros`, quando declarados, têm de bater com o pedido e com a lista
+    const pg = totalDeclarado(resp, "pagina");
+    if (pg !== undefined && pg !== pagina) abortar(`resposta da página ${pg} para o pedido da página ${pagina}`);
+    const rg = totalDeclarado(resp, "registros");
+    if (rg !== undefined && rg !== lista!.length) abortar(`página ${pagina}: registros=${rg} ≠ ${lista!.length} OS na lista`);
     if (lista!.length === 0) {
       if (pagina <= pisoPaginas) abortar(`página ${pagina}/${pisoPaginas} veio vazia antes do fim declarado`);
       fimVisto = true;
@@ -99,6 +112,10 @@ export async function varrer(listar: Listar, gravar: Gravar, opts: { deadline: n
         continue;
       }
       const l = p.linha;
+      if (p.contrato !== null) {
+        r.contrato_err++;
+        r.amostra_contrato_err ??= `OS ${l.n_cod_os}: falta ${p.contrato}`;
+      }
       codigos.push(l.n_cod_os);
       if (l.valor_total === null) r.valor_ilegivel++;
       if (l.prazo_max_dias === null) r.prazo_ilegivel++;
@@ -122,6 +139,7 @@ export async function varrer(listar: Listar, gravar: Gravar, opts: { deadline: n
   r.distintas = vistas.size;
   let motivo: string | null = null;
   if (r.shape_err > 0) motivo = `${r.shape_err} OS sem identidade legível`;
+  else if (r.contrato_err > 0) motivo = `${r.contrato_err} OS fora do contrato do payload (${r.amostra_contrato_err})`;
   else if (pisoRegistros === null) motivo = "total_de_registros não declarado";
   else if (r.lidas !== r.distintas) motivo = `${r.lidas} lidas ≠ ${r.distintas} distintas`;
   else if (pisoRegistros !== r.distintas) motivo = `total_de_registros=${pisoRegistros} ≠ ${r.distintas} OS distintas lidas`;

@@ -39,7 +39,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="uma_integra_basta:U1 nao_integra_conta:U3 primeira_data_sobrescrita:U4 reaparecer_nao_zera:U5
               staging_diferente_passa:F3 erro_passa:F4 fechar_repetido_conta:F6 view_null_blind:V1
               normaliza_sem_zeros:E1 campo_nulo_vira_zero:N1 gravar_sem_rodando:G1 abrir_concorrente:R2
-              staging_legivel:S1"
+              staging_legivel:S1 sem_conferir_lidas:F7 sem_contrato:F8 sem_plausibilidade:F9
+              policy_fin_user:S0 policy_fin_user_sem_pos:V5 sequencia_aberta:S0"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -177,6 +178,22 @@ case "$SAB" in
   abrir_concorrente)
     trocar "$MIG" "  IF EXISTS (SELECT 1 FROM public.omie_os_sync_runs WHERE company = p_company AND status = 'rodando') THEN" \
       "  IF false THEN" ;;
+  sem_conferir_lidas)
+    trocar "$MIG" "    WHEN v_lidas IS DISTINCT FROM v_total THEN" "    WHEN false THEN" ;;
+  sem_contrato)
+    trocar "$MIG" "    WHEN jsonb_typeof(p_resumo -> 'contrato_err') IS DISTINCT FROM 'number' OR (p_resumo ->> 'contrato_err')::integer <> 0" \
+      "    WHEN false" ;;
+  sem_plausibilidade)
+    trocar "$MIG" "    WHEN v_vivas > 0 AND v_total < 0.9 * v_vivas THEN" "    WHEN false THEN" ;;
+  policy_fin_user|policy_fin_user_sem_pos)
+    trocar "$MIG" "  CREATE POLICY omie_os_espelho_select ON public.omie_os_espelho FOR SELECT TO authenticated
+    USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));" "  CREATE POLICY omie_os_espelho_select ON public.omie_os_espelho FOR SELECT TO authenticated
+    USING ((SELECT public.fin_user_can_access(company)));"
+    if [ "$SAB" = policy_fin_user_sem_pos ]; then
+      trocar "$MIG" "    RAISE EXCEPTION 'POSCONDICAO omie-os: leitura do espelho fora da regra de gestor';" "    NULL;"
+    fi ;;
+  sequencia_aberta)
+    trocar "$MIG" "  EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC', pg_get_serial_sequence('public.omie_os_sync_runs', 'id'));" "" ;;
   staging_legivel)
     trocar "$MIG" "  GRANT SELECT ON public.omie_os_sync_runs, public.omie_os_espelho TO authenticated;" \
       "  GRANT SELECT ON public.omie_os_sync_runs, public.omie_os_espelho, public.omie_os_staging TO authenticated;" ;;
@@ -200,17 +217,24 @@ END $r$;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT ON TABLES TO sandbox_exec_x;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role, claude_ro;
 CREATE SCHEMA auth;
 CREATE SCHEMA private;
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid $f$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
--- acesso financeiro por empresa: o usuário ...aa vê a SC; o ...bb não
-CREATE TABLE public.t_acesso (user_id uuid, company text);
-INSERT INTO public.t_acesso VALUES ('00000000-0000-0000-0000-0000000000aa', 'colacor_sc');
-CREATE FUNCTION public.fin_user_can_access(p_company text) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
-  SET search_path = public AS $f$ SELECT EXISTS (SELECT 1 FROM public.t_acesso WHERE user_id = auth.uid() AND company = p_company) $f$;
+-- papéis: ...aa é gestor (carteira completa); ...bb é employee comum. fin_user_can_access é a de PROD:
+-- devolve true para QUALQUER employee — por isso o espelho não pode usá-la (Codex diff P0)
+CREATE TABLE public.user_roles (user_id uuid, role text);
+INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-0000000000aa', 'master'), ('00000000-0000-0000-0000-0000000000bb', 'employee');
+CREATE FUNCTION public.fin_user_can_access(check_company text DEFAULT NULL) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = public AS $f$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role IN ('master','employee')) $f$;
+CREATE TABLE public.t_gestor (user_id uuid);
+INSERT INTO public.t_gestor VALUES ('00000000-0000-0000-0000-0000000000aa');
+CREATE FUNCTION public.pode_ver_carteira_completa(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = public AS $f$ SELECT EXISTS (SELECT 1 FROM public.t_gestor WHERE user_id = _uid) $f$;
+GRANT EXECUTE ON FUNCTION public.fin_user_can_access(text), public.pode_ver_carteira_completa(uuid) TO authenticated;
 CREATE SCHEMA cron;
 CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, jobname text UNIQUE, schedule text, command text,
                        active boolean NOT NULL DEFAULT true, username text NOT NULL DEFAULT current_user);
@@ -240,16 +264,24 @@ CREATE FUNCTION public.t_linha(n bigint, num text, cli bigint, extra jsonb DEFAU
            'data_inclusao', to_char((now() AT TIME ZONE 'America/Sao_Paulo') - interval '10 days', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"'),
            'data_alteracao', to_char((now() AT TIME ZONE 'America/Sao_Paulo') - interval '4 days', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"'),
            'payload', jsonb_build_object('Cabecalho', jsonb_build_object('nCodOS', n))) || extra $f$;
+-- base fixa de 20 OS (101..120) que todo ciclo carrega: a guarda de queda implausível (< 90% das presentes)
+-- não pode mascarar os cenários de sumiço de 1 OS
+CREATE FUNCTION public.t_base() RETURNS jsonb LANGUAGE sql AS $f$
+  SELECT jsonb_agg(public.t_linha(n, n::text, 500 + n)) FROM generate_series(101, 120) n $f$;
 -- ciclo completo; p_integra/p_erro simulam o que a edge afirma; p_total = total_de_registros declarado
 CREATE FUNCTION public.t_ciclo(p_linhas jsonb, p_integra boolean DEFAULT true, p_erro text DEFAULT NULL, p_total integer DEFAULT NULL,
-                               p_distintas integer DEFAULT NULL)
+                               p_distintas integer DEFAULT NULL, p_lidas integer DEFAULT NULL, p_contrato integer DEFAULT 0,
+                               p_sem_base boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql AS $f$
-DECLARE v_run bigint; v_n integer := jsonb_array_length(p_linhas);
+DECLARE v_run bigint; v_l jsonb := CASE WHEN p_sem_base THEN p_linhas ELSE p_linhas || public.t_base() END;
+        v_n integer;
 BEGIN
+  v_n := jsonb_array_length(v_l);
   v_run := public.omie_os_sync_abrir('colacor_sc');
-  IF v_n > 0 THEN PERFORM public.omie_os_sync_gravar(v_run, p_linhas); END IF;
+  IF v_n > 0 THEN PERFORM public.omie_os_sync_gravar(v_run, v_l); END IF;
   RETURN public.omie_os_sync_fechar(v_run, jsonb_build_object('integra', p_integra, 'distintas', coalesce(p_distintas, v_n),
-           'total_registros_declarado', coalesce(p_total, v_n), 'paginas', 1, 'lidas', v_n), p_erro);
+           'total_registros_declarado', coalesce(p_total, v_n), 'paginas', 1, 'lidas', coalesce(p_lidas, v_n),
+           'shape_err', 0, 'contrato_err', p_contrato), p_erro);
 END $f$;
 SQL
 
@@ -263,6 +295,8 @@ eq "A2 authenticated não fecha run" "$(E "SET ROLE authenticated; SELECT omie_o
 eq "A3 authenticated não escreve no espelho" "$(E "SET ROLE authenticated; DELETE FROM omie_os_espelho")" "ERRO:42501"
 eq "A4 sandbox_exec_* sem INSERT herdado" "$(E "SELECT has_table_privilege('sandbox_exec_x','public.omie_os_espelho','INSERT')")" "f"
 eq "A5 claude_ro lê a view e o espelho" "$(E "SELECT has_table_privilege('claude_ro','public.omie_os_abertas_v','SELECT') AND has_table_privilege('claude_ro','public.omie_os_espelho','SELECT')")" "t"
+eq "A7 sequência dos runs fechada para anon/authenticated" "$(E "SELECT has_sequence_privilege('authenticated', pg_get_serial_sequence('public.omie_os_sync_runs','id'), 'UPDATE') OR has_sequence_privilege('anon', pg_get_serial_sequence('public.omie_os_sync_runs','id'), 'USAGE')")" "f"
+eq "A8 claude_ro NÃO lê o staging" "$(E "SELECT has_table_privilege('claude_ro','public.omie_os_staging','SELECT')")" "f"
 eq "A6 cron :53 com {action:sync}, Vault e timeout" "$(E "SELECT count(*) FROM cron.job WHERE jobname='omie-os-sync-1h' AND schedule='53 * * * *' AND command LIKE '%{\"action\":\"sync\"}%' AND command LIKE '%timeout_milliseconds:=150000%' AND command LIKE '%vault.decrypted_secrets%'")" "1"
 
 echo "── R. runs"
@@ -287,16 +321,23 @@ eq "G3 n_cod_os repetido no run = erro" "$(E "SET ROLE service_role; SELECT omie
 C "SET ROLE service_role; SELECT omie_os_sync_fechar($R3, '{\"integra\":false}', 'teste')"
 
 echo "── F. fechar"
-eq "F1 run íntegro promove ao espelho" "$(E "SELECT count(*) FROM omie_os_espelho")" "2"
+eq "F1 run íntegro promove ao espelho" "$(E "SELECT count(*) FROM omie_os_espelho")" "22"
 C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77), t_linha(3,'3',3)), false)"
 eq "F2 edge diz não íntegro: espelho intacto (valor, contagem, ausência)" \
-  "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT count(*) FROM omie_os_espelho) || '/' || (SELECT sum(ausencias_integras) FROM omie_os_espelho)")" "100/2/0"
-C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, NULL, 3, 3)"
+  "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT count(*) FROM omie_os_espelho) || '/' || (SELECT sum(ausencias_integras) FROM omie_os_espelho)")" "100/22/0"
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, NULL, 23, 23, 23)"
 eq "F3 staging ≠ total declarado (a edge afirma 3 = 3): não íntegro pelo banco" "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT integra FROM omie_os_sync_runs ORDER BY id DESC LIMIT 1)")" "100/false"
 C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, 'Omie caiu')"
 eq "F4 run com erro: não íntegro, status erro" "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT status || ':' || integra FROM omie_os_sync_runs ORDER BY id DESC LIMIT 1)")" "100/erro:false"
 C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)))"
 eq "F5 íntegro atualiza o valor" "$(E "SELECT valor_total::int FROM omie_os_espelho WHERE n_cod_os=1")" "555"
+
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":777}'), t_linha(2,'0462',77)), true, NULL, NULL, NULL, 23)"
+eq "F7 lidas ≠ total (paginação com repetição): não íntegro pelo banco" "$(E "SELECT valor_total::int FROM omie_os_espelho WHERE n_cod_os=1")" "555"
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":777}'), t_linha(2,'0462',77)), true, NULL, NULL, NULL, NULL, 1)"
+eq "F8 OS fora do contrato do payload: não íntegro (o espelho não é sobrescrito)" "$(E "SELECT valor_total::int FROM omie_os_espelho WHERE n_cod_os=1")" "555"
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":777}')), true, NULL, NULL, NULL, NULL, 0, true)"
+eq "F9 queda implausível (1 de 22 presentes): não íntegro, nenhuma ausência" "$(E "SELECT (SELECT valor_total::int FROM omie_os_espelho WHERE n_cod_os=1) || '/' || (SELECT sum(ausencias_integras) FROM omie_os_espelho)")" "555/0"
 
 echo "── U. sumiço (2 varreduras íntegras, 1ª data preservada)"
 # run U1: só a OS 1 aparece → OS 2 ganha a 1ª ausência
@@ -311,12 +352,12 @@ C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',35451
 eq "U4 2ª íntegra confirma, com a 1ª data de ausência" "$(E "SELECT ausencias_integras || '/' || (ausente_desde = '$INI_U1'::timestamptz) || '/' || (SELECT count(*) FROM omie_os_abertas_v WHERE n_cod_os=2) FROM omie_os_espelho WHERE n_cod_os=2")" "2/true/0"
 C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))"
 eq "U5 reapareceu: ausência zerada" "$(E "SELECT ausencias_integras || '/' || (ausente_desde IS NULL) || '/' || (primeira_ausencia_em IS NULL) FROM omie_os_espelho WHERE n_cod_os=2")" "0/true/true"
-eq "U6 nenhuma linha apagada do espelho" "$(E "SELECT count(*) FROM omie_os_espelho")" "2"
+eq "U6 nenhuma linha apagada do espelho" "$(E "SELECT count(*) FROM omie_os_espelho")" "22"
 
 echo "── F6. fechar repetido não conta 2ª ausência"
 F6RUN="$(E "SET ROLE service_role; SELECT omie_os_sync_abrir('colacor_sc')")"
-C "SET ROLE service_role; SELECT omie_os_sync_gravar($F6RUN, jsonb_build_array(t_linha(1,'461',3545104666)))"
-C "SET ROLE service_role; SELECT omie_os_sync_fechar($F6RUN, '{\"integra\":true,\"distintas\":1,\"total_registros_declarado\":1}', NULL)"
+C "SET ROLE service_role; SELECT omie_os_sync_gravar($F6RUN, jsonb_build_array(t_linha(1,'461',3545104666)) || t_base())"
+C "SET ROLE service_role; SELECT omie_os_sync_fechar($F6RUN, '{\"integra\":true,\"distintas\":21,\"total_registros_declarado\":21,\"lidas\":21,\"shape_err\":0,\"contrato_err\":0}', NULL)"
 F6B="$(E "SET ROLE service_role; SELECT omie_os_sync_fechar($F6RUN, '{\"integra\":true,\"distintas\":0,\"total_registros_declarado\":0}', NULL) ->> 'status'")"
 eq "F6 2º fechar do mesmo run = no-op; OS 2 com 1 ausência só" "$F6B/$(E "SELECT ausencias_integras FROM omie_os_espelho WHERE n_cod_os=2")" "ja_fechado/1"
 C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))"
@@ -340,7 +381,7 @@ C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',35451
 eq "V4 faturada e cancelada saem da view" "$(E "SELECT count(*) FROM omie_os_abertas_v WHERE n_cod_os IN (1,2)")" "0"
 eq "V5 RLS: quem vê a SC lê; quem não vê lê 0; staging fechado" \
   "$(E "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000aa'; SELECT count(*) FROM omie_os_abertas_v")/$(E "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT count(*) FROM omie_os_espelho")/$(E "SET ROLE authenticated; SELECT count(*) FROM omie_os_staging")" \
-  "1/0/ERRO:42501"
+  "21/0/ERRO:42501"
 
 echo "── E. elo OS → título"
 eq "E1 normalização: zeros à esquerda, brancos; vazio, só zeros e não-dígito rejeitados" \

@@ -11,6 +11,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { chamarOmie, fimDePaginacao } from "../_shared/omie-cliente.ts";
+import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { extrairLista, parseOS, totalDeclarado } from "./os-parse.ts";
 import { type Listar, REG_POR_PAGINA, type Resumo, VarreduraAbortada, varrer } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -42,8 +43,9 @@ function listarOS(registrosPorPagina: number, deadline: number): Listar {
       { conta: COMPANY, maxTentativas: 3, deadline },
     );
     if (fimDePaginacao(res)) return null;
-    if (res.faultstring) throw new Error(`Omie ListarOS p.${pagina}: ${res.faultstring.slice(0, 300)}`);
-    if (!res.ok) throw new Error(`Omie ListarOS p.${pagina} HTTP ${res.status}: ${res.texto.slice(0, 300)}`);
+    // a faultstring de chave inválida pode ecoar a app_key: redigir ANTES de truncar (Codex diff P1-7)
+    if (res.faultstring) throw new Error(`Omie ListarOS p.${pagina}: ${redigirSegredo(res.faultstring).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`Omie ListarOS p.${pagina} HTTP ${res.status}: ${redigirSegredo(res.texto).slice(0, 300)}`);
     if (res.corpo === null) throw new Error(`Omie ListarOS p.${pagina}: resposta não-JSON após retentativas`);
     return res.corpo;
   };
@@ -85,7 +87,8 @@ Deno.serve(async (req: Request) => {
       const chaves = (v: unknown) => v && typeof v === "object" ? Object.keys(v as Record<string, unknown>) : null;
       const parcelas = primeiro?.Parcelas;
       return json({
-        ok: true, versao: VERSAO,
+        // ok só com a lista na chave do contrato: forma desconhecida não "passa" no probe (Codex diff P1-2)
+        ok: lista !== null, versao: VERSAO,
         topKeys: Object.keys(resp),
         total_de_paginas: totalDeclarado(resp, "total_de_paginas") ?? null,
         total_de_registros: totalDeclarado(resp, "total_de_registros") ?? null,
@@ -99,13 +102,13 @@ Deno.serve(async (req: Request) => {
           const p = parseOS(primeiro);
           if (!p.ok) return p;
           const { payload: _payload, parcelas: _parcelas, ...resto } = p.linha;
-          return { ok: true, linha: resto };
+          return { ok: true, contrato: p.contrato, linha: resto };
         })() : null,
       });
     }
     if (action !== "sync") return json({ ok: false, versao: VERSAO, error: `action desconhecida: ${String(action)}` }, 400);
   } catch (e) {
-    return json({ ok: false, versao: VERSAO, mensagem: (mensagemDeErro(e) ?? "erro").slice(0, 600) }, 500);
+    return json({ ok: false, versao: VERSAO, mensagem: redigirSegredo(mensagemDeErro(e) ?? "erro").slice(0, 600) }, 500);
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -122,7 +125,7 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(`omie_os_sync_gravar: ${error.message}`);
     }, { deadline });
   } catch (e) {
-    erro = (mensagemDeErro(e) ?? "erro").slice(0, 600);
+    erro = redigirSegredo(mensagemDeErro(e) ?? "erro").slice(0, 600);
     resumo = e instanceof VarreduraAbortada ? { ...e.parcial, integra: false } : { integra: false };
   }
   const { data: fechado, error: fecharErr } = await db.rpc("omie_os_sync_fechar", {
@@ -131,5 +134,10 @@ Deno.serve(async (req: Request) => {
   if (fecharErr) {
     return json({ ok: false, versao: VERSAO, run: runId, mensagem: `omie_os_sync_fechar: ${fecharErr.message}`, erro }, 500);
   }
-  return json({ ok: erro === null, versao: VERSAO, run: runId, resumo, fechado, erro }, erro === null ? 200 : 500);
+  // sucesso = o BANCO promoveu a geração (Codex diff P2-8): run descartado ou fechamento repetido não é "ok"
+  const f = (fechado ?? {}) as Record<string, unknown>;
+  const promovida = f.status === "fechado" && f.integra === true;
+  const geracao = promovida ? "promovida" : f.status === "ja_fechado" ? "ja_fechado" : "descartada";
+  return json({ ok: erro === null && promovida, versao: VERSAO, run: runId, geracao, resumo, fechado, erro },
+    erro !== null ? 500 : promovida ? 200 : 207);
 });

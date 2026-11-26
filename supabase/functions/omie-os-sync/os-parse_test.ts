@@ -74,3 +74,22 @@ Deno.test("cliente ilegível → null (não 0)", () => {
   if (!p.ok) throw new Error(p.motivo);
   assertEquals(p.linha.n_cod_cli, null);
 });
+
+Deno.test("parcelamento truncado ou com nParcela repetido não vira prazo (Codex diff P1-5)", () => {
+  assertEquals(prazoMaxDias([{ nParcela: 1, nDias: 0 }], 2), null);          // declarou 2, veio 1
+  assertEquals(prazoMaxDias([{ nParcela: 1, nDias: 0 }, { nParcela: 1, nDias: 30 }]), null);
+  assertEquals(prazoMaxDias([{ nParcela: 1, nDias: 28 }, { nParcela: 2, nDias: 42 }], "2"), 42);
+  assertEquals(prazoMaxDias([{ nParcela: 1, nDias: 28 }], "abc"), null);
+});
+
+Deno.test("contrato: forma completa → null; chave faltando → nomeada", () => {
+  const ok = parseOS(OS());
+  if (!ok.ok) throw new Error(ok.motivo);
+  assertEquals(ok.contrato, null);
+  const semValor = parseOS({ Cabecalho: { nCodOS: 1, cNumOS: "1", nCodCli: 1, cEtapa: "10" }, InfoCadastro: { cFaturada: "N", cCancelada: "N", dDtInc: "01/01/2026" } });
+  if (!semValor.ok) throw new Error(semValor.motivo);
+  assertEquals([semValor.contrato, semValor.linha.valor_total], ["Cabecalho.nValorTotal", null]);
+  const semInfo = parseOS({ Cabecalho: { nCodOS: 1, cNumOS: "1", nCodCli: 1, cEtapa: "10", nValorTotal: 1 } });
+  if (!semInfo.ok) throw new Error(semInfo.motivo);
+  assertEquals(semInfo.contrato, "InfoCadastro");
+});

@@ -16,8 +16,8 @@
 -- ── 0. pré-condições ───────────────────────────────────────────────────────────────────────
 DO $pre$
 BEGIN
-  IF to_regprocedure('public.fin_user_can_access(text)') IS NULL THEN
-    RAISE EXCEPTION 'PRE omie-os: public.fin_user_can_access(text) não existe';
+  IF to_regprocedure('public.pode_ver_carteira_completa(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'PRE omie-os: public.pode_ver_carteira_completa(uuid) não existe';
   END IF;
   IF to_regclass('cron.job') IS NULL OR to_regnamespace('net') IS NULL OR to_regnamespace('vault') IS NULL THEN
     RAISE EXCEPTION 'PRE omie-os: cron/net/vault ausentes';
@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS public.omie_os_espelho (
 CREATE INDEX IF NOT EXISTS omie_os_espelho_cli_idx ON public.omie_os_espelho (company, n_cod_cli);
 
 -- ── 2. RLS e ACL (allowlist: o default ACL do Supabase dá ALL a authenticated e INSERT a sandbox_exec_*) ──
+-- Leitura por staff: só GESTOR (pode_ver_carteira_completa, a mesma regra do ledger de crédito). NÃO
+-- fin_user_can_access: em prod ela devolve true para QUALQUER employee/master, e o espelho entregaria a OS real que o
+-- probe recusa a um employee sem acesso financeiro à SC (Codex diff P0).
 DO $rls$
 DECLARE
   t text;
@@ -106,7 +109,8 @@ BEGIN
     END LOOP;
     -- escrita só pelas RPCs (dono): ninguém mais tem INSERT/UPDATE/DELETE
     EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
-    IF to_regrole('claude_ro') IS NOT NULL THEN
+    -- o staging é página de run em curso (talvez descartado): fica fora da medição (Codex diff P2-10)
+    IF to_regrole('claude_ro') IS NOT NULL AND t <> 'omie_os_staging' THEN
       EXECUTE format('GRANT SELECT ON public.%I TO claude_ro', t);
     END IF;
   END LOOP;
@@ -114,10 +118,19 @@ BEGIN
   GRANT SELECT ON public.omie_os_sync_runs, public.omie_os_espelho TO authenticated;
   DROP POLICY IF EXISTS omie_os_espelho_select ON public.omie_os_espelho;
   CREATE POLICY omie_os_espelho_select ON public.omie_os_espelho FOR SELECT TO authenticated
-    USING ((SELECT public.fin_user_can_access(company)));
+    USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));
   DROP POLICY IF EXISTS omie_os_sync_runs_select ON public.omie_os_sync_runs;
   CREATE POLICY omie_os_sync_runs_select ON public.omie_os_sync_runs FOR SELECT TO authenticated
-    USING ((SELECT public.fin_user_can_access(company)));
+    USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));
+  -- a sequência do IDENTITY nasce com o default ACL (ALL a anon/authenticated): reposicioná-la faria o abrir colidir
+  -- com ids usados e parar o espelho (Codex diff P1-6) → só o dono
+  FOR r IN SELECT DISTINCT a.grantee::regrole::text AS papel
+             FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+            WHERE c.oid = pg_get_serial_sequence('public.omie_os_sync_runs', 'id')::regclass
+              AND a.grantee <> 0 AND a.grantee <> c.relowner LOOP
+    EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM %s', pg_get_serial_sequence('public.omie_os_sync_runs', 'id'), r.papel);
+  END LOOP;
+  EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC', pg_get_serial_sequence('public.omie_os_sync_runs', 'id'));
 END
 $rls$;
 
@@ -250,6 +263,8 @@ DECLARE
   v_prom integer := 0;
   v_aus integer := 0;
   v_conf integer := 0;
+  v_lidas integer;
+  v_vivas integer;
 BEGIN
   SELECT * INTO v_run FROM public.omie_os_sync_runs WHERE id = p_run;
   IF NOT FOUND THEN
@@ -265,6 +280,9 @@ BEGIN
   v_distintas := CASE WHEN jsonb_typeof(p_resumo -> 'distintas') = 'number' THEN (p_resumo ->> 'distintas')::integer END;
   v_total := CASE WHEN jsonb_typeof(p_resumo -> 'total_registros_declarado') = 'number'
                   THEN (p_resumo ->> 'total_registros_declarado')::integer END;
+  v_lidas := CASE WHEN jsonb_typeof(p_resumo -> 'lidas') = 'number' THEN (p_resumo ->> 'lidas')::integer END;
+  SELECT count(*) INTO v_vivas FROM public.omie_os_espelho WHERE company = v_run.company AND ausente_desde IS NULL;
+  -- o banco exige o resumo INTEIRO coerente (Codex diff P1-4): lidas = distintas = total = staging, sem shape/contrato
   v_motivo := CASE
     WHEN p_erro IS NOT NULL THEN 'erro: ' || left(p_erro, 200)
     WHEN jsonb_typeof(p_resumo -> 'integra') IS DISTINCT FROM 'boolean' OR NOT (p_resumo ->> 'integra')::boolean
@@ -272,6 +290,14 @@ BEGIN
     WHEN v_total IS NULL THEN 'total_de_registros ausente'
     WHEN v_distintas IS DISTINCT FROM v_total THEN format('distintas %s ≠ total %s', v_distintas, v_total)
     WHEN v_gravadas <> v_total THEN format('staging %s ≠ total %s', v_gravadas, v_total)
+    WHEN v_lidas IS DISTINCT FROM v_total THEN format('lidas %s ≠ total %s', v_lidas, v_total)
+    WHEN jsonb_typeof(p_resumo -> 'shape_err') IS DISTINCT FROM 'number' OR (p_resumo ->> 'shape_err')::integer <> 0
+      THEN 'shape_err ausente ou > 0'
+    WHEN jsonb_typeof(p_resumo -> 'contrato_err') IS DISTINCT FROM 'number' OR (p_resumo ->> 'contrato_err')::integer <> 0
+      THEN 'contrato_err ausente ou > 0'
+    -- queda implausível (Codex diff P1-3): OS no Omie quase nunca somem; um total que cai abaixo de 90% das OS
+    -- presentes é resposta anômala, não exclusão em massa — não promove nem conta ausência (a reserva fica)
+    WHEN v_vivas > 0 AND v_total < 0.9 * v_vivas THEN format('queda implausível: total %s < 90%% de %s presentes', v_total, v_vivas)
   END;
   v_integra := v_motivo IS NULL;
 
@@ -438,8 +464,20 @@ BEGIN
                 AND (a.grantee = 0 OR a.grantee = 'anon'::regrole OR a.privilege_type <> 'SELECT')) THEN
     RAISE EXCEPTION 'POSCONDICAO omie-os: privilégio fora do dono além de SELECT';
   END IF;
-  IF has_table_privilege('authenticated', 'public.omie_os_staging', 'SELECT') THEN
-    RAISE EXCEPTION 'POSCONDICAO omie-os: staging legível por authenticated';
+  IF has_table_privilege('authenticated', 'public.omie_os_staging', 'SELECT')
+     OR (to_regrole('claude_ro') IS NOT NULL AND has_table_privilege('claude_ro', 'public.omie_os_staging', 'SELECT')) THEN
+    RAISE EXCEPTION 'POSCONDICAO omie-os: staging legível fora do dono/service_role';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class c CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('S', c.relowner))) a
+              WHERE c.oid = pg_get_serial_sequence('public.omie_os_sync_runs', 'id')::regclass
+                AND a.grantee <> c.relowner) THEN
+    RAISE EXCEPTION 'POSCONDICAO omie-os: sequência dos runs com privilégio fora do dono';
+  END IF;
+  IF (SELECT count(*) FROM pg_policy WHERE polrelid IN ('public.omie_os_espelho'::regclass, 'public.omie_os_sync_runs'::regclass)
+        AND pg_get_expr(polqual, polrelid) LIKE '%pode_ver_carteira_completa%') <> 2
+     OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid IN ('public.omie_os_espelho'::regclass, 'public.omie_os_sync_runs'::regclass)
+                  AND pg_get_expr(polqual, polrelid) LIKE '%fin_user_can_access%') THEN
+    RAISE EXCEPTION 'POSCONDICAO omie-os: leitura do espelho fora da regra de gestor';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = 'public.omie_os_abertas_v'::regclass
                                          AND reloptions @> ARRAY['security_invoker=on']) THEN

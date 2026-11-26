@@ -24,7 +24,13 @@ export interface OSLinha {
   payload: Record<string, unknown>;
 }
 
-export type ResultadoParse = { ok: true; linha: OSLinha } | { ok: false; motivo: string };
+/** `contrato` = a 1ª chave estrutural acordada que faltou (null = forma completa). Campo PRESENTE com valor
+ *  ilegível é só NULL; chave AUSENTE é perda estrutural e tira a integridade do run (Codex diff P1-2: uma forma
+ *  nova do payload não pode sobrescrever o espelho com NULL e tirar a OS da view). */
+export type ResultadoParse = { ok: true; linha: OSLinha; contrato: string | null } | { ok: false; motivo: string };
+
+const CONTRATO_CABECALHO = ["nCodOS", "cNumOS", "nCodCli", "cEtapa", "nValorTotal"] as const;
+const CONTRATO_INFO = ["cFaturada", "cCancelada", "dDtInc"] as const;
 
 function obj(v: unknown): Record<string, unknown> | null {
   return v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
@@ -99,13 +105,26 @@ function listaParcelas(v: unknown): unknown[] | null {
   return null;
 }
 
-/** Prazo = maior `nDias`, só se TODA parcela tiver `nDias` legível. Sem parcela ou alguma sem `nDias` → null. */
-export function prazoMaxDias(parcelas: unknown[] | null): number | null {
+/** Prazo = maior `nDias`, só se TODA parcela tiver `nDias` legível. Sem parcela ou alguma sem `nDias` → null.
+ *  Com `nQtdeParc` declarado, a lista tem de ter exatamente essa quantidade e `nParcela` sem repetição — parcelamento
+ *  truncado não vira "à vista" (Codex diff P1-5). */
+export function prazoMaxDias(parcelas: unknown[] | null, qtdeDeclarada?: unknown): number | null {
   if (!parcelas || parcelas.length === 0) return null;
+  if (qtdeDeclarada !== undefined && qtdeDeclarada !== null && qtdeDeclarada !== "") {
+    const q = inteiroNaoNegativo(qtdeDeclarada);
+    if (q === null || q !== parcelas.length) return null;
+  }
+  const numeros = new Set<string>();
   let max = -1;
   for (const p of parcelas) {
-    const n = inteiroNaoNegativo(obj(p)?.nDias);
+    const o = obj(p);
+    const n = inteiroNaoNegativo(o?.nDias);
     if (n === null) return null;
+    if (o?.nParcela !== undefined) {
+      const k = String(o.nParcela);
+      if (numeros.has(k)) return null;
+      numeros.add(k);
+    }
     if (n > max) max = n;
   }
   return max;
@@ -121,8 +140,13 @@ export function parseOS(item: unknown): ResultadoParse {
   const info = obj(it.InfoCadastro) ?? {};
   const parcelas = listaParcelas(it.Parcelas);
   const brutoValor = cab.nValorTotal;
+  const faltaCab = CONTRATO_CABECALHO.find((k) => !(k in cab));
+  const infoObj = obj(it.InfoCadastro);
+  const faltaInfo = infoObj ? CONTRATO_INFO.find((k) => !(k in infoObj)) : "InfoCadastro";
+  const contrato = faltaCab ? `Cabecalho.${faltaCab}` : faltaInfo ? (infoObj ? `InfoCadastro.${faltaInfo}` : faltaInfo) : null;
   return {
     ok: true,
+    contrato,
     linha: {
       n_cod_os: nCodOS,
       c_num_os: texto(cab.cNumOS),
@@ -133,7 +157,7 @@ export function parseOS(item: unknown): ResultadoParse {
       valor_bruto: brutoValor === undefined ? null : JSON.stringify(brutoValor),
       parcelas,
       n_parcelas: parcelas ? parcelas.length : null,
-      prazo_max_dias: prazoMaxDias(parcelas),
+      prazo_max_dias: prazoMaxDias(parcelas, cab.nQtdeParc),
       faturada: simNao(info.cFaturada),
       cancelada: simNao(info.cCancelada),
       data_inclusao: dataOmie(info.dDtInc, info.cHrInc),
@@ -151,7 +175,10 @@ export function extrairLista(resp: Record<string, unknown>): unknown[] | null {
 }
 
 /** Total declarado (`total_de_paginas`/`total_de_registros`): número ou string de dígitos; o resto → undefined. */
-export function totalDeclarado(resp: Record<string, unknown>, chave: "total_de_paginas" | "total_de_registros"): number | undefined {
+export function totalDeclarado(
+  resp: Record<string, unknown>,
+  chave: "total_de_paginas" | "total_de_registros" | "pagina" | "registros",
+): number | undefined {
   const v = resp[chave];
   if (typeof v === "number") return Number.isSafeInteger(v) && v >= 0 ? v : undefined;
   if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) return Number(v.trim());
