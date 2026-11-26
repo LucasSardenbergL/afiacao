@@ -44,12 +44,15 @@ function mensagem(tipo: string | null, produto: string | null, motivo: string | 
 
 /** Mensagens de falha para o resumo do envio, uma por produto que ficou sem OP confirmada. */
 export function falhasDaOrdemProducao(data: unknown): string[] {
-  if (!data || typeof data !== 'object') return [];
+  // Corpo ausente/ilegível sem `error` do invoke = OP NÃO confirmada (a chamada só sai com itens a produzir).
+  if (!data || typeof data !== 'object') return [mensagemNaoConfirmada(null, null)];
   const r = data as { success?: unknown; desfecho?: unknown; production_orders?: unknown };
   if (Array.isArray(r.desfecho)) {
-    return (r.desfecho as DesfechoOpResposta[])
+    const falhas = (r.desfecho as DesfechoOpResposta[])
       .filter((d) => d && d.status === 'falhou')
       .map((d) => mensagem(texto(d.tipo), texto(d.descricao), texto(d.motivo)));
+    // `success: false` sem falha detalhada (5ª rodada do Codex, P1): não fica calado.
+    return falhas.length === 0 && r.success === false ? [mensagemNaoConfirmada(null, null)] : falhas;
   }
   // Edge antiga (≤ v1.47): `success` sempre true; a recusa só aparece como OP sem id remoto na lista
   // (o id remoto pode vir em texto: a v1.47 repassa o `nCodOP` sem converter).

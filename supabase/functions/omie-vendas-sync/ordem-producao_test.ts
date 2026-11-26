@@ -1,6 +1,7 @@
 // Testa o CÓDIGO REAL de ordem-producao.ts no runtime real (Deno).
 // Roda com: deno test --no-remote --allow-read=supabase/functions supabase/functions/omie-vendas-sync/ordem-producao_test.ts
-import { agruparItensOp, lerRespostaOp, resumoOps, rotuloOp } from "./ordem-producao.ts";
+import { agruparItensOp, lerRespostaOp, motivoDaFalhaOp, resumoOps, rotuloOp } from "./ordem-producao.ts";
+import { OmieEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
 
 function igual(veio: unknown, esperado: unknown, ctx: string) {
   const v = JSON.stringify(veio);
@@ -93,6 +94,16 @@ Deno.test("data impossível não vence o prazo válido (2ª rodada do Codex)", (
   igual(r.ready_by_date, "2027-05-02", "timestamp vale pelo dia");
 });
 
+Deno.test("escrita indeterminada vira motivo SEM instrução de repetir (5ª rodada do Codex)", () => {
+  const e = new OmieEscritaIndeterminada("IncluirOrdemProducao", "colacor", "estourou 25s", new Error("timeout"));
+  if (!e.message.includes("antes de repetir")) throw new Error("pré-condição: o erro cru traz a instrução");
+  const m = motivoDaFalhaOp(e);
+  if (/repetir|confira/i.test(m)) throw new Error(`motivo ainda instrui: ${m}`);
+  igual(m, "a chamada terminou sem confirmação do Omie (ele pode ter gravado)", "motivo neutro");
+  igual(motivoDaFalhaOp(new Error("Produto sem estrutura")), "Produto sem estrutura", "erro comum passa");
+  igual(motivoDaFalhaOp("cru"), "cru", "não-Error passa como texto");
+});
+
 // ── fiação no index.ts (a action não é executável fora do runtime da edge) ─────────────────────
 
 Deno.test("fiação: criar_ordem_producao agrupa, lê a resposta e resume — sem success fixo nem número fabricado", async () => {
@@ -119,6 +130,7 @@ Deno.test("fiação: produto inválido NÃO grava linha local executável e cada
   for (const t of ['tipo: "indeterminado"', 'tipo: "sem_registro_local"']) {
     if (!bloco.includes(t)) throw new Error(`desfecho sem tipo: ${t}`);
   }
+  if (!bloco.includes("motivoFalha = motivoDaFalhaOp(opErr);")) throw new Error("catch da OP sem motivoDaFalhaOp (mensagem crua volta)");
   // 3ª rodada do Codex: o indeterminado leva a quantidade da OP AGREGADA (a conferência no Omie é pelo total).
   if (!/tipo: "indeterminado"[^}]*quantidade: opItem\.quantidade/.test(bloco)) throw new Error("indeterminado sem a quantidade agregada");
 });

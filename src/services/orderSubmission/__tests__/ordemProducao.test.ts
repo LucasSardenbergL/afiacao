@@ -75,10 +75,18 @@ describe('falhasDaOrdemProducao (PR 8.4)', () => {
     expect(falhasDaOrdemProducao({ success: true, production_orders: [{ id: 'x', omie_ordem_id: '77', descricao: 'OK' }] })).toEqual([]);
   });
 
-  it('edge antiga sem recusa → nada; success false sem lista → genérica; nada → nada', () => {
+  it('edge antiga sem recusa → nada; success false sem lista → genérica', () => {
     expect(falhasDaOrdemProducao({ success: true, production_orders: [{ omie_ordem_id: 5 }] })).toEqual([]);
     expect(falhasDaOrdemProducao({ success: false })).toHaveLength(1);
-    expect(falhasDaOrdemProducao(null)).toEqual([]);
+  });
+
+  it('corpo ausente ou success:false sem falha detalhada → aviso genérico, nunca calado (5ª rodada do Codex)', () => {
+    for (const corpo of [null, undefined, 'x', { success: false, desfecho: [] }]) {
+      const m = falhasDaOrdemProducao(corpo);
+      expect(m).toHaveLength(1);
+      expect(m[0]).toContain(NAO_CRIE);
+    }
+    expect(falhasDaOrdemProducao({ success: true, desfecho: [] })).toEqual([]);
   });
 });
 

@@ -38,7 +38,7 @@ import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { infoAdicionalItem, infoAdicionalItemAninhada, previsaoEntregaOmie, previsaoOrdemProducao } from "./o-que-vai-ao-omie.ts";
-import { agruparItensOp, type DesfechoOp, lerRespostaOp, resumoOps, rotuloOp } from "./ordem-producao.ts";
+import { agruparItensOp, type DesfechoOp, lerRespostaOp, motivoDaFalhaOp, resumoOps, rotuloOp } from "./ordem-producao.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
@@ -4529,7 +4529,8 @@ Deno.serve(async (req) => {
             }
           } catch (opErr) {
             // Recusa OU resultado indeterminado (timeout depois de gravar): o front manda conferir no Omie.
-            motivoFalha = opErr instanceof Error ? opErr.message : String(opErr);
+            console.error(`[Omie Vendas][${account}] IncluirOrdemProducao falhou (erro completo):`, opErr);
+            motivoFalha = motivoDaFalhaOp(opErr);
           }
           if (motivoFalha) console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, motivoFalha);
 

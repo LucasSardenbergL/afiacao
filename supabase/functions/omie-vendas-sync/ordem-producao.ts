@@ -18,6 +18,7 @@
 // Testado em ./ordem-producao_test.ts.
 
 import { diaIsoValido } from "./o-que-vai-ao-omie.ts";
+import { ehEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
 
 export interface ItemOp {
   product_id?: string | null;
@@ -110,4 +111,14 @@ export function rotuloOp(id: number, numero: string | null): string {
 export function resumoOps(desfechos: DesfechoOp[]): { success: boolean; falhas: number } {
   const falhas = desfechos.filter((d) => d.status === "falhou").length;
   return { success: falhas === 0, falhas };
+}
+
+/**
+ * Motivo da falha que vai ao vendedor. A escrita INDETERMINADA (timeout depois de enviar) traz no texto
+ * "confira no Omie antes de repetir" — instrução de repetir que, ao lado de "não crie à mão", induz OP em
+ * dobro (5ª rodada do Codex). Ela vira um motivo SEM instrução; o erro completo fica no log da edge.
+ */
+export function motivoDaFalhaOp(err: unknown): string {
+  if (ehEscritaIndeterminada(err)) return "a chamada terminou sem confirmação do Omie (ele pode ter gravado)";
+  return err instanceof Error ? err.message : String(err);
 }
