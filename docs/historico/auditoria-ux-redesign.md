@@ -404,6 +404,24 @@ Lacuna: o front ainda não mostra `aviso_previsao`/`aviso_local` (Onda 3); até 
 `omie_payload`. Falsificação 26/26 vermelha (13 sabotagens, uma por camada e uma por P0/P1 do Codex, × `C`
 e `pt_BR.UTF-8`), controle verde na mesma invocação.
 
+**PR 8.4 — ordem de produção honesta** (edge `omie-vendas-sync` v1.52 + front; v1.48 = 2.5, v1.49 e v1.51 = crédito-IA 6b, v1.50 = edição de pedido). O
+`catch` do `IncluirOrdemProducao` só logava, a OP local nascia com número `"null"` (`String(null)`), a resposta
+era `success: true` incondicional e o front nem lia o retorno do invoke. Agora cada produto volta com desfecho
+(`criada` · `falhou` + tipo + motivo), `success` só sem falha, produto inválido não vai ao Omie nem grava linha
+local executável, e o mesmo produto em duas linhas vira uma OP com a soma (o `cCodIntOP` é por produto e a 2ª
+era recusada). O envio mostra a falha por produto, e o front lê também a resposta da v1.47.
+Lição (núcleo): o Codex achou P0 em 4 rodadas seguidas (6 → 2 → 2 → 2), sempre na instrução ao vendedor —
+"procure pela chave", "confira por produto e quantidade", "N no total" — porque cada uma falha numa borda
+(timeout que grava depois, OP agregada × linhas, edge antiga × nova, envio ainda em curso). Corte: OP existente
+→ "não crie outra, peça a conferência do vínculo"; qualquer outra falha → "não confirmada — não crie à mão, peça
+a quem cuida da produção para conferir no Omie". Antes disso, a 1ª rodada já tinha cortado uma "idempotência
+local" que nenhum caminho do app usava. Fora do PR: reenvio da OP pela tela (a falha não segura o pedido);
+`production_orders` tem 0 linhas em prod. r5 e r6 (núcleo) acharam 1 P0 cada, ambos o texto CRU do Omie/edge na
+tela ("confira antes de repetir", "Tente novamente em 1799 segundos") ao lado de "não crie à mão": só motivo
+escrito por nós chega ao vendedor; o cru vai ao log. Teto de 6 rodadas, sem r7. Falsificação 66/66 vermelha
+(33 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação; a ligação no `index.ts` tem teste Deno
+de fiação.
+
 **PR 8.1 — vendedor e crédito falham fechado** (só front · Publish). A validação do vendedor nos
 Omies (`omie-cliente` → `validar_vendedor`) só bloqueava com `consistente === false` E lista
 não vazia; rede/4xx/corpo sem `consistente` caíam em "sem divergência" e o envio seguia — e o
@@ -412,7 +430,10 @@ caminho de envio nem conferia o vendedor (só o `disabled` do botão). Agora 4 e
 para autoatendimento/sem documento, que não bloqueia); só `consistente === true` libera; o guard
 também roda no `submitOrder` antes da trava; "Tentar de novo" revalida sem limpar o carrinho. O
 alerta de crédito que falhava calado agora diz "não foi possível consultar" (não trava a venda: a
-trava de crédito no servidor, `gate-credito.ts`, já é fail-closed). Falsificação 20/20 vermelha
-(10 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna conhecida: a
+trava de crédito no servidor, `gate-credito.ts`, já é fail-closed). Codex: r1 1 P0 (o alerta prometia "o envio confere no servidor", e a OS de Afiação não passa
+pelo gate de crédito) + 2 P1 (validação sem prazo travava em `validando`; erro escondia o saldo já lido), todos
+corrigidos; r2 0 P0. Lição (r3, 2 P0): "Revalidar" na DIVERGÊNCIA é armadilha — a revalidação não recarrega os
+códigos de vendedor da seleção (a OS sairia com o antigo) e a conta que falha some da comparação; a saída é
+"Trocar". Falsificação 36/36 vermelha (18 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna conhecida: a
 EDGE trata conta Omie que falhou como "não encontrada" (fica fora da comparação) — 3 contas
 falhando devolvem `consistente: true`; corrigir exige deploy da `omie-cliente` (Onda 3).

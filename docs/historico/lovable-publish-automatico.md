@@ -64,7 +64,7 @@ com CDN lento, ancestralidade, nada-a-publicar, liberar_sha): todas vermelhas.
 ## Vigia local no Mac (2026-11-22) — o caminho no plano Pro
 
 `scripts/lovable-vigia.sh`, instalado por `scripts/lovable-vigia-instalar.sh` como LaunchAgent
-`dev.afiacao.lovable-vigia` (180 s). Clone PRÓPRIO em `~/.local/share/afiacao/vigia-repo` (checkout
+`dev.afiacao.lovable-vigia` (60 s; era 180 s até 2026-11-26). Clone PRÓPRIO em `~/.local/share/afiacao/vigia-repo` (checkout
 de `origin/main` a cada tick — nunca um worktree de sessão); estado/log em
 `~/.local/state/afiacao/lovable-vigia/` (`vigia.log` rotacionado 1 MB×3; `touch pausado` pausa).
 
