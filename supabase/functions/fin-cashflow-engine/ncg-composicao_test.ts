@@ -320,6 +320,8 @@ Deno.test("mapa ilegível (timeout, corpo nulo, página cheia): a engine LANÇA 
       igual(res.status, 500, `status (${nome})`);
       igual(snapshots.length, 0, `snapshot gravado (${nome})`);
       igual(JSON.stringify(corpo).includes("fin_categoria_fluxo_mapping"), true, `erro não nomeia a leitura (${nome})`);
+      // Timeout: o erro carrega a SQLSTATE (só `exigirLeitura` a propaga) — "falhou" ≠ "veio malformado".
+      if (falha === "timeout") igual(JSON.stringify(corpo).includes("57014"), true, "erro do timeout sem a SQLSTATE");
     } finally {
       MAPA_FALHA = "nao";
     }
