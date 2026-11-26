@@ -215,7 +215,7 @@ function BlocoConcordancia({ p }: { p: PainelCredito }) {
     <Card>
       <CardHeader>
         <CardTitle>Concordância IA × regra</CardTitle>
-        <CardDescription>Sensor do gate v2 em sombra (PR 5) e distribuição das faixas simuladas.</CardDescription>
+        <CardDescription>A IA ainda não decide pedido (backtest IA × regra é a fatia 5b). Hoje: gate v2 em sombra (PR 5) — faixas e concordância com o piso atual.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {ind(c.concordancia) && <SemDado motivo={c.concordancia.motivo} />}
@@ -225,6 +225,14 @@ function BlocoConcordancia({ p }: { p: PainelCredito }) {
             {c.sombra.porFaixa.length === 0
               ? <p className="text-muted-foreground">Nenhum pedido avaliado em sombra ainda.</p>
               : c.sombra.porFaixa.map((m) => <div key={`${m.faixa}-${m.motivo}`}>{m.faixa} · {m.motivo}: {int(m.decisoes)}</div>)}
+            <div className="mt-2 font-medium">Gate v2 × piso atual ({int(c.sombra.pvs)} pedidos, carga inicial fora)</div>
+            {c.sombra.v2XPiso.length === 0
+              ? <p className="text-muted-foreground">Sem pedido para comparar ainda.</p>
+              : c.sombra.v2XPiso.map((m) => (
+                <div key={`${m.faixa}-${String(m.pisoBloqueado)}`}>
+                  v2 {m.faixa} · piso {m.pisoBloqueado === null ? 'sem informação' : m.pisoBloqueado ? 'bloqueou' : 'liberou'}: {int(m.decisoes)}
+                </div>
+              ))}
           </div>
         )}
         {ind(p.fila) ? <SemDado motivo={p.fila.motivo} /> : (

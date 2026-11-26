@@ -67,6 +67,8 @@ type NaoConsolidado = {
 };
 
 type FaixaMotivo = { faixa: string; motivo: string; decisoes: number | null };
+/** `pisoBloqueado` null = o piso não informou (ausente ≠ "não bloqueou"). */
+type V2XPiso = { faixa: string; pisoBloqueado: boolean | null; decisoes: number | null };
 
 type LiberadoAtrasado = {
   salesOrderId: string;
@@ -121,7 +123,7 @@ export type PainelCredito = {
   };
   concordancia: {
     concordancia: Indisponivel | { disponivel: true };
-    sombra: Bloco<{ porFaixa: FaixaMotivo[] }>;
+    sombra: Bloco<{ pvs: number | null; porFaixa: FaixaMotivo[]; v2XPiso: V2XPiso[] }>;
   };
   fila: Bloco<{ abertas: number | null; abertaMaisAntiga: string | null; decididasPeriodo: number | null }>;
   liberados: {
@@ -252,7 +254,15 @@ export function lerPainelCredito(raw: Json | null): PainelCredito {
       concordancia: conc.disponivel === true
         ? { disponivel: true }
         : { disponivel: false, motivo: str(conc.motivo) ?? 'fonte não informou o motivo' },
-      sombra: bloco(conc.sombra, (o) => ({ porFaixa: faixas(o.por_faixa) })),
+      sombra: bloco(conc.sombra, (o) => ({
+        pvs: num(o.pvs),
+        porFaixa: faixas(o.por_faixa),
+        v2XPiso: arr(o.v2_x_piso).flatMap((x) => {
+          const v = obj(x);
+          const faixa = str(v?.faixa);
+          return v && faixa ? [{ faixa, pisoBloqueado: bool(v.piso_bloqueado), decisoes: num(v.decisoes) }] : [];
+        }),
+      })),
     },
     fila: bloco(r.fila, (o) => ({
       abertas: num(o.abertas),

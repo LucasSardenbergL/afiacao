@@ -70,6 +70,17 @@ describe('lerPainelCredito', () => {
     expect(lerPainelCredito(raw as unknown as Json).fila).toMatchObject({ disponivel: false });
   });
 
+  it('sombra do PR 5: v2 × piso com piso ausente fica null, não "liberou"', () => {
+    const raw = { ...base, concordancia: { ...base.concordancia, sombra: { disponivel: true, pvs: 2,
+      por_faixa: [{ faixa: 'amarelo', motivo: 'sem_limite', decisoes: 2 }],
+      v2_x_piso: [{ faixa: 'amarelo', piso_bloqueado: null, decisoes: 1 }, { faixa: 'amarelo', piso_bloqueado: false, decisoes: 1 }] } } };
+    const s = lerPainelCredito(raw as unknown as Json).concordancia.sombra;
+    expect(s.disponivel).toBe(true);
+    if (!s.disponivel) throw new Error('sombra deveria estar disponível');
+    expect(s.pvs).toBe(2);
+    expect(s.v2XPiso.map((v) => v.pisoBloqueado)).toEqual([null, false]);
+  });
+
   it('fila disponível lê os números', () => {
     const raw = { ...base, fila: { disponivel: true, abertas: 2, aberta_mais_antiga: '2026-11-25T10:00:00Z', decididas_periodo: 5 } };
     expect(lerPainelCredito(raw as unknown as Json).fila).toEqual({

@@ -237,9 +237,12 @@ asserts() {
   eq "motivo = PR 5 não aplicado" "$(J "(r->'concordancia'->'sombra'->>'motivo') LIKE '%(PR 5) ainda n%o aplicado%'")" "t"
 
   echo "── sombra do PR 5 (view credito_sombra_pv_atual criada e desfeita na transação) ──"
-  local VOK="CREATE VIEW public.credito_sombra_pv_atual AS SELECT * FROM (VALUES ('amarelo','sem_limite'),('amarelo','sem_limite'),('verde','dentro_limite')) v(faixa, motivo)"
+  # forma do PR 5 (#4192): faixa, motivo, piso jsonb (saída do venda_gate_credito_grupo), carga_inicial
+  local VOK="CREATE VIEW public.credito_sombra_pv_atual AS SELECT faixa, motivo, piso::jsonb AS piso, carga_inicial FROM (VALUES ('amarelo','sem_limite','{\"bloqueado\":false}',false),('amarelo','sem_limite','{\"bloqueado\":false}',false),('verde','dentro_limite','{\"bloqueado\":false}',false),('vermelho','piso_vencido_60d','{\"bloqueado\":true}',false),('verde','dentro_limite','{\"bloqueado\":false}',true)) v(faixa, motivo, piso, carga_inicial)"
   eq "com a view: sombra disponível" "$(Jv "$VOK" "r->'concordancia'->'sombra'->>'disponivel'")" "true"
-  eq "com a view: 3 PVs" "$(Jv "$VOK" "r->'concordancia'->'sombra'->>'pvs'")" "3"
+  eq "com a view: 4 PVs (carga inicial fora)" "$(Jv "$VOK" "r->'concordancia'->'sombra'->>'pvs'")" "4"
+  eq "v2 × piso: vermelho com piso bloqueado = 1" "$(Jv "$VOK" "(SELECT f->>'decisoes' FROM jsonb_array_elements(r->'concordancia'->'sombra'->'v2_x_piso') f WHERE f->>'faixa'='vermelho' AND f->>'piso_bloqueado'='true')")" "1"
+  eq "v2 × piso: verde com piso livre = 1 (carga inicial fora)" "$(Jv "$VOK" "(SELECT f->>'decisoes' FROM jsonb_array_elements(r->'concordancia'->'sombra'->'v2_x_piso') f WHERE f->>'faixa'='verde' AND f->>'piso_bloqueado'='false')")" "1"
   eq "com a view: amarelo/sem_limite = 2" "$(Jv "$VOK" "(SELECT f->>'decisoes' FROM jsonb_array_elements(r->'concordancia'->'sombra'->'por_faixa') f WHERE f->>'faixa'='amarelo' AND f->>'motivo'='sem_limite')")" "2"
   local VRUIM="CREATE VIEW public.credito_sombra_pv_atual AS SELECT 'verde'::text AS faixa"
   eq "view com outra forma: só o bloco degrada" "$(Jv "$VRUIM" "r->'concordancia'->'sombra'->>'disponivel'")" "false"
@@ -345,6 +348,7 @@ sabota pv_cru       "s/ltrim(f.numero_pedido, '0') = ltrim(l.pv, '0')/f.numero_p
 sabota gemeo_ignora "s/WHERE g.id = so.gemeo_importado_id AND g.status = 'cancelado')/WHERE false)/"
 sabota sombra_sem_guarda "s/IF to_regclass('public.credito_sombra_pv_atual') IS NULL THEN/IF false THEN/"
 sabota sombra_sem_excecao "s/EXCEPTION WHEN undefined_column OR undefined_table OR insufficient_privilege THEN/EXCEPTION WHEN division_by_zero THEN/"
+sabota sombra_com_carga "s/FROM public.credito_sombra_pv_atual a WHERE NOT a.carga_inicial),/FROM public.credito_sombra_pv_atual a),/"
 sabota acl_aberta   's/EXECUTE format(.REVOKE ALL ON FUNCTION public.credito_painel_resumo(integer) FROM %s., r.papel);/NULL;/'
 
 echo "══ RESTAURAÇÃO (original de novo) ══"

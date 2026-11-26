@@ -239,22 +239,32 @@ BEGIN
   ELSE
     BEGIN
       EXECUTE $q$
+        -- NOT carga_inicial: a distribuição é dos PVs avaliados no fluxo, não da carga dos preexistentes
+        -- (orientação do dono do PR 5; seção 4 de db/medir-credito-sombra.sql)
         SELECT jsonb_build_object('disponivel', true,
-                 'pvs', (SELECT count(*) FROM public.credito_sombra_pv_atual),
+                 'pvs', (SELECT count(*) FROM public.credito_sombra_pv_atual a WHERE NOT a.carga_inicial),
                  'por_faixa', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                      'faixa', z.faixa, 'motivo', z.motivo, 'decisoes', z.n) ORDER BY z.faixa, z.n DESC)
                    FROM (SELECT a.faixa::text AS faixa, a.motivo::text AS motivo, count(*) AS n
-                           FROM public.credito_sombra_pv_atual a GROUP BY 1, 2) z), '[]'::jsonb))
+                           FROM public.credito_sombra_pv_atual a WHERE NOT a.carga_inicial
+                          GROUP BY 1, 2) z), '[]'::jsonb),
+                 -- concordância v2 × piso atual (a única que existe: a IA ainda não decide — fatia 5b).
+                 -- piso_bloqueado NULL (piso sem a chave) fica como NULL, não como "não bloqueou".
+                 'v2_x_piso', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                     'faixa', z.faixa, 'piso_bloqueado', z.pb, 'decisoes', z.n) ORDER BY z.faixa, z.pb)
+                   FROM (SELECT a.faixa::text AS faixa, (a.piso ->> 'bloqueado')::boolean AS pb, count(*) AS n
+                           FROM public.credito_sombra_pv_atual a WHERE NOT a.carga_inicial
+                          GROUP BY 1, 2) z), '[]'::jsonb))
       $q$ INTO v_sombra;
     EXCEPTION WHEN undefined_column OR undefined_table OR insufficient_privilege THEN
       v_sombra := jsonb_build_object('disponivel', false, 'motivo',
-        'credito_sombra_pv_atual existe mas não tem a forma esperada (faixa, motivo): o painel precisa ser ajustado');
+        'credito_sombra_pv_atual existe mas não tem a forma esperada (faixa, motivo, piso, carga_inicial): o painel precisa ser ajustado');
     END;
   END IF;
 
   SELECT jsonb_build_object(
     'disponivel', false,
-    'motivo', 'sensor de concordância IA × regra (PR 5) ainda não está em produção',
+    'motivo', 'a IA ainda não decide pedido: o backtest IA × regra é a fatia 5b (depois do PR 4). Hoje só existe a concordância gate v2 × piso, abaixo',
     'sombra', v_sombra
   ) INTO v_concordancia;
 
