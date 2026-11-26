@@ -1,6 +1,6 @@
 // Lógica da tela de edição de pedido de venda (load, edição de itens, save no Omie).
 // Extraída verbatim de src/pages/SalesOrderEdit.tsx (god-component split).
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { itensPedidoDoJson, omiePayloadDoJson } from '@/lib/pedido/itens-json';
@@ -21,6 +21,16 @@ import {
   invalidPricedOrderItemIndices, invalidOrderPriceMessage, invalidQuantityOrderItemIndices, subtotalDaEdicao,
 } from './priceGuard';
 import { totalLinhaOuAusente } from '@/lib/format';
+import { valoresDaEdicaoLocal } from './edicaoLocal';
+import { precoDeNascimento, type InsumosDoNascimento } from '@/lib/pricing/precoDeNascimento';
+import { carregarPrecosPraticados } from '@/hooks/unifiedOrder/precos-praticados';
+import { buscarMultConfig, buscarTierPorConta } from '@/hooks/useClienteTier';
+
+/** `blocked` da edge `alterar_pedido` que trazem `motivo` legível (edge v1.48, ./edicao-omie.ts). */
+const BLOQUEIOS_COM_MOTIVO = [
+  'gemeo_omie', 'etapa_omie', 'leitura_omie_incompleta', 'cliente_omie',
+  'origem_omie', 'status_pedido', 'conta_desconhecida',
+];
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import {
   lerRespostaFormas,
@@ -57,6 +67,13 @@ export function useSalesOrderEdit() {
   // Tint color dialog
   const [tintPendingProduct, setTintPendingProduct] = useState<OmieProduct | null>(null);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
+  // Insumos do preço de NASCIMENTO do produto adicionado — os mesmos do Novo Pedido (último praticado
+  // do cliente, tier × multiplicador). `null` = ainda carregando: "Adicionar" espera, como no wizard,
+  // para o item não nascer pela tabela por uma corrida.
+  const [insumosPreco, setInsumosPreco] = useState<InsumosDoNascimento | null>(null);
+  // Token da carga: a resposta tardia do pedido ANTERIOR (mesma instância da rota) não pode
+  // sobrescrever os insumos do pedido aberto agora — o item de B nasceria com o preço de A.
+  const cargaPrecoRef = useRef(0);
 
   useEffect(() => {
     if (id) loadOrder();
@@ -64,13 +81,20 @@ export function useSalesOrderEdit() {
 
   const loadOrder = async () => {
     if (!id) return;
+    // Geração da carga nasce ANTES do 1º await: uma resposta tardia de qualquer leitura do pedido
+    // anterior (sales_orders, payload, profiles, preços) não publica sobre o pedido aberto agora
+    // (Codex r3: atrasar só `profiles` de A fazia A pegar o token depois de B).
+    const minhaCarga = ++cargaPrecoRef.current;
+    const velha = () => cargaPrecoRef.current !== minhaCarga;
+    setInsumosPreco(null);
     try {
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('id, customer_user_id, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, hash_payload')
+        .select('id, customer_user_id, created_by, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, updated_at, hash_payload')
         .eq('id', id)
         .single();
       if (error) throw error;
+      if (velha()) return;
       const row = data;
       // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
       // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
@@ -78,6 +102,7 @@ export function useSalesOrderEdit() {
       // o resto do payload. Falha do canal ⇒ fail-closed (o pedido não carrega).
       const { data: pl, error: plErr } = await supabase.rpc('staff_get_sales_order_payload', { p_order_ids: [id] });
       if (plErr) throw plErr;
+      if (velha()) return;
       const payload = omiePayloadDoJson(pl?.[0]?.omie_payload ?? null, `sales_orders ${row.id}`);
       const o: SalesOrder = {
         id: row.id,
@@ -93,6 +118,7 @@ export function useSalesOrderEdit() {
         omie_payload: payload,
         origem_omie: typeof row.hash_payload === 'string' && row.hash_payload.startsWith('omie_'),
         created_at: row.created_at,
+        updated_at: row.updated_at ?? null,
       };
       setOrder(o);
       setItems(o.items || []);
@@ -105,8 +131,16 @@ export function useSalesOrderEdit() {
         .select('name')
         .eq('user_id', o.customer_user_id)
         .single();
+      if (velha()) return;
       if (profile) setCustomerName(profile.name || '');
       setCustomerUserId(o.customer_user_id);
+      carregarInsumosPreco(o.customer_user_id, row.created_by ?? null, minhaCarga).catch((e) => {
+        // Rede de segurança: nunca deixa "Adicionar" preso em "carregando" — degrada para a tabela pura.
+        console.error('[edição] insumos de preço do cliente (falha inesperada)', e);
+        if (cargaPrecoRef.current === minhaCarga) {
+          setInsumosPreco({ precos: { oben: {}, colacor: {} }, datas: { oben: {}, colacor: {} }, tierPorConta: null, multConfig: null });
+        }
+      });
 
       const account = o.account === 'colacor' ? 'colacor' : 'oben';
 
@@ -138,6 +172,7 @@ export function useSalesOrderEdit() {
           return data;
         }),
       ]);
+      if (velha()) return; // catálogo/formas da conta do pedido anterior não publicam
 
       // ── Duas metades do mesmo site, de PRs diferentes (money-path §9). Elas não são
       // alternativas: tratam falhas DIFERENTES, e resolver por um lado reverteria a outra.
@@ -175,6 +210,36 @@ export function useSalesOrderEdit() {
     }
   };
 
+  const carregarInsumosPreco = async (cliente: string | null, criador: string | null, carga: number) => {
+    const vazio: InsumosDoNascimento = {
+      precos: { oben: {}, colacor: {} }, datas: { oben: {}, colacor: {} }, tierPorConta: null, multConfig: null,
+    };
+    // Legado: orçamento que nasceu sem cliente grava `customer_user_id = user.id` (submitQuote). Ler o
+    // histórico/tier dessa identidade daria o preço do VENDEDOR — sem cliente provado, tabela pura.
+    if (!cliente || (criador !== null && cliente === criador)) {
+      setInsumosPreco(vazio); // síncrono: ainda é a carga atual
+      return;
+    }
+    const [precos, tier, mult] = await Promise.allSettled([
+      carregarPrecosPraticados(cliente), buscarTierPorConta(cliente), buscarMultConfig(),
+    ]);
+    if (cargaPrecoRef.current !== carga) return; // outro pedido foi aberto: esta resposta é velha
+    if (precos.status === 'rejected' || tier.status === 'rejected' || mult.status === 'rejected') {
+      console.error('[edição] insumos de preço do cliente', { precos: precos.status, tier: tier.status, mult: mult.status });
+      toast.warning('Preço do cliente não carregou por completo', {
+        description: precos.status === 'rejected'
+          ? 'Produto adicionado agora não considera o último preço praticado com este cliente. Confira o preço antes de salvar.'
+          : 'Produto adicionado agora não considera o tier do cliente. Confira o preço antes de salvar.',
+      });
+    }
+    setInsumosPreco({
+      precos: precos.status === 'fulfilled' ? { oben: precos.value.oben, colacor: precos.value.colacor } : vazio.precos,
+      datas: precos.status === 'fulfilled' ? { oben: precos.value.datasOben, colacor: precos.value.datasColacor } : vazio.datas,
+      tierPorConta: tier.status === 'fulfilled' ? tier.value : null,
+      multConfig: mult.status === 'fulfilled' ? mult.value : null,
+    });
+  };
+
   const updateItem = (index: number, field: 'quantidade' | 'valor_unitario', value: number | null) => {
     setItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
@@ -206,6 +271,14 @@ export function useSalesOrderEdit() {
     setItems(prev => prev.filter((_, i) => i !== index));
   };
 
+  /** O preço que o clique em "Adicionar" vai aplicar — a busca mostra ESTE, não a tabela (Codex r3).
+   *  `null` = ainda carregando ou sem preço sabido. Base tintométrica: o preço sai do diálogo de cor. */
+  const precoPrevisto = (product: OmieProduct): number | null => {
+    if (product.is_tintometric && product.tint_type === 'base') return null; // sai do diálogo de cor
+    if (!insumosPreco) return null;
+    return precoDeNascimento(product, insumosPreco, new Date());
+  };
+
   const addProduct = (product: OmieProduct) => {
     // If tintometric base, open color dialog
     if (product.is_tintometric && product.tint_type === 'base') {
@@ -219,6 +292,13 @@ export function useSalesOrderEdit() {
       toast.error('Este produto já está no pedido');
       return;
     }
+    if (!insumosPreco) {
+      toast.info('Carregando o preço do cliente — tente adicionar de novo em instantes.');
+      return;
+    }
+    // Mesma decisão do Novo Pedido: último praticado ≤180d > tabela × mult(tier) > tabela.
+    // `null` = sem preço sabido (o guard do salvar barra) — nunca R$ 0,00.
+    const preco = precoDeNascimento(product, insumosPreco, new Date());
     const newItem: OrderItem = {
       product_id: product.id,
       omie_codigo_produto: product.omie_codigo_produto,
@@ -226,8 +306,8 @@ export function useSalesOrderEdit() {
       descricao: product.descricao,
       unidade: product.unidade || 'UN',
       quantidade: 1,
-      valor_unitario: product.valor_unitario || 0,
-      valor_total: product.valor_unitario || 0,
+      valor_unitario: preco,
+      valor_total: totalLinhaOuAusente(1, preco),
     };
     setItems(prev => [...prev, newItem]);
     setShowAddProduct(false);
@@ -396,7 +476,10 @@ export function useSalesOrderEdit() {
               } : {}),
             })),
             observacao: notes,
-            codigo_parcela: selectedParcela || undefined,
+            // Só a parcela que o VENDEDOR escolheu: sem mudança, a edge herda a condição VIVA do PV
+            // (`parcelaEfetiva`). Reenviar a do recibo regravaria um prazo que o financeiro já trocou
+            // no Omie (Codex r3).
+            codigo_parcela: selectedParcela && selectedParcela !== parcelaOriginal ? selectedParcela : undefined,
             // Gate ATP fase 2: esta via entende blocked:'atp' (aumento de
             // exposição Oben na edição é bloqueado na fronteira).
             atp_capaz: true,
@@ -478,6 +561,18 @@ export function useSalesOrderEdit() {
           setSaving(false);
           return;
         }
+        const recusa = data as { blocked?: string; motivo?: string } | null;
+        if (recusa?.blocked && BLOQUEIOS_COM_MOTIVO.includes(recusa.blocked)) {
+          // Travas da edge v1.48 (./edicao-omie.ts): gêmeo avançado, etapa viva, PV de outro cliente,
+          // leitura incompleta, origem/status/conta. O motivo vem da edge — a tela só o mostra.
+          track('pedido.edicao_bloqueada', { motivo: recusa.blocked, empresa: account });
+          toast.error('Edição recusada — o Omie NÃO foi atualizado', {
+            description: recusa.motivo ?? 'A edge recusou a edição sem dizer o motivo. Recarregue e tente de novo.',
+            duration: 12000,
+          });
+          setSaving(false);
+          return;
+        }
         if (!(data as { success?: boolean } | null)?.success) {
           toast.error('O Omie não confirmou a alteração — o pedido local seguiu intacto. Tente novamente.');
           setSaving(false);
@@ -494,17 +589,49 @@ export function useSalesOrderEdit() {
             ...(selectedParcela ? { codigo_parcela: selectedParcela } : {}),
           },
         };
-        const { error } = await supabase
+        // Só observação/parcela mudou → items/subtotal/total NÃO entram no UPDATE (o líquido gravado,
+        // com desconto/frete do cabeçalho, fica intacto). Itens mudaram num pedido com ajuste → recusa.
+        const valores = valoresDaEdicaoLocal({
+          itensOriginais: order.items ?? [],
+          itensNovos: items,
+          subtotalOriginal: order.subtotal,
+          totalOriginal: order.total,
+          subtotalNovo: subtotal,
+        });
+        if (!valores.ok) {
+          toast.error(valores.motivo);
+          setSaving(false);
+          return;
+        }
+        // A decisão "sem PV" foi tomada com a foto da abertura da tela: o UPDATE só vale se a linha
+        // AINDA está assim — sem PV, não excluída, mesmo status. Outra aba que converteu o orçamento
+        // nesse meio-tempo faz o UPDATE não casar nenhuma linha (Codex 2026-11-26). O carimbo
+        // `envio_omie_reivindicado_em` NÃO entra no filtro: `authenticated` não tem SELECT nessa coluna
+        // (42501 em todo salvar) e um envio recusado o deixa preso para sempre. Em vez dele, `updated_at`
+        // (trigger em TODO UPDATE, SELECT concedido): o claim de um envio feito depois da abertura muda a
+        // versão e o UPDATE não casa — sem dois totais confirmados para a mesma venda (Codex r3).
+        // Residual: tela aberta DURANTE o voo (claim já feito, write-back ainda não) não é vista.
+        const condicoes = supabase
           .from('sales_orders')
           .update({
-            items,
-            subtotal,
-            total: subtotal,
+            ...(valores.valores ?? {}),
             notes: notes || null,
             omie_payload: updatedPayloadLocal,
           })
-          .eq('id', order.id);
+          .eq('id', order.id)
+          .is('omie_pedido_id', null)
+          .is('deleted_at', null)
+          .eq('status', order.status);
+        const { data: gravadas, error } = await (order.updated_at
+          ? condicoes.eq('updated_at', order.updated_at)
+          : condicoes.is('updated_at', null)
+        ).select('id');
         if (error) throw error;
+        if ((gravadas ?? []).length !== 1) {
+          toast.error('O pedido mudou enquanto você editava (foi enviado, alterado em outra aba, excluído ou mudou de status). Nada foi gravado — recarregue a página.');
+          setSaving(false);
+          return;
+        }
         toast.success('Pedido atualizado localmente');
         navigate('/sales');
       }
@@ -545,6 +672,7 @@ export function useSalesOrderEdit() {
     updateItem,
     removeItem,
     addProduct,
+    precoPrevisto,
     handleTintConfirm,
     tintProductAsProduct,
     filteredProducts,

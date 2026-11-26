@@ -39,6 +39,7 @@ const SalesOrderEdit = () => {
     updateItem,
     removeItem,
     addProduct,
+    precoPrevisto,
     handleTintConfirm,
     tintProductAsProduct,
     filteredProducts,
@@ -125,6 +126,7 @@ const SalesOrderEdit = () => {
                 setProductSearch={setProductSearch}
                 filteredProducts={filteredProducts}
                 onAddProduct={addProduct}
+                precoPrevisto={precoPrevisto}
               />
             )}
 
@@ -170,8 +172,8 @@ const SalesOrderEdit = () => {
               />
               {parcelaTravada && (
                 <p className="text-xs text-muted-foreground">
-                  A condição atual do pedido ({selectedParcela}) foi mantida e vai íntegra ao
-                  Omie. Recarregue a página quando o Omie voltar para poder alterá-la.
+                  A condição de pagamento não pode ser trocada agora: ao salvar, o pedido mantém a
+                  condição que está no Omie. Recarregue a página quando o Omie voltar para poder alterá-la.
                 </p>
               )}
             </CardContent>

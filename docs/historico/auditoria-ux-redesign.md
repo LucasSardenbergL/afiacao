@@ -328,6 +328,42 @@ muda no meio do envio, não fecha. Cada borda corrigida abre outra, porque o nav
 `nonce` é o id dela. Até lá vale a regra da main. Se a série de P0 por rodada não cai, a saída é mudar de
 camada, não fazer a 7ª rodada.
 
+**PR 2.4 — centavos no front: FECHADO sem merge, adiado para a Onda 3** (#4164, decisão do founder em
+26/11). Decisão de produto (24/11): o unitário do produto vive ao centavo, inclusive o último praticado
+com 4 casas, e o total soma as linhas já arredondadas (`round(q × v, 2)`), como o Omie e o gate de
+crédito. O PR teve 5 rodadas do Codex, todas com P0: 1 → 4 → 4 → 4 → 6. Três dos 6 P0 da última rodada
+vinham de remendos de rodadas anteriores:
+- a guarda "menos de 1 centavo não reprecifica" mantinha um preço vencido;
+- a referência da Régua arredondada para baixo reduzia um preço negociado;
+- a soma de quantidade normalizada mudava 1,4999999 para 1,5.
+
+Os outros 3 eram superfícies que recalculam a linha com regra própria:
+- o admin regravava a OS a R$ 30,22;
+- o importador grava o total do PV sem o valor da linha;
+- OS antiga em `/sales`.
+
+**Lição:** arredondamento de dinheiro tem UM dono ou nenhum. O total da linha é recalculado em pelo menos
+8 lugares, e mudar a regra em parte deles sempre desencontra outro:
+- carrinho;
+- envio;
+- admin;
+- importador;
+- feed;
+- WhatsApp;
+- Régua;
+- dados já gravados.
+
+A Onda 3 resolve com um único cálculo de linha, consultado pelo front, pelas edges, pelo admin e pelo
+importador, mais uma decisão explícita sobre o legado (recalcular ou congelar o que já foi gravado). Até
+lá vale a regra da main.
+
+O que serve de base fica na branch `claude/r3-2.4-centavos-front`:
+- o helper em decimal exato (`src/lib/centavos.ts`, BigInt sobre `String(x)`, como o `numeric`);
+- os testes das 5 rodadas;
+- os cenários do Codex (`~/.cache/afiacao-r3-2.4/codex-2.4*.out`).
+
+Mesma regra do 2.2: série de P0 que não cai pede mudar de camada, não uma 6ª rodada.
+
 **PR 2.3 — o que vai ao Omie** (edges `omie-vendas-sync` v1.47 e `omie-sync` v1.17, front 1 campo).
 (a) Tinta COM ordem de compra saía SEM a cor no item: `if (ordemCompra) … else if (cor)` — a NF e a
 observação do item (a que a produção lê para tingir) perdiam a cor. `infoAdicionalItem`

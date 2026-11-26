@@ -1,9 +1,8 @@
 // Geração pura de HTML para impressão de pedidos.
 // Extraído de src/pages/SalesPrintDashboard.tsx (god-component split).
-import { addDays } from 'date-fns';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { escapeHtml } from '@/lib/escape-html';
-import { tdDescontoHtml, thDescontoHtml, totaisComDescontoHtml, type PrintOrderData } from '@/components/OrderPrintLayout';
+import { tdDescontoHtml, textoVencimentosDoCupom, thDescontoHtml, totaisComDescontoHtml, type PrintOrderData } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, SalesOrderRow } from './types';
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
 import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
@@ -109,30 +108,8 @@ export function buildSingleOrderHtml(data: PrintOrderData): string {
   // formatador honesto: ausente vira "-" (o zero informado segue saindo como R$ 0,00).
   const fmt = formatPrecoOuAusente;
 
-  // Build installment dates
-  const parseParcelaDays = (codeOrDesc?: string): number[] => {
-    if (!codeOrDesc) return [];
-    const clean = codeOrDesc.trim();
-    if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
-    // Extract all numeric groups — handles codes like "S37", "A28", "028/042", "28/42 DDL"
-    const matches = clean.match(/(\d{1,3})/g);
-    if (!matches) return [];
-    return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
-  };
-
-  let days = parseParcelaDays(data.condPagamento);
-  if (days.length === 0) days = parseParcelaDays(data.parcelaCode);
-  let installmentText = '';
-  if (days.length > 0) {
-    const today = new Date();
-    const parcValue = data.total && days.length > 0 ? data.total / days.length : 0;
-    installmentText = days.map((d, i) => {
-      const dueDate = addDays(today, d);
-      const dateStr = `${String(dueDate.getDate()).padStart(2, '0')}/${String(dueDate.getMonth() + 1).padStart(2, '0')}/${dueDate.getFullYear()}`;
-      const valStr = parcValue > 0 ? ` – ${fmt(parcValue)}` : '';
-      return `${i + 1}ª parcela: ${dateStr}${valStr}`;
-    }).join(' | ');
-  }
+  // Vencimentos: a definir no faturamento — mesma linha do cupom avulso (textoVencimentosDoCupom).
+  const installmentText = textoVencimentosDoCupom(data);
 
   const itemsRows = data.items.map((item, i) => {
     const descLines = [escapeHtml(item.descricao)];
