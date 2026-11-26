@@ -29,6 +29,12 @@ Fecha o programa crédito-IA (plano `docs/superpowers/plans/2026-11-20-credito-i
 - **`CREATE OR REPLACE` preserva o ACL da função já existente.** Na falsificação, a sabotagem do fecho de ACL ficou VERDE porque a reinstalação herdava o ACL fechado da instalação anterior. Corrigi o harness: cada variante começa com `DROP FUNCTION`, como na 1ª aplicação em prod.
 - **`claude_ro` não executa `credito_grupo_raiz` nem `pode_ver_carteira_completa`** (estão fechadas por desenho). Medir em prod exigiu replicar a lógica em SQL. Também não dá para criar nem função `pg_temp` em sessão read-only.
 
+## Deploy (2026-11-26)
+- **Migration APLICADA**: `bun run db:aplicar` a partir da main (merge `e9f28f6b3` do #4190) → tentativa **#1443** `aplicada`, sha256 `2cd06b1c…` (= o do último ensaio).
+- **2ª testemunha (psql-ro, por fora):** `credito_painel_resumo(integer)` é `SECURITY DEFINER` · `STABLE` · `search_path=public`; ACL `{postgres=X, authenticated=X}` — anon ✗, service_role ✗, authenticated ✓; **md5 do corpo em prod = md5 do corpo no repo** (`afae4546…`).
+- **Publish: pendente (founder).** Sem ele `/credito/painel` não existe no app. Depois do Publish, o 1º sinal de uso é `db/sensor-credito-painel.sql`.
+- Sombra: a view `credito_sombra_pv_atual` (PR 5) **ainda não está em prod** no momento do apply → o bloco mostra "PR 5 não aplicado" até ela entrar; acende sozinho depois.
+
 ## Estado em prod na entrega (psql-ro 2026-11-25)
 - 246 grupos com título aberto e R$ 881,7 mil em aberto. Os 329 pares resolveram para grupo, e 51 grupos têm par na Colacor SC.
 - `venda_bloqueio_credito_log` tem **0 linhas** no histórico inteiro, e `credito_decisao_pedido`, `credito_limite` e `credito_solicitacao` também estão em 0. Os blocos de limites, reservas, sombra, fila e gate v2 aparecem como "sem dado ainda".
