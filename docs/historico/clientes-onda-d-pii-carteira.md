@@ -114,6 +114,15 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   opt-out por telefone, persistência das escritas, ledger no B12, vermelho exato, bundle `mcp` regenerado.
   **Divergência registrada:** a 3b é estritamente REDUTORA (os P0 são superfícies independentes de `profiles`,
   abertas com ou sem o corte) — então a onda D **não está pronta**; o que falta é a fatia 4 (abaixo).
+- **Em prod (2026-11-26):** a 3a já estava aplicada quando a sessão foi aplicá-la; o estado bate com toda a
+  postcondição e a `deriva:corpo:prod` deu 651 identidades em dia. Publish servindo o commit `9efe21ae`
+  (contém o #4184). O founder decidiu aplicar a 3b apesar da divergência do Codex: pré-voo 🟢, ensaio com
+  rollback ok e apply pelo envelope (tentativa **#1454**). Antes, a varredura dos leitores na prod: as 7
+  funções invoker que citam colunas de contato só são alcançáveis por SECDEF de `postgres` (nenhuma entrada
+  exposta a anon/authenticated); nenhuma policy lê essas colunas; as novas `credito_ficha` e
+  `credito_fila_propostas` (`20261126090000`, pendente) são SECDEF. Validado por fora: anon e authenticated
+  sem SELECT de tabela e sem as 4 colunas, com identidade e escrita; `service_role` intacto. API real (anon):
+  `select=email` → 42501 no grant. Falta a prova como usuário logado (smoke do founder).
 - **Fatia 4 (não entra aqui):** `customer_metrics_mv.document`; `sales_orders.customer_document/address/phone`;
   policies de `customer_contacts` e `addresses`; `cliente_grupo_membros.documento` e
   `v_grupo_contas_receber_por_doc`; endereço em `v_grupo_contatos`; edges `omie-cliente` (busca de staff e
