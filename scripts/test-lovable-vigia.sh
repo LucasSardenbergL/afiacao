@@ -26,6 +26,7 @@ cat > "$TMP/bin/claude-falso" <<'EOF'
 cat > /dev/null
 echo x >> "$LVT/chamadas"
 printf '%s\n' "$*" > "$LVT/args"
+printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$LVT/cfgdir"
 sed "s/@HEAD@/$(cat "$LVT/head")/g" "$LVT/stream-$LVT_CENARIO.jsonl"
 case "$LVT_CENARIO" in ok|timeout_pos_deploy) touch "$LVT/ar-novo" ;; esac
 [ "$LVT_CENARIO" = timeout_pos_deploy ] && exit 124
@@ -65,7 +66,7 @@ roda() {  # roda <cenario> → um tick do vigia num estado novo
   git clone -q "$TMP/origin" "$TMP/wt"
   cp "$VIGIA" "$TMP/vigia.sh"
   LVT="$TMP" LVT_CENARIO="$c" LV_ESTADO="$est" LV_WT="$TMP/wt" LV_ESPERA_AR=20 \
-    LV_CLAUDE="$TMP/bin/claude-falso" PATH="$TMP/bin:$PATH" bash "$TMP/vigia.sh"
+    LV_CLAUDE="$TMP/bin/claude-falso" LV_CLAUDE_DIR="$TMP/cfg" PATH="$TMP/bin:$PATH" bash "$TMP/vigia.sh"
   CHAMADAS=$(wc -l < "$TMP/chamadas" 2>/dev/null | tr -d ' '); LOGV="$est/vigia.log"; TENT="$est/tentativa"
 }
 tem() { grep -qF -- "$1" "$LOGV"; }
@@ -75,6 +76,12 @@ roda ok
   && ok "deploy com aceite lido → DISPARADO, 1 chamada, PUBLICADO" || nok "ok: chamadas=$CHAMADAS $(tail -3 "$LOGV")"
 grep -q -- '--strict-mcp-config' "$TMP/args" && grep -q -- '--tools  --setting-sources' "$TMP/args" \
   && ok "invocação mínima (--strict-mcp-config, --tools vazio, --setting-sources vazio)" || nok "args: $(cat "$TMP/args")"
+
+[ -z "$(cat "$TMP/cfgdir")" ] && ok "sem .vigia-pronto → store padrão (sem CLAUDE_CONFIG_DIR)" || nok "cfgdir=$(cat "$TMP/cfgdir")"
+mkdir -p "$TMP/cfg" && touch "$TMP/cfg/.vigia-pronto"
+roda ok
+[ "$(cat "$TMP/cfgdir")" = "$TMP/cfg" ] && tem "PUBLICADO" && ok "com .vigia-pronto → CLAUDE_CONFIG_DIR próprio" || nok "cfgdir=$(cat "$TMP/cfgdir")"
+rm -rf "$TMP/cfg"
 
 roda fabricado
 { [ "$CHAMADAS" = 2 ] && tem "→ ERRO (modelo: VIGIA=DISPARADO inventado)" && tem "FALHOU (1/3)"; } \
@@ -93,5 +100,5 @@ roda timeout_pos_deploy
 { [ "$CHAMADAS" = 1 ] && tem "rc=124" && tem "→ INDETERMINADO" && tem "PUBLICADO" && ! tem "FALHOU"; } \
   && ok "timeout após emitir deploy → sem redisparo, o ar decide (PUBLICADO)" || nok "timeout: chamadas=$CHAMADAS $(tail -3 "$LOGV")"
 
-[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (6)"; exit 0; }
+[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (8)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1
