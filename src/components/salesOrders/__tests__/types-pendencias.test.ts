@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BLOCKED_STATUSES, motivoEdicaoBloqueada } from '@/components/salesOrderEdit/types';
+import { BLOCKED_STATUSES, bloqueioDaEdicao, motivoEdicaoBloqueada } from '@/components/salesOrderEdit/types';
 import { contagemDoDia, mensagemDoLote, podeEditarPedido, ultimoDiaAberto, type GrupoDia, type OrderFeedRow } from '../types';
 
 describe('podeEditarPedido — a MESMA regra da tela de edição', () => {
@@ -54,5 +54,18 @@ describe('contagem do cabeçalho do dia', () => {
     const dia = ultimoDiaAberto('2026-11-21T01:00:00Z');
     expect(dia).toBe('2026-11-21');
     expect(ultimoDiaAberto('lixo')).toBeNull();
+  });
+});
+
+describe('bloqueioDaEdicao — status E origem (Codex P0, 2026-11-25)', () => {
+  it('criado no Omie e já em separação: bloqueado com o motivo do importado', () => {
+    expect(bloqueioDaEdicao({ status: 'separacao', origem_omie: true })).toBe(motivoEdicaoBloqueada('importado'));
+  });
+  it('do app em separação: livre; origem ausente = do app', () => {
+    expect(bloqueioDaEdicao({ status: 'separacao', origem_omie: false })).toBeNull();
+    expect(bloqueioDaEdicao({ status: 'rascunho' })).toBeNull();
+  });
+  it('status bloqueado continua bloqueando sem a origem', () => {
+    expect(bloqueioDaEdicao({ status: 'faturado' })).toBe(motivoEdicaoBloqueada('faturado'));
   });
 });
