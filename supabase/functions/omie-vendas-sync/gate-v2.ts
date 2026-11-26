@@ -15,9 +15,10 @@
 //      · `avaliado` só conta com ligado:true; verde exige decisao_id e reserva_id;
 //      · pedido_inexistente / conta_divergente / revisao_inexistente / revisao_superada → seguro
 //        e revalido (nunca despacho conteúdo velho; `pedido_inexistente` vem ANTES do flag na RPC);
-//      · erro de transporte, 22023 ou resposta sem forma → indisponível. Sem veredito a edge não
-//        sabe o flag; uma resposta perdida pode esconder uma avaliação já gravada (Codex Q1, P0).
-//        É o ÚNICO desvio do caminho de hoje com o flag desligado: a RPC fora do ar segura o envio.
+//      · erro de transporte, 22023 ou resposta sem forma → OPÇÃO (b) do founder: SEGUE e REGISTRA
+//        (`venda_bloqueio_credito_log`, acao `gate_indisponivel`). Com o enforcement dormente o caminho
+//        de hoje fica intacto mesmo com a RPC fora do ar. Custo conhecido (Codex Q1): com o flag LIGADO
+//        uma falha deixaria passar 🔴/🟡 sem reserva → voltar a fail-closed é PRÉ-REQUISITO de ligar.
 
 /** Subconjunto do SupabaseClient usado aqui (duplo de teste). */
 export interface ClienteGateV2 {
@@ -25,14 +26,15 @@ export interface ClienteGateV2 {
     nome: string,
     args: Record<string, unknown>,
   ): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  from(tabela: string): {
+    insert(linha: Record<string, unknown>): PromiseLike<{ error: { message: string } | null }>;
+  };
 }
 
 export type DesfechoGateV2 =
-  | { segue: true; resultado: "desligado" | "verde" }
+  | { segue: true; resultado: "desligado" | "verde" | "indisponivel_seguiu" }
   | { segue: false; resultado: string; mensagem: string };
 
-export const MENSAGEM_V2_INDISPONIVEL =
-  "Pedido não enviado: a verificação de crédito (v2) não respondeu. Tente de novo em instantes.";
 export const MENSAGEM_V2_AMARELO =
   "Pedido não enviado: aguardando autorização de crédito na fila (/credito/fila). Reenvie depois da autorização.";
 export const MENSAGEM_V2_VERMELHO =
@@ -59,6 +61,23 @@ export async function gateV2Efetivo(
   },
 ): Promise<DesfechoGateV2> {
   const { salesOrderId, company, revisao, contexto } = args;
+  // Opção (b): sem veredito → segue e registra. O registro é best-effort (não segura a venda) e não
+  // leva nada da resposta (Codex r2): só o motivo fixo.
+  const seguirSemVeredito = async (motivo: "transporte" | "sem_forma"): Promise<DesfechoGateV2> => {
+    console.warn(`[gate-v2][${company}] sem veredito (${contexto}, ${motivo}) — SEGUIU (opção b)`);
+    try {
+      const { error } = await cliente.from("venda_bloqueio_credito_log").insert({
+        company,
+        sales_order_id: salesOrderId,
+        acao: "gate_indisponivel",
+        detalhe: `gate_v2 ${contexto}: ${motivo} — SEGUIU (opção b, enforcement dormente)`,
+      });
+      if (error) console.warn(`[gate-v2][${company}] registro do sem-veredito falhou`);
+    } catch {
+      console.warn(`[gate-v2][${company}] registro do sem-veredito falhou`);
+    }
+    return { segue: true, resultado: "indisponivel_seguiu" };
+  };
   let data: unknown;
   try {
     const r = await cliente.rpc("credito_gate_v2_efetivo", {
@@ -70,8 +89,7 @@ export async function gateV2Efetivo(
     data = r.data;
   } catch {
     // Texto bruto da RPC NUNCA vai ao cliente nem ao log (Codex diff P1): pode carregar dado de crédito.
-    console.warn(`[gate-v2][${company}] indisponível (${contexto}) — SEGURADO`);
-    return { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL };
+    return await seguirSemVeredito("transporte");
   }
 
   const o = (data && typeof data === "object" && !Array.isArray(data)) ? data as Record<string, unknown> : null;
@@ -83,7 +101,8 @@ export async function gateV2Efetivo(
   if (resultado === "avaliado" && o?.ligado === true) {
     const faixa = o.faixa;
     // Verde só segue com a decisão E a reserva gravadas pelo núcleo (Codex diff P1): verde sem os
-    // ids não prova reserva nenhuma → sem forma, segura.
+    // ids não prova reserva nenhuma → sem forma (opção b: segue e registra; com o flag ligado é o caso
+    // que o pré-requisito de fail-closed fecha antes de ligar).
     if (faixa === "verde" && ehId(o.decisao_id) && ehId(o.reserva_id)) return { segue: true, resultado: "verde" };
     if (faixa === "amarelo") {
       if (ehId(o.solicitacao_id)) {
@@ -112,6 +131,6 @@ export async function gateV2Efetivo(
   const conhecidos = new Set(["desligado", "avaliado", ...REVALIDAR]);
   const rotulo = resultado !== null && conhecidos.has(resultado) ? resultado : "?";
   const tipo = o ? "objeto" : (Array.isArray(data) ? "array" : typeof data);
-  console.warn(`[gate-v2][${company}] resposta sem forma (${contexto}): resultado=${rotulo} corpo=${tipo} — SEGURADO`);
-  return { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL };
+  console.warn(`[gate-v2][${company}] resposta sem forma (${contexto}): resultado=${rotulo} corpo=${tipo}`);
+  return await seguirSemVeredito("sem_forma");
 }
