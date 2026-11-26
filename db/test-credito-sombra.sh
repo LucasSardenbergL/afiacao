@@ -33,6 +33,7 @@ Pq() { P -tA -q "$@"; }
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres modelo
 
 MIGS5="$REPO_ROOT/supabase/migrations/20261125200000_credito_gate_v2_sombra.sql"
+MIGI="$REPO_ROOT/supabase/migrations/20261125195900_credito_sombra_indices.sql"
 
 # ══ ZONA 1 — pré-requisitos (o que as migrations leem e não criam) ═══════════════════════════
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -75,7 +76,7 @@ GRANT EXECUTE ON FUNCTION private.cap_credito_escrever(uuid) TO authenticated, s
 CREATE TABLE public.sales_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text NOT NULL DEFAULT 'oben',
   status text NOT NULL DEFAULT 'importado', total numeric, items jsonb, customer_user_id uuid,
-  omie_numero_pedido text, deleted_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
+  omie_numero_pedido text, deleted_at timestamptz, created_by uuid, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.omie_condicao_pagamento_catalogo (empresa text NOT NULL, codigo text NOT NULL, descricao text,
   num_parcelas integer, dias_parcelas text, ativo boolean DEFAULT true, ultima_sincronizacao timestamptz, PRIMARY KEY (empresa, codigo));
 CREATE TABLE public.fin_contas_receber (
@@ -145,9 +146,13 @@ SQL
 # PV que existia ANTES da ativação (carga inicial aberta) e um faturado antigo (fora)
 PVC=c0c0c0c0-0000-0000-0000-000000000001
 PVF=f0f0f0f0-0000-0000-0000-000000000001
+PVO=0b0b0b0b-0000-0000-0000-000000000001
 P -q -c "INSERT INTO public.sales_orders(id, account, status, total, items, customer_user_id, omie_numero_pedido, created_at) VALUES
   ('$PVC','oben','separacao',300,'[{\"quantidade\":1,\"valor_unitario\":300}]','$D','9001', now()-interval '3 days'),
+  ('$PVO','oben','orcamento',70,'[{\"quantidade\":1,\"valor_unitario\":70}]','$D','9003', now()-interval '5 days'),
   ('$PVF','oben','faturado',999,'[{\"quantidade\":1,\"valor_unitario\":999}]','$D','9002', now()-interval '40 days');"
+P -q -c "CREATE ROLE claude_ro BYPASSRLS; GRANT USAGE ON SCHEMA public TO claude_ro;
+         GRANT SELECT ON ALL TABLES IN SCHEMA public TO claude_ro;"
 echo "base de prod montada (7 migrations reais)"
 
 # ══ ZONA 3 — helpers ═════════════════════════════════════════════════════════════════════════
@@ -175,9 +180,9 @@ nres() { Pq -c "SELECT count(*) FROM public.credito_sombra_reserva WHERE sales_o
 limpa_dados() { F "DELETE FROM public.credito_sombra_reserva; DELETE FROM public.credito_sombra_decisao;
   DELETE FROM public.credito_sombra_tentativa; DELETE FROM public.credito_sombra_lote;
   DELETE FROM public.credito_limite; DELETE FROM public.credito_limite_proposta;
-  DELETE FROM public.fin_contas_receber; DELETE FROM public.sales_orders WHERE id NOT IN ('$PVC','$PVF');
+  DELETE FROM public.fin_contas_receber; DELETE FROM public.sales_orders WHERE id NOT IN ('$PVC','$PVF','$PVO');
   DELETE FROM public.credito_operacao_revisao;
-  UPDATE public.sales_orders SET status = 'cancelado' WHERE id = '$PVC'"; sync_frescos; }   # a carga já foi provada no S4c
+  UPDATE public.sales_orders SET status = 'cancelado' WHERE id = '$PVC'; UPDATE public.sales_orders SET status = 'orcamento' WHERE id = '$PVO'"; sync_frescos; }   # a carga já foi provada no S4c
 como() { Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$1\",\"role\":\"authenticated\"}', false);" \
             -c "SET ROLE authenticated;" -c "$2" | tail -1; }
 comorole() { Pq -c "SET ROLE $1;" -c "SELECT public.t_try(\$q\$$2\$q\$);" | tail -1; }
@@ -189,8 +194,9 @@ suite() {
   local a b x
   # ── S0 migration: marco, inventário, cron, gate efetivo intacto ──
   eq "S0.1 1 marco" "$(Pq -c 'SELECT count(*) FROM public.credito_sombra_marco')" "1"
-  eq "S0.2 inventário: PV aberto pré-ativação = carga" "$(Pq -c "SELECT aberto FROM public.credito_sombra_carga WHERE sales_order_id='$PVC'")" "t"
-  eq "S0.3 inventário: faturado antigo fora" "$(Pq -c "SELECT aberto FROM public.credito_sombra_carga WHERE sales_order_id='$PVF'")" "f"
+  eq "S0.2 inventário: PV aberto pré-ativação = carga" "$(Pq -c "SELECT situacao FROM public.credito_sombra_carga WHERE sales_order_id='$PVC'")" "aberto"
+  eq "S0.3 inventário: faturado antigo fora" "$(Pq -c "SELECT situacao FROM public.credito_sombra_carga WHERE sales_order_id='$PVF'")" "historico"
+  eq "S0.3b orçamento pré-ativação = pre_venda" "$(Pq -c "SELECT situacao FROM public.credito_sombra_carga WHERE sales_order_id='$PVO'")" "pre_venda"
   eq "S0.4 cron agendado 1×" "$(Pq -c "SELECT count(*) FROM cron.job WHERE jobname='credito-sombra-lote-10min'")" "1"
   sync_frescos
   # ── S4c carga inicial: o PV aberto é avaliado e marcado carga_inicial; o faturado antigo não ──
@@ -224,11 +230,11 @@ suite() {
   lote >/dev/null
   eq "S1.5 full > 8 d com incremental fresco → sync_defasado" "$(dec "$a" motivo)" "sync_defasado"
   limpa_dados
-  sync oben '-2 hours' '1 day'
+  sync oben '-1 minute' '1 day'
   a=$(u 1 5); pv "$a" oben importado 500 "$D" 1005
   Pq -c "SELECT public.t_limite('$D', 10000, 28, 'baixo');" >/dev/null
   lote >/dev/null
-  eq "S1.6 marca futura → sync_defasado" "$(dec "$a" motivo)" "sync_defasado"
+  eq "S1.6 marca 1 min no futuro → sync_defasado" "$(dec "$a" motivo)" "sync_defasado"
   limpa_dados; sync oben '30 hours' '1 day'
   tit oben 101 400 '' 400 1 75 ATRASADO
   a=$(u 1 6); pv "$a" oben importado 500 "$C" 1006
@@ -248,6 +254,17 @@ suite() {
   tit oben 501 800 2002 800 12
   lote >/dev/null
   eq "S2.3 número de PV ambíguo → título conta → estoura_limite" "$(dec "$a" motivo_sem_prazo)" "estoura_limite"
+
+  limpa_dados; Pq -c "SELECT public.t_limite('$D', 500, 28, 'baixo');" >/dev/null
+  a=$(u 2 4); pv "$a" oben importado 100 "$D" 2004
+  tit oben 501 900 2004 900 14
+  lote >/dev/null
+  eq "S2.4 título próprio (900) acima do PV (100) → o excesso segue exposição → estoura" "$(dec "$a" "motivo_sem_prazo||'/'||exposicao_titulos_brl::int")" "estoura_limite/800"
+  limpa_dados; Pq -c "SELECT public.t_limite('$D', 100000, 28, 'baixo');" >/dev/null
+  tit oben 501 0 '' 50 15 -5 'PAGTO PARCIAL'
+  a=$(u 2 5); pv "$a" oben importado 100 "$D" 2005
+  lote >/dev/null
+  eq "S2.5 PAGTO PARCIAL recente sem saldo positivo → exposicao_indeterminada" "$(dec "$a" motivo_sem_prazo)" "exposicao_indeterminada"
 
   # ── S3 conciliação reserva→título ──
   limpa_dados; Pq -c "SELECT public.t_limite('$D', 100000, 28, 'baixo');" >/dev/null
@@ -274,6 +291,10 @@ suite() {
   tit oben 501 40 3002 40 32
   lote >/dev/null
   eq "S3.6 títulos cobrem o compromisso → transferida" "$(nres "$b" transferida)" "1"
+  F "UPDATE public.fin_contas_receber SET status_titulo = 'CANCELADO' WHERE numero_pedido = '3002'"
+  x=$(u 3 7); pv "$x" oben importado 10 "$D" 3007
+  lote >/dev/null
+  eq "S3.6b título cancelado depois da transferência → o compromisso volta a ocupar (100 + 20 dos irmãos)" "$(dec "$x" "exposicao_reservas_brl::int")" "120"
   c3=$(u 3 3); pv "$c3" oben importado 100 "$D" 3003
   lote >/dev/null
   F "UPDATE public.sales_orders SET deleted_at = now() WHERE id='$c3'"
@@ -326,6 +347,40 @@ suite() {
   Pq -c "SELECT public.credito_registrar_revisao('$a','oben','criacao',501,'A28','informada','[{\"codigo_produto\":7,\"quantidade\":1,\"valor_unitario\":10}]'::jsonb,NULL);" >/dev/null
   lote >/dev/null
   eq "S4.12b irmão em trânsito com valor ilegível → exposicao_indeterminada (ausente ≠ zero)" "$(dec "$a" motivo)" "exposicao_indeterminada"
+  Pq -c "SELECT public.credito_registrar_revisao('$a','oben','edicao',501,'A28','informada','[{\"codigo_produto\":7,\"quantidade\":1,\"valor_unitario\":5}]'::jsonb,NULL);" >/dev/null
+  lote >/dev/null
+  eq "S4.12c app reduz 10→5: a reserva segue 10 até o Omie confirmar" "$(Pq -c "SELECT valor_brl::int FROM public.credito_sombra_reserva WHERE sales_order_id='$a' AND status='ativa'")" "10"
+  b=$(u 4 11); F "INSERT INTO public.sales_orders(id, account, status, total, items, customer_user_id, omie_numero_pedido, created_by) VALUES ('$b','oben','enviado',50,'[{\"quantidade\":1,\"valor_unitario\":50}]','$D','4011','$V')"
+  lote >/dev/null
+  eq "S4.12d app sem revisão → tentativa revisao_ausente (nunca rotulado omie)" "$(Pq -c "SELECT resultado FROM public.credito_sombra_tentativa WHERE sales_order_id='$b'")/$(dec "$b" "count(*)")" "revisao_ausente/0"
+  limpa_dados; Pq -c "SELECT public.t_limite('$D', 100000, 28, 'baixo');" >/dev/null
+  a=$(u 4 12); pv "$a" oben importado 100 "$D" 4012
+  lote >/dev/null
+  F "UPDATE public.sales_orders SET items='[{\"quantidade\":1}]' WHERE id='$a'"
+  lote >/dev/null
+  eq "S4.15 versão nova ilegível tira o PV da distribuição (A → B parcial)" "$(dec "$a" "count(*)")" "0"
+  F "UPDATE public.sales_orders SET items='[{\"quantidade\":1,\"valor_unitario\":100}]' WHERE id='$a'"
+  lote >/dev/null
+  eq "S4.16 … e a volta a A é reavaliada (omie:2)" "$(dec "$a" versao)" "omie:2"
+  b=$(u 4 13); pv "$b" oben pendente 100 "$D" 4013
+  lote >/dev/null
+  eq "S4.17 pendente não é venda → não avaliado" "$(Pq -c "SELECT count(*) FROM public.credito_sombra_decisao WHERE sales_order_id='$b'")" "0"
+  F "UPDATE public.sales_orders SET status='importado' WHERE id='$PVO'"
+  lote >/dev/null
+  eq "S4.18 orçamento pré-ativação convertido em venda → entra na distribuição" "$(dec "$PVO" "carga_inicial::text")" "false"
+  limpa_dados; Pq -c "SELECT public.t_limite('$D', 100000, 28, 'baixo');" >/dev/null
+  a=$(u 4 14); b=$(u 4 15); pv "$a" oben importado 100 "$D" 4014
+  lote >/dev/null
+  F "UPDATE public.sales_orders SET total = 900, items='[{\"quantidade\":1,\"valor_unitario\":900}]' WHERE id='$a'"
+  pv "$b" oben importado 10 "$D" 4015
+  P -q -c "SELECT public.t_forca(\$q\$UPDATE public.sales_orders SET created_at = now() - interval '9 days' WHERE id = '$b'\$q\$);"
+  lote 1 >/dev/null
+  eq "S4.19 irmão que cresceu desde a reserva → exposicao_indeterminada" "$(dec "$b" motivo_sem_prazo)" "exposicao_indeterminada"
+  limpa_dados; Pq -c "SELECT public.t_limite('$D', 100000, 28, 'baixo');" >/dev/null
+  a=$(u 4 16); b=$(u 4 17); pv "$a" oben faturado 300 "$D" 4016; pv "$b" oben importado 10 "$D" 4017
+  P -q -c "SELECT public.t_forca(\$q\$UPDATE public.sales_orders SET created_at = now() - interval '9 days' WHERE id = '$b'\$q\$);"
+  lote 1 >/dev/null
+  eq "S4.20 irmão faturado sem reserva nem título → exposicao_indeterminada" "$(dec "$b" motivo_sem_prazo)" "exposicao_indeterminada"
   # PV em trânsito do grupo sem reserva ainda → exposição indeterminada
   limpa_dados; Pq -c "SELECT public.t_limite('$D', 100000, 28, 'baixo');" >/dev/null
   a=$(u 4 7); b=$(u 4 8); pv "$a" oben importado 100 "$D" 4007; pv "$b" oben importado 100 "$D" 4008
@@ -346,7 +401,7 @@ suite() {
   eq "S6.4 service_role não escreve no ledger" "$(comorole service_role "INSERT INTO public.credito_sombra_lote(id) VALUES (gen_random_uuid())")" "42501"
   eq "S6.5 gestor lê as decisões" "$(como "$G" 'SELECT (count(*) > 0)::text FROM public.credito_sombra_pv_atual')" "true"
   eq "S6.6 vendedor lê 0" "$(como "$V" 'SELECT count(*) FROM public.credito_sombra_decisao')" "0"
-  eq "S6.7 saúde: 0 lotes presos" "$(como "$G" 'SELECT lotes_presos FROM public.credito_sombra_saude')" "0"
+  eq "S6.7 saúde: último lote há < 15 min" "$(como "$G" 'SELECT (minutos_sem_lote < 15)::text FROM public.credito_sombra_saude')" "true"
 
   # ── S7 concorrência: lote em voo não segura o caminho do pedido ──
   local fifo="$SAB/fifo"; rm -f "$fifo"; mkfifo "$fifo"
@@ -370,16 +425,18 @@ rodada() {   # $1 = arquivo da migration
   "$PGBIN/dropdb" -p "$PORT" -h /tmp -U postgres --if-exists prove
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T modelo prove
   DB=prove
+  P -q -1 -f "$MIGI" >/dev/null 2>&1 || { echo "  (índices falharam)"; return 1; }
   P -q -1 -f "$1" > "$SAB/apl.log" 2>&1 || { echo "  (migration falhou: $(grep -v NOTICE "$SAB/apl.log" | head -c 900))"; return 1; }
   suite
 }
 
 echo "· controle (migration REAL)"
 if rodada "$MIGS5"; then ok "A0 migration aplica com pós-condição"; else bad "A0 migration falhou"; fi
-if P -q -f "$REPO_ROOT/db/medir-credito-sombra.sql" > "$SAB/medir.log" 2>&1 && ! grep -q ERROR "$SAB/medir.log"; then ok "M1 db/medir-credito-sombra.sql roda sobre o ledger"; else bad "M1 medição quebrou: $(grep ERROR "$SAB/medir.log" | head -c 300)"; fi
+if P -q -c "SET ROLE claude_ro" -f "$REPO_ROOT/db/medir-credito-sombra.sql" > "$SAB/medir.log" 2>&1 && ! grep -q ERROR "$SAB/medir.log"; then ok "M1 db/medir-credito-sombra.sql roda COMO claude_ro (o leitor de prod)"; else bad "M1 medição quebrou: $(grep ERROR "$SAB/medir.log" | head -c 300)"; fi
 echo "· re-aplicar é idempotente (marco não move, cron não duplica)"
 M0=$(Pq -c "SELECT ativado_em FROM public.credito_sombra_marco")
-if P -q -1 -f "$MIGS5" >/dev/null 2>&1; then ok "A1 2ª aplicação passa"; else bad "A1 2ª aplicação falhou"; fi
+F "INSERT INTO public.sales_orders(id, account, status, total, items, customer_user_id, omie_numero_pedido, created_at) VALUES ('$(u 8 1)','oben','importado',10,'[{\"quantidade\":1,\"valor_unitario\":10}]','$D','8001', now() - interval '2 days')"
+if P -q -1 -f "$MIGS5" >/dev/null 2>&1; then ok "A1 2ª aplicação passa (com importado retrodatado depois do marco)"; else bad "A1 2ª aplicação falhou"; fi
 eq "A2 marco intacto" "$(Pq -c "SELECT ativado_em FROM public.credito_sombra_marco")" "$M0"
 eq "A3 1 cron" "$(Pq -c "SELECT count(*) FROM cron.job WHERE jobname='credito-sombra-lote-10min'")" "1"
 
@@ -407,9 +464,17 @@ sabota "F1 sem veto de sync" "S1\.3|S1\.4|S1\.5" \
   "  ELSIF NOT COALESCE((v_sync ->> 'ok')::boolean, false) THEN=>  ELSIF false THEN"
 sabota "F2 full fresco basta (greatest)" "S1\.4" \
   "v_ok_c := v_n_inc = 1 AND v_n_full = 1=>v_ok_c := v_n_full = 1" \
-  "AND v_inc <= now() + interval '5 minutes' AND v_inc > now() - interval '26 hours'=>"
+  "AND v_inc <= now() AND v_inc >= now() - interval '26 hours'=>"
 sabota "F3 título do próprio PV soma" "S2\.1|S2\.2" \
-  "  v_titulos := v_titulos - v_titulos_pv;=>"
+  "  v_titulos := v_titulos - least(v_titulos_pv, p_valor);=>"
+sabota "F9 título próprio sai inteiro (sem least)" "S2\.4" \
+  "  v_titulos := v_titulos - least(v_titulos_pv, p_valor);=>  v_titulos := v_titulos - v_titulos_pv;"
+sabota "F10 transferida é definitiva" "S3\.6b" \
+  "            OR (r.status = 'transferida' AND r.encerrada_em > now() - interval '120 days' AND s.status <> 'cancelado'))=>            OR false)"
+sabota "F11 cobertura do irmão sem conferir a versão" "S4\.19" \
+  "              AND d.conteudo_md5 = private.credito_sombra_versao(s.id) ->> 'md5'))=>              AND true))"
+sabota "F12 app reduz a reserva antes do Omie" "S4\.12c" \
+  "          v_reserva := greatest(v_reserva, r.valor_brl);=>          NULL;"
 sabota "F4 transfere sem título (faturado basta)" "S3\.2|S3\.3" \
   "AND private.credito_sombra_titulos_pv(r.company, r.omie_codigo_cliente, r.num) >= r.valor_brl THEN=>THEN"
 sabota "F5 deleted_at libera" "S3\.7" \
@@ -431,14 +496,15 @@ PY
 "$PGBIN/dropdb" -p "$PORT" -h /tmp -U postgres --if-exists prove
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T modelo prove
 DB=prove
+P -q -1 -f "$MIGI" >/dev/null
 if P -q -1 -f "$SAB/m.sql" > "$SAB/pos.log" 2>&1; then bad "F8 pós-condição não pegou o piso alterado"
 elif grep -q "POSCONDICAO credito-sombra: gate efetivo alterado" "$SAB/pos.log"; then ok "F8 piso alterado na mesma transação → pós-condição aborta"
 else bad "F8 outro erro: $(head -c 300 "$SAB/pos.log")"; fi
 eq "F8b rollback: nada da sombra ficou" "$(Pq -c "SELECT to_regclass('public.credito_sombra_lote') IS NULL")" "t"
 
 echo "── re-prova pós-falsificação (migration REAL) ──"
-QUIETO=1; p0=$FAIL; rodada "$MIGS5" >/dev/null 2>&1 || true; QUIETO=0
-if [ "$FAIL" = "$p0" ]; then ok "R re-prova verde"; else bad "R re-prova vermelha ($((FAIL-p0)))"; fi
+QUIETO=1; p0=$FAIL; n0=$PASS; rr=0; rodada "$MIGS5" >/dev/null 2>&1 || rr=$?; QUIETO=0
+if [ "$rr" = 0 ] && [ "$FAIL" = "$p0" ] && [ $((PASS-n0)) -ge 60 ]; then ok "R re-prova verde ($((PASS-n0)) asserts)"; else bad "R re-prova: rc=$rr, falhas novas $((FAIL-p0)), asserts $((PASS-n0))"; fi
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail (locale $LOC)"

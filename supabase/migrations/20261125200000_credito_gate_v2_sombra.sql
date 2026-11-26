@@ -1,5 +1,6 @@
--- Crédito-IA PR 5 — gate v2 em MODO SOMBRA + sensores (ledger).
+-- Crédito-IA PR 5 (2/2) — gate v2 em MODO SOMBRA + sensores (ledger).
 -- Plano: docs/superpowers/plans/2026-11-25-credito-ia-pr5-sombra.md · spec §9.2/§9.5/§9.10.
+-- Depende de 20261125195900_credito_sombra_indices.sql (índices fora desta transação — Codex diff P1).
 -- Prova: db/test-credito-sombra.sh (PG17, C e pt_BR.UTF-8, com falsificação).
 --
 -- O que a sombra É: um job SQL em lote (pg_cron) que, para cada PV real de sales_orders (importado do
@@ -7,22 +8,22 @@
 -- num ledger PRÓPRIO. O que ela NÃO é: nada no caminho do pedido a chama; ela não escreve em nenhuma
 -- tabela do gate efetivo (credito_decisao_pedido/reserva/solicitacao), não toma o lock de grupo do
 -- núcleo nem o da aprovação, e não altera private.credito_avaliar_reservar nem o piso do PR 1
--- (Codex desenho P0 — a mudança do núcleo fica para o PR 6, que promove ESTA lógica a efetivo; a
--- pós-condição confere corpo e ACL dos dois). Falha da sombra = linha de tentativa no ledger.
+-- (Codex desenho P0 — o PR 6 promove ESTA lógica a efetivo; a pós-condição confere corpo e ACL).
+-- Falha da sombra = linha de tentativa no ledger; a venda segue o caminho do PR 1.
 --
 -- Diferenças da lógica sombra em relação ao núcleo do PR 2 (o que o PR 6 herda):
---   * frescor/cobertura do sync de CR por empresa do escopo (§9.5): incremental íntegro ≤ 26 h E full
---     ≤ 8 d, cada um por si (full retomado pode fechar truncado — Codex P1); ausente/futuro → 🟡;
---   * título do PRÓPRIO PV fora da soma da exposição (o PV já entra como valor) — só com vínculo
---     comprovável; continua contando no piso e na indeterminação;
---   * reserva sombra para TODO PV real avaliado (ele existe no Omie: é exposição de verdade, qualquer
---     que fosse a faixa). O que ela ocupa é DERIVADO na hora: compromisso original − Σ títulos
---     vinculados (2 lotes nunca descontam o mesmo título 2×; vínculo ambíguo ou título sem valor mantém
---     a cobertura cheia — Codex P1). Libera SÓ com cancelamento vindo do Omie (deleted_at não prova);
---   * prazo desconhecido (importado, Colacor sem catálogo, 999) → 🟡 prazo_ilegivel, nunca 🟢; a
---     faixa "se o prazo fosse aceito" fica ao lado (faixa_sem_prazo) para calibrar sem fabricar;
---   * PV em trânsito do grupo que a sombra não mede (valor ilegível ou ainda sem reserva) → 🟡
---     exposicao_indeterminada (a carga inicial só deixa de pesar depois de drenada — Codex P1).
+--   * frescor/cobertura do CR por empresa do escopo (§9.5): incremental íntegro ≤ 26 h E full ≤ 8 d,
+--     cada um por si; ausente/duplicada/futura → 🟡 sync_defasado;
+--   * título do PRÓPRIO PV sai da soma até o valor do PV (least): o excesso continua exposição;
+--   * reserva sombra para TODO PV real avaliado (existe no Omie: é exposição, qualquer que fosse a
+--     faixa). O que ela ocupa é DERIVADO na leitura: compromisso original − Σ títulos vinculados;
+--     transferida continua sendo relida por 120 d (título cancelado depois faz o residual voltar).
+--     Libera só com cancelamento do Omie (deleted_at não prova); app nunca reduz a reserva antes de o
+--     Omie confirmar (greatest com a anterior);
+--   * PV do grupo sem cobertura da VERSÃO CORRENTE (valor ilegível, ainda não avaliado, cresceu desde
+--     a reserva) → 🟡 exposicao_indeterminada; PAGTO PARCIAL sem saldo positivo idem (ausente ≠ zero);
+--   * prazo desconhecido (importado, Colacor sem catálogo, 999) → 🟡 prazo_ilegivel, nunca 🟢
+--     (CHECK); a faixa "se o prazo fosse aceito" fica ao lado (faixa_sem_prazo) para calibrar.
 -- Sem BEGIN/COMMIT: a transação é do `bun run db:aplicar`.
 
 -- ── 0. pré-condições ───────────────────────────────────────────────────────────────────────
@@ -44,38 +45,44 @@ BEGIN
      OR to_regclass('public.sync_state') IS NULL OR to_regclass('cron.job') IS NULL THEN
     RAISE EXCEPTION 'PRE credito-sombra: tabela de dependência ausente';
   END IF;
+  IF to_regclass('public.sales_orders_account_numero_pedido_idx') IS NULL
+     OR to_regclass('public.fin_contas_receber_company_numero_pedido_idx') IS NULL THEN
+    RAISE EXCEPTION 'PRE credito-sombra: aplique antes 20261125195900_credito_sombra_indices.sql';
+  END IF;
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'fin_contas_receber'
-         AND column_name IN ('numero_pedido','valor_documento','omie_codigo_lancamento','updated_at')) <> 4 THEN
-    RAISE EXCEPTION 'PRE credito-sombra: fin_contas_receber sem as colunas do vínculo PV→título';
+         AND column_name IN ('numero_pedido','valor_documento','omie_codigo_lancamento','updated_at')) <> 4
+     OR (SELECT count(*) FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'sales_orders'
+            AND column_name IN ('created_by','omie_numero_pedido','deleted_at','items','total')) <> 5 THEN
+    RAISE EXCEPTION 'PRE credito-sombra: colunas do vínculo PV→título ausentes';
   END IF;
 END
 $pre$;
 
--- corpo + ACL do gate efetivo ANTES: a pós-condição exige que continuem idênticos
+-- corpo + ACL do gate efetivo ANTES (por assinatura): a pós-condição exige presença e igualdade
 CREATE TEMP TABLE _efetivo_antes ON COMMIT DROP AS
-  SELECT oid, md5(prosrc) AS corpo, proacl::text AS acl FROM pg_proc
-   WHERE oid IN ('private.credito_avaliar_reservar(uuid,text,bigint,text,numeric,integer,text,uuid)'::regprocedure,
-                 'public.venda_gate_credito_grupo(uuid,text,bigint)'::regprocedure);
-
--- índices do vínculo PV→título (lidos a cada lote)
-CREATE INDEX IF NOT EXISTS sales_orders_account_numero_pedido_idx
-  ON public.sales_orders (account, omie_numero_pedido);
-CREATE INDEX IF NOT EXISTS fin_contas_receber_company_numero_pedido_idx
-  ON public.fin_contas_receber (company, numero_pedido) WHERE numero_pedido IS NOT NULL;
+  SELECT v.sig, md5(p.prosrc) AS corpo,
+         COALESCE(p.proacl, acldefault('f', p.proowner))::text AS acl
+    FROM (VALUES ('private.credito_avaliar_reservar(uuid,text,bigint,text,numeric,integer,text,uuid)'),
+                 ('public.venda_gate_credito_grupo(uuid,text,bigint)')) v(sig)
+    JOIN pg_proc p ON p.oid = to_regprocedure(v.sig);
 
 -- ── 1. Tabelas (ledger da sombra) ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.credito_sombra_marco (
   marco text PRIMARY KEY DEFAULT 'ativacao' CHECK (marco = 'ativacao'),
-  ativado_em timestamptz NOT NULL DEFAULT now()
+  ativado_em timestamptz NOT NULL DEFAULT now(),
+  pedidos_na_ativacao integer NOT NULL
 );
 
--- Inventário CONGELADO na ativação (Codex P1). aberto = estava em trânsito (importado/separacao/
--- enviado) → carga inicial (avaliada e reservada, fora da distribuição). PV fora desta lista nasceu
--- depois da ativação (a distribuição).
+-- Inventário CONGELADO na ativação (Codex P1): situação de cada PV que já existia.
+--   historico = venda já resolvida (faturado/cancelado/…) → fora da sombra;
+--   aberto    = em trânsito (importado/separacao/enviado) → carga inicial (avaliada, fora da distribuição);
+--   pre_venda = orçamento/rascunho/pendente → entra na distribuição quando virar venda.
 CREATE TABLE IF NOT EXISTS public.credito_sombra_carga (
   sales_order_id uuid PRIMARY KEY,
-  aberto boolean NOT NULL,
+  situacao text NOT NULL CHECK (situacao IN ('historico','aberto','pre_venda')),
+  status_na_ativacao text NOT NULL,
   marco text NOT NULL DEFAULT 'ativacao' CHECK (marco = 'ativacao')
 );
 
@@ -88,7 +95,7 @@ CREATE TABLE IF NOT EXISTS public.credito_sombra_lote (
   pulados integer,
   liberadas integer,
   transferidas integer,
-  pendentes integer,                 -- candidatos deixados para o próximo lote (teto/orçamento de tempo)
+  pendentes integer,                 -- 1 = sobrou candidato para o próximo lote (teto/orçamento de tempo)
   status text NOT NULL DEFAULT 'rodando' CHECK (status IN ('rodando','ok')),
   CHECK ((status = 'rodando') = (terminado_em IS NULL))
 );
@@ -123,9 +130,9 @@ CREATE TABLE IF NOT EXISTS public.credito_sombra_decisao (
   piso jsonb NOT NULL,
   sync jsonb NOT NULL,
   carga_inicial boolean NOT NULL,
-  status_pedido text NOT NULL,       -- status na 1ª observação desta versão (faturado = coorte retrospectiva)
+  status_pedido text NOT NULL,       -- status do PV quando ESTA versão foi observada
   pedido_data_comercial date,        -- importado: created_at = data comercial às 12h UTC, não a hora real
-  avaliado_em timestamptz NOT NULL DEFAULT now(),   -- ≈ 1ª observação (lote a cada 10 min)
+  avaliado_em timestamptz NOT NULL DEFAULT now(),   -- ≈ 1ª observação da versão (lote a cada 10 min)
   UNIQUE (sales_order_id, company, versao),
   CHECK (prazo_dias IS NOT NULL OR faixa <> 'verde')   -- prazo ausente nunca é 🟢
 );
@@ -134,19 +141,20 @@ CREATE INDEX IF NOT EXISTS credito_sombra_decisao_pv_idx
 CREATE INDEX IF NOT EXISTS credito_sombra_decisao_dia_idx
   ON public.credito_sombra_decisao (avaliado_em);
 
--- Tentativa que NÃO virou decisão (erro, valor ausente/parcial). Append-only.
+-- Tentativa que NÃO virou decisão. Append-only. 'erro' é retentado (3×); os outros são a observação
+-- da versão (valor ilegível, app sem revisão) e tiram o PV da distribuição até mudar.
 CREATE TABLE IF NOT EXISTS public.credito_sombra_tentativa (
   id uuid PRIMARY KEY,
   lote_id uuid NOT NULL REFERENCES public.credito_sombra_lote(id),
   sales_order_id uuid NOT NULL,
   company text NOT NULL,
   conteudo_md5 text NOT NULL,
-  resultado text NOT NULL CHECK (resultado IN ('erro','valor_ausente','valor_parcial')),
+  resultado text NOT NULL CHECK (resultado IN ('erro','valor_ausente','valor_parcial','revisao_ausente')),
   detalhe text,
   criada_em timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS credito_sombra_tentativa_pv_idx
-  ON public.credito_sombra_tentativa (sales_order_id, company, conteudo_md5);
+  ON public.credito_sombra_tentativa (sales_order_id, company, criada_em DESC);
 
 -- Reserva sombra = compromisso ORIGINAL da versão do PV. O que ela ocupa é derivado na leitura.
 CREATE TABLE IF NOT EXISTS public.credito_sombra_reserva (
@@ -166,7 +174,7 @@ CREATE TABLE IF NOT EXISTS public.credito_sombra_reserva (
 CREATE UNIQUE INDEX IF NOT EXISTS credito_sombra_reserva_uma_ativa
   ON public.credito_sombra_reserva (sales_order_id, company) WHERE status = 'ativa';
 CREATE INDEX IF NOT EXISTS credito_sombra_reserva_par_idx
-  ON public.credito_sombra_reserva (company, omie_codigo_cliente) WHERE status = 'ativa';
+  ON public.credito_sombra_reserva (company, omie_codigo_cliente) WHERE status IN ('ativa','transferida');
 
 -- ── 2. RLS, grants e guardas (padrão do PR 2: allowlist por aclexplode + portão GUC) ─────────
 DO $rls$
@@ -187,6 +195,10 @@ BEGIN
       END IF;
     END LOOP;
     EXECUTE format('GRANT SELECT ON public.%I TO authenticated, service_role', t);
+    -- o leitor operacional (psql-ro) mede a sombra (Codex diff P1: a medição falhava com ele)
+    IF to_regrole('claude_ro') IS NOT NULL THEN
+      EXECUTE format('GRANT SELECT ON public.%I TO claude_ro', t);
+    END IF;
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_select_gestor', t);
     EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated '
                    'USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))))',
@@ -213,23 +225,35 @@ BEGIN
 END
 $rls$;
 
--- Marco + inventário congelado (idempotente: re-aplicar não move o marco nem re-congela)
+-- Marco + inventário congelado. Completude conferida AQUI, na fotografia (Codex P1: um importado
+-- retrodatado depois do marco não pode quebrar a reaplicação). Reaplicar não move nem re-congela.
 DO $carga$
+DECLARE
+  v_n integer;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.credito_sombra_marco) THEN
+    SELECT count(*) INTO v_n FROM public.sales_orders;
     PERFORM public.credito_portao('ativacao');
-    INSERT INTO public.credito_sombra_marco (marco) VALUES ('ativacao');
-    INSERT INTO public.credito_sombra_carga (sales_order_id, aberto)
-    SELECT s.id, s.status IN ('importado','separacao','enviado') AND s.deleted_at IS NULL
+    INSERT INTO public.credito_sombra_marco (marco, pedidos_na_ativacao) VALUES ('ativacao', v_n);
+    INSERT INTO public.credito_sombra_carga (sales_order_id, situacao, status_na_ativacao)
+    SELECT s.id,
+           CASE WHEN s.status IN ('importado','separacao','enviado') THEN 'aberto'
+                WHEN s.status IN ('orcamento','rascunho','pendente') THEN 'pre_venda'
+                ELSE 'historico' END,
+           s.status
       FROM public.sales_orders s;
     PERFORM public.credito_portao(NULL);
+    IF (SELECT count(*) FROM public.credito_sombra_carga) <> v_n THEN
+      RAISE EXCEPTION 'POSCONDICAO credito-sombra: inventário (%) ≠ pedidos na ativação (%)',
+        (SELECT count(*) FROM public.credito_sombra_carga), v_n;
+    END IF;
   END IF;
 END
 $carga$;
 
 -- ── 3. Helpers ─────────────────────────────────────────────────────────────────────────────
 -- Frescor/cobertura do CR por empresa (§9.5): TODA empresa com incremental íntegro ≤ 26 h E full ≤ 8 d,
--- cada marca única e não-futura (tolerância 5 min de relógio). Lista vazia/ausente → não ok.
+-- cada marca única e não-futura. Lista vazia/ausente → não ok.
 CREATE OR REPLACE FUNCTION private.credito_sombra_sync(p_companies text[])
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -253,8 +277,8 @@ BEGIN
     SELECT count(*), max(s.last_sync_at) INTO v_n_full, v_full
       FROM public.sync_state s WHERE s.entity_type = 'fin_cr_full_ok' AND s.account = c;
     v_ok_c := v_n_inc = 1 AND v_n_full = 1
-              AND v_inc <= now() + interval '5 minutes' AND v_inc > now() - interval '26 hours'
-              AND v_full <= now() + interval '5 minutes' AND v_full > now() - interval '8 days';
+              AND v_inc <= now() AND v_inc >= now() - interval '26 hours'
+              AND v_full <= now() AND v_full >= now() - interval '8 days';
     v_ok := v_ok AND COALESCE(v_ok_c, false);
     v_emp := v_emp || jsonb_build_object(c, jsonb_build_object('incremental_ok', v_inc, 'full_ok', v_full,
                                                                 'ok', COALESCE(v_ok_c, false)));
@@ -282,6 +306,28 @@ AS $$
           OR NOT ((it ->> 'valor_unitario')::numeric > 0 AND (it ->> 'valor_unitario')::numeric < 1e12))
       THEN 'valor_parcial'
     ELSE 'ok' END;
+$$;
+
+-- Versão corrente do PV: app = a última revisão (PR 3); importado = conteúdo (devedor + total + itens).
+CREATE OR REPLACE FUNCTION private.credito_sombra_versao(p_sales_order_id uuid)
+RETURNS jsonb           -- {origem, md5, rev_id} · origem 'app_sem_revisao' = criado no app sem revisão
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT jsonb_build_object(
+           'origem', CASE WHEN rv.id IS NOT NULL THEN 'app'
+                          WHEN s.created_by IS NOT NULL THEN 'app_sem_revisao' ELSE 'omie' END,
+           'rev_id', rv.id,
+           'md5', CASE WHEN rv.id IS NOT NULL THEN md5('app|' || rv.id::text)
+                       ELSE md5(concat_ws('|', 'omie', s.account, s.customer_user_id::text,
+                                          s.total::text, s.items::text)) END)
+    FROM public.sales_orders s
+    LEFT JOIN LATERAL (SELECT ov.id FROM public.credito_operacao_revisao ov
+                        WHERE ov.sales_order_id = s.id AND ov.company = s.account
+                        ORDER BY ov.seq DESC LIMIT 1) rv ON true
+   WHERE s.id = p_sales_order_id;
 $$;
 
 -- Σ dos títulos VINCULADOS ao PV (empresa + cliente + numero_pedido; únicos por lançamento ERP; não
@@ -402,7 +448,8 @@ BEGIN
          COALESCE(sum(f.saldo) FILTER (WHERE f.saldo > 0 AND v_proprio IS NOT NULL
                                           AND f.company = p_company AND f.omie_codigo_cliente = p_codigo
                                           AND f.numero_pedido = v_numero_pv), 0),
-         count(*) FILTER (WHERE f.saldo IS NULL),
+         -- saldo ausente, ou PAGTO PARCIAL sem saldo positivo (resíduo comprovado e não medido)
+         count(*) FILTER (WHERE f.saldo IS NULL OR (f.status_titulo = 'PAGTO PARCIAL' AND NOT f.saldo > 0)),
          count(*) FILTER (WHERE (f.saldo IS NULL OR f.data_vencimento IS NULL)
                             AND (f.data_vencimento IS NULL OR f.data_vencimento <= v_corte)),
          count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL') AND f.data_vencimento <= v_corte),
@@ -413,7 +460,8 @@ BEGIN
     JOIN public.fin_contas_receber f ON f.company = e.company AND f.omie_codigo_cliente = e.codigo
    WHERE e.codigo IS NOT NULL
      AND f.status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL','PAGTO PARCIAL');
-  v_titulos := v_titulos - v_titulos_pv;
+  -- só sai da soma o que o PV cobre; título próprio acima do valor avaliado continua exposição
+  v_titulos := v_titulos - least(v_titulos_pv, p_valor);
 
   v_sync := private.credito_sombra_sync(ARRAY(
     SELECT p_company
@@ -447,7 +495,8 @@ BEGIN
   END IF;
 
   IF v_root IS NOT NULL THEN
-    -- reservas sombra ATIVAS de OUTROS PVs do grupo (par atual OU raiz gravada), pelo que ocupam hoje
+    -- reservas sombra de OUTROS PVs do grupo (par atual OU raiz gravada), pelo que ocupam HOJE:
+    -- ativas, e transferidas recentes (título cancelado depois faz o residual voltar — Codex P1)
     WITH escopo AS (
       SELECT p_company AS company, p_codigo AS codigo
       UNION
@@ -456,19 +505,28 @@ BEGIN
     SELECT COALESCE(sum(private.credito_sombra_residual(r.valor_brl, r.company, r.omie_codigo_cliente, r.sales_order_id)), 0)
       INTO v_reservas
       FROM public.credito_sombra_reserva r
-     WHERE r.status = 'ativa'
+      JOIN public.sales_orders s ON s.id = r.sales_order_id
+     WHERE (r.status = 'ativa'
+            OR (r.status = 'transferida' AND r.encerrada_em > now() - interval '120 days' AND s.status <> 'cancelado'))
        AND (r.grupo_user_id = v_root
             OR EXISTS (SELECT 1 FROM escopo e WHERE e.company = r.company AND e.codigo = r.omie_codigo_cliente))
        AND NOT (r.sales_order_id = p_sales_order_id AND r.company = p_company);
-    -- exposição que ninguém mede: PV em trânsito do grupo com valor ilegível ou ainda sem reserva sombra
+    -- exposição que ninguém mede (Codex P1): PV de venda do grupo (inclusive faturado e excluído no
+    -- app) fora do histórico congelado, sem reserva da VERSÃO CORRENTE — ainda não avaliado, valor
+    -- ilegível, ou mudou desde a reserva
     SELECT EXISTS (
       SELECT 1 FROM public.sales_orders s
         JOIN public.credito_grupo_pares(v_root) g ON g.user_id = s.customer_user_id AND g.company = s.account
-       WHERE s.id <> p_sales_order_id AND s.deleted_at IS NULL
-         AND s.status IN ('importado','separacao','enviado')
-         AND (private.credito_sombra_valor(s.total, s.items) <> 'ok'
-              OR NOT EXISTS (SELECT 1 FROM public.credito_sombra_reserva r
-                              WHERE r.sales_order_id = s.id AND r.company = s.account AND r.status = 'ativa')))
+        LEFT JOIN public.credito_sombra_carga k ON k.sales_order_id = s.id
+       WHERE s.id <> p_sales_order_id
+         AND s.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+         AND (k.sales_order_id IS NULL OR k.situacao <> 'historico')
+         AND NOT EXISTS (
+           SELECT 1 FROM public.credito_sombra_reserva r
+             JOIN public.credito_sombra_decisao d ON d.id = r.decisao_id
+            WHERE r.sales_order_id = s.id AND r.company = s.account
+              AND r.status IN ('ativa','transferida')
+              AND d.conteudo_md5 = private.credito_sombra_versao(s.id) ->> 'md5'))
       INTO v_pv_indet;
   END IF;
 
@@ -506,7 +564,8 @@ $$;
 -- ── 5. Lote (pg_cron) ──────────────────────────────────────────────────────────────────────
 -- 1 lote por vez (try-lock de transação com chave EXCLUSIVA da sombra). Nenhum lock de grupo: o caminho
 -- do pedido nunca espera a sombra. Cada PV num sub-bloco: erro vira tentativa, nunca aborta o lote.
--- Orçamento de tempo checado antes de cada PV; o resto fica para o próximo lote (retomável pelo ledger).
+-- Candidatos LIMITADOS na consulta (teto + 1 para saber se sobrou); orçamento de tempo antes de cada PV;
+-- o resto fica para o próximo lote (retomável pelo ledger). O cron fixa statement_timeout.
 CREATE OR REPLACE FUNCTION private.credito_sombra_lote(p_max integer DEFAULT 100, p_orcamento_seg integer DEFAULT 45)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -531,6 +590,7 @@ DECLARE
   v_det text;
   v_codigo bigint;
   v_valor numeric;
+  v_reserva numeric;
   v_prazo integer;
 BEGIN
   IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -542,7 +602,7 @@ BEGIN
   PERFORM public.credito_portao(v_lote::text);
   INSERT INTO public.credito_sombra_lote (id) VALUES (v_lote);
 
-  -- (a) conciliação ANTES de avaliar (Codex P1): só fatos do Omie encerram reserva
+  -- (a) conciliação ANTES de avaliar (Codex P1): só fatos do Omie encerram reserva. O(reservas ativas).
   FOR r IN SELECT rs.id, rs.valor_brl, rs.company, rs.omie_codigo_cliente, rs.sales_order_id,
                   s.status AS st, s.omie_numero_pedido AS num
              FROM public.credito_sombra_reserva rs
@@ -562,50 +622,46 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- (b) candidatos: versão corrente de cada PV ainda sem decisão (valor ilegível não repete; erro até 3×)
+  -- (b) candidatos: PV de venda cuja versão corrente difere da última OBSERVAÇÃO (decisão ou tentativa
+  --     não-erro — Codex P1: A → B ilegível → A é transição) e que não falhou 3× nesta versão
   FOR c IN
     WITH base AS (
       SELECT s.id, s.account AS company, s.status, s.total, s.items, s.created_at, s.customer_user_id,
-             (k.sales_order_id IS NOT NULL) AS carga,
-             rv.id AS rev_id, rv.valor_brl AS rev_valor, rv.prazo_dias AS rev_prazo,
-             rv.omie_codigo_cliente AS rev_codigo
+             (k.situacao = 'aberto') AS carga,
+             private.credito_sombra_versao(s.id) AS ver
         FROM public.sales_orders s
         LEFT JOIN public.credito_sombra_carga k ON k.sales_order_id = s.id
-        LEFT JOIN LATERAL (SELECT ov.* FROM public.credito_operacao_revisao ov
-                            WHERE ov.sales_order_id = s.id AND ov.company = s.account
-                            ORDER BY ov.seq DESC LIMIT 1) rv ON true
        WHERE s.account IN ('oben','colacor')
-         AND s.deleted_at IS NULL
-         AND s.status NOT IN ('cancelado','rascunho','orcamento')
-         AND (k.sales_order_id IS NULL OR k.aberto)
+         AND s.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+         AND (k.sales_order_id IS NULL OR k.situacao <> 'historico')
     ), cand AS (
-      SELECT b.*,
-             CASE WHEN b.rev_id IS NOT NULL THEN 'app' ELSE 'omie' END AS origem,
-             CASE WHEN b.rev_id IS NOT NULL
-                  THEN md5('app|' || b.rev_id::text)
-                  ELSE md5(concat_ws('|', 'omie', b.company, b.customer_user_id::text, b.total::text, b.items::text))
-             END AS md5
+      SELECT b.*, b.ver ->> 'origem' AS origem, b.ver ->> 'md5' AS md5, (b.ver ->> 'rev_id')::uuid AS rev_id
         FROM base b
     )
-    SELECT x.* FROM cand x
-     WHERE x.md5 IS DISTINCT FROM (SELECT d.conteudo_md5 FROM public.credito_sombra_decisao d
-                                    WHERE d.sales_order_id = x.id AND d.company = x.company
-                                    ORDER BY d.avaliado_em DESC, d.id LIMIT 1)
-       AND NOT EXISTS (SELECT 1 FROM public.credito_sombra_tentativa t
-                        WHERE t.sales_order_id = x.id AND t.company = x.company AND t.conteudo_md5 = x.md5
-                          AND t.resultado IN ('valor_ausente','valor_parcial'))
+    SELECT x.*, rv.valor_brl AS rev_valor, rv.prazo_dias AS rev_prazo, rv.omie_codigo_cliente AS rev_codigo
+      FROM cand x
+      LEFT JOIN public.credito_operacao_revisao rv ON rv.id = x.rev_id
+     WHERE x.md5 IS DISTINCT FROM (
+             SELECT o.md5 FROM (
+               SELECT d.conteudo_md5 AS md5, d.avaliado_em AS em FROM public.credito_sombra_decisao d
+                WHERE d.sales_order_id = x.id AND d.company = x.company
+               UNION ALL
+               SELECT t.conteudo_md5, t.criada_em FROM public.credito_sombra_tentativa t
+                WHERE t.sales_order_id = x.id AND t.company = x.company AND t.resultado <> 'erro') o
+              ORDER BY o.em DESC LIMIT 1)
        AND (SELECT count(*) FROM public.credito_sombra_tentativa t
              WHERE t.sales_order_id = x.id AND t.company = x.company AND t.conteudo_md5 = x.md5
                AND t.resultado = 'erro') < 3
      ORDER BY x.created_at, x.id
+     LIMIT p_max + 1
   LOOP
     IF v_n >= p_max OR clock_timestamp() - v_inicio > make_interval(secs => p_orcamento_seg) THEN
-      v_pend := v_pend + 1;
-      CONTINUE;
+      v_pend := 1;
+      EXIT;
     END IF;
     v_n := v_n + 1;
-    -- app: o valor é o da revisão (calculado no servidor, PR 3); importado: total + itens do espelho
-    v_valor_ok := CASE WHEN c.origem = 'app'
+    v_valor_ok := CASE WHEN c.origem = 'app_sem_revisao' THEN 'revisao_ausente'
+                       WHEN c.origem = 'app'
                        THEN CASE WHEN c.rev_valor > 0 AND c.rev_valor < 1e12 THEN 'ok' ELSE 'valor_ausente' END
                        ELSE private.credito_sombra_valor(c.total, c.items) END;
     IF v_valor_ok <> 'ok' THEN
@@ -643,12 +699,17 @@ BEGIN
         v_dec ->> 'faixa', v_dec ->> 'motivo', v_dec ->> 'faixa_sem_prazo', v_dec ->> 'motivo_sem_prazo',
         (v_dec ->> 'exposicao_titulos_brl')::numeric, (v_dec ->> 'exposicao_reservas_brl')::numeric,
         (v_dec ->> 'limite_brl')::numeric, (v_dec ->> 'prazo_max_dias')::integer, (v_dec ->> 'limite_versao')::integer,
-        v_dec -> 'piso', v_dec -> 'sync', c.carga, c.status,
+        v_dec -> 'piso', v_dec -> 'sync', COALESCE(c.carga, false), c.status,
         (c.created_at AT TIME ZONE 'America/Sao_Paulo')::date);
 
-      -- versão nova substitui a reserva anterior; o PV é real → reserva em QUALQUER faixa
-      FOR r IN SELECT rs.id FROM public.credito_sombra_reserva rs
+      -- versão nova substitui a reserva anterior; o PV é real → reserva em QUALQUER faixa. App: a
+      -- revisão nasce ANTES do envio, então nunca reduz a reserva antes de o Omie confirmar (Codex P1)
+      v_reserva := v_valor;
+      FOR r IN SELECT rs.id, rs.valor_brl FROM public.credito_sombra_reserva rs
                 WHERE rs.sales_order_id = c.id AND rs.company = c.company AND rs.status = 'ativa' LOOP
+        IF c.origem = 'app' THEN
+          v_reserva := greatest(v_reserva, r.valor_brl);
+        END IF;
         PERFORM public.credito_portao(r.id::text);
         UPDATE public.credito_sombra_reserva SET status = 'substituida', encerrada_em = now(),
                motivo_encerramento = 'nova versão ' || v_versao WHERE id = r.id AND status = 'ativa';
@@ -660,7 +721,7 @@ BEGIN
         PERFORM public.credito_portao(v_id::text);
         INSERT INTO public.credito_sombra_reserva (id, decisao_id, sales_order_id, company, omie_codigo_cliente,
                                                    grupo_user_id, valor_brl)
-        VALUES (v_id, v_dec_id, c.id, c.company, v_codigo, (v_dec ->> 'grupo_user_id')::uuid, v_valor);
+        VALUES (v_id, v_dec_id, c.id, c.company, v_codigo, (v_dec ->> 'grupo_user_id')::uuid, v_reserva);
       END IF;
       v_av := v_av + 1;
     EXCEPTION WHEN OTHERS THEN
@@ -690,13 +751,13 @@ DECLARE
   r record;
 BEGIN
   FOR r IN SELECT p.oid::regprocedure AS fn FROM pg_proc p
-            WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito_sombra_%' LOOP
+            WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito\_sombra\_%' LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role', r.fn);
   END LOOP;
   -- default ACL pode ter dado EXECUTE a outros papéis (ex.: sandbox_exec_*): fora todos
   FOR r IN SELECT p.oid::regprocedure AS fn, a.grantee::regrole::text AS papel
-             FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
-            WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito_sombra_%'
+             FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+            WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito\_sombra\_%'
               AND a.grantee <> 0 AND a.grantee <> p.proowner LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %s', r.fn, r.papel);
   END LOOP;
@@ -704,25 +765,31 @@ END
 $acl$;
 
 -- ── 7. Sensores (views security_invoker: leem com a RLS de quem consulta) ───────────────────
--- Última decisão por PV (a distribuição conta PV, não versão).
+-- Estado atual por PV para a DISTRIBUIÇÃO: a última decisão, desde que não haja observação não-erro
+-- mais nova (versão corrente ilegível → o PV sai da distribuição e aparece como incompleto).
 CREATE OR REPLACE VIEW public.credito_sombra_pv_atual WITH (security_invoker = on) AS
-SELECT DISTINCT ON (d.sales_order_id, d.company) d.*
-  FROM public.credito_sombra_decisao d
- ORDER BY d.sales_order_id, d.company, d.avaliado_em DESC, d.id;
+SELECT x.* FROM (
+  SELECT DISTINCT ON (d.sales_order_id, d.company) d.*
+    FROM public.credito_sombra_decisao d
+   ORDER BY d.sales_order_id, d.company, d.avaliado_em DESC, d.id) x
+ WHERE NOT EXISTS (SELECT 1 FROM public.credito_sombra_tentativa t
+                    WHERE t.sales_order_id = x.sales_order_id AND t.company = x.company
+                      AND t.resultado <> 'erro' AND t.criada_em > x.avaliado_em);
 
 CREATE OR REPLACE VIEW public.credito_sombra_saude WITH (security_invoker = on) AS
 SELECT (SELECT ativado_em FROM public.credito_sombra_marco) AS ativado_em,
        (SELECT max(terminado_em) FROM public.credito_sombra_lote WHERE status = 'ok') AS ultimo_lote_ok,
-       (SELECT count(*) FROM public.credito_sombra_lote WHERE status = 'rodando'
-          AND iniciado_em < now() - interval '15 minutes') AS lotes_presos,
+       -- a linha 'rodando' só existe dentro da transação do lote: o sinal externo é o tempo sem lote ok
+       round((extract(epoch FROM now() - (SELECT max(terminado_em) FROM public.credito_sombra_lote
+                                           WHERE status = 'ok')) / 60)::numeric, 1) AS minutos_sem_lote,
        (SELECT count(*) FROM public.credito_sombra_tentativa WHERE resultado = 'erro'
           AND criada_em > now() - interval '24 hours') AS erros_24h,
+       (SELECT count(*) FROM public.credito_sombra_lote WHERE pendentes > 0
+          AND terminado_em > now() - interval '1 hour') AS lotes_com_sobra_1h,
        (SELECT count(*) FROM public.credito_sombra_carga k JOIN public.sales_orders s ON s.id = k.sales_order_id
-         WHERE k.aberto AND s.deleted_at IS NULL AND s.status NOT IN ('cancelado','rascunho','orcamento')
+         WHERE k.situacao = 'aberto' AND s.status NOT IN ('cancelado','rascunho','pendente','orcamento')
            AND NOT EXISTS (SELECT 1 FROM public.credito_sombra_decisao d WHERE d.sales_order_id = k.sales_order_id))
          AS carga_pendente,
-       (SELECT count(*) FROM public.credito_sombra_reserva rs JOIN public.sales_orders s ON s.id = rs.sales_order_id
-         WHERE rs.status = 'ativa' AND s.status = 'faturado') AS faturado_reserva_ativa,
        (SELECT count(*) FROM public.credito_sombra_reserva rs JOIN public.sales_orders s ON s.id = rs.sales_order_id
          WHERE rs.status = 'ativa' AND s.deleted_at IS NOT NULL) AS excluido_app_reserva_ativa;
 
@@ -737,17 +804,20 @@ BEGIN
               AND a.grantee <> 0 AND a.grantee <> c.relowner LOOP
     EXECUTE format('REVOKE ALL ON %s FROM %s', r.rel, r.papel);
   END LOOP;
+  REVOKE ALL ON public.credito_sombra_pv_atual, public.credito_sombra_saude FROM PUBLIC, anon;
+  GRANT SELECT ON public.credito_sombra_pv_atual, public.credito_sombra_saude TO authenticated, service_role;
+  IF to_regrole('claude_ro') IS NOT NULL THEN
+    GRANT SELECT ON public.credito_sombra_pv_atual, public.credito_sombra_saude TO claude_ro;
+  END IF;
 END
 $vacl$;
-REVOKE ALL ON public.credito_sombra_pv_atual, public.credito_sombra_saude FROM PUBLIC, anon;
-GRANT SELECT ON public.credito_sombra_pv_atual, public.credito_sombra_saude TO authenticated, service_role;
 
 -- ── 8. cron: a cada 10 min, deslocado do minuto cheio (fin-sync-continuacao roda em */10) ─────
 DO $cron$
 BEGIN
   PERFORM cron.unschedule(j.jobid) FROM cron.job j WHERE j.jobname = 'credito-sombra-lote-10min';
   PERFORM cron.schedule('credito-sombra-lote-10min', '3-59/10 * * * *',
-                        'SELECT private.credito_sombra_lote(100, 45)');
+                        'SET statement_timeout = ''120s''; SELECT private.credito_sombra_lote(100, 45);');
 END
 $cron$;
 
@@ -756,9 +826,12 @@ DO $pos$
 DECLARE
   v_n integer;
 BEGIN
+  -- o gate efetivo não mudou: as 2 assinaturas presentes, com corpo e ACL de antes
   IF (SELECT count(*) FROM _efetivo_antes) <> 2
-     OR EXISTS (SELECT 1 FROM _efetivo_antes a JOIN pg_proc p ON p.oid = a.oid
-                 WHERE md5(p.prosrc) <> a.corpo OR p.proacl::text IS DISTINCT FROM a.acl) THEN
+     OR EXISTS (SELECT 1 FROM _efetivo_antes a
+                  LEFT JOIN pg_proc p ON p.oid = to_regprocedure(a.sig)
+                 WHERE p.oid IS NULL OR md5(p.prosrc) <> a.corpo
+                    OR COALESCE(p.proacl, acldefault('f', p.proowner))::text <> a.acl) THEN
     RAISE EXCEPTION 'POSCONDICAO credito-sombra: gate efetivo alterado';
   END IF;
   SELECT count(*) INTO v_n FROM pg_class c
@@ -767,30 +840,31 @@ BEGIN
   IF v_n <> 6 THEN
     RAISE EXCEPTION 'POSCONDICAO credito-sombra: RLS em % de 6 tabelas', v_n;
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+  IF EXISTS (SELECT 1 FROM pg_class c CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
               WHERE c.relnamespace = 'public'::regnamespace AND c.relname LIKE 'credito\_sombra\_%'
-                AND a.grantee <> c.relowner AND a.privilege_type <> 'SELECT') THEN
-    RAISE EXCEPTION 'POSCONDICAO credito-sombra: privilégio de escrita fora do dono';
+                AND a.grantee <> c.relowner AND (a.grantee = 0 OR a.privilege_type <> 'SELECT')) THEN
+    RAISE EXCEPTION 'POSCONDICAO credito-sombra: privilégio fora do dono além de SELECT';
   END IF;
-  -- proacl NULL = default (EXECUTE a PUBLIC): o aclexplode não o veria — exige ACL explícito
-  IF (SELECT count(*) FROM pg_proc p
-       WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito\_sombra\_%'
-         AND p.proacl IS NOT NULL) <> 6
-     OR EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+  -- conjunto EXATO de funções da sombra, cada uma só com EXECUTE do dono (ACL default expandido)
+  IF (SELECT array_agg(p.proname::text ORDER BY p.proname) FROM pg_proc p
+       WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito\_sombra\_%')
+     IS DISTINCT FROM ARRAY['credito_sombra_avaliar','credito_sombra_lote','credito_sombra_residual',
+                            'credito_sombra_sync','credito_sombra_titulos_pv','credito_sombra_valor',
+                            'credito_sombra_versao']
+     OR EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
                  WHERE p.pronamespace = 'private'::regnamespace AND p.proname LIKE 'credito\_sombra\_%'
                    AND a.grantee <> p.proowner) THEN
-    RAISE EXCEPTION 'POSCONDICAO credito-sombra: EXECUTE de função da sombra fora do dono';
+    RAISE EXCEPTION 'POSCONDICAO credito-sombra: funções da sombra fora do esperado ou com EXECUTE de terceiros';
   END IF;
   IF (SELECT count(*) FROM pg_class c
        WHERE c.oid IN ('public.credito_sombra_pv_atual'::regclass, 'public.credito_sombra_saude'::regclass)
          AND c.reloptions @> ARRAY['security_invoker=on']) <> 2 THEN
     RAISE EXCEPTION 'POSCONDICAO credito-sombra: view sem security_invoker';
   END IF;
+  -- a fotografia é íntegra (completude conferida no bloco que a criou)
   IF (SELECT count(*) FROM public.credito_sombra_marco) <> 1
-     OR EXISTS (SELECT 1 FROM public.sales_orders s
-                 WHERE s.created_at < (SELECT ativado_em FROM public.credito_sombra_marco)
-                   AND NOT EXISTS (SELECT 1 FROM public.credito_sombra_carga k WHERE k.sales_order_id = s.id)) THEN
-    RAISE EXCEPTION 'POSCONDICAO credito-sombra: marco/inventário incompleto';
+     OR (SELECT count(*) FROM public.credito_sombra_carga) <> (SELECT pedidos_na_ativacao FROM public.credito_sombra_marco) THEN
+    RAISE EXCEPTION 'POSCONDICAO credito-sombra: marco/inventário íntegro';
   END IF;
   IF (SELECT count(*) FROM cron.job WHERE jobname = 'credito-sombra-lote-10min' AND active
                                       AND username = 'postgres') <> 1 THEN
