@@ -96,7 +96,8 @@ CREATE TABLE public.sales_orders (
 CREATE TABLE public.fin_contas_receber (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company text NOT NULL, omie_codigo_cliente bigint, saldo numeric, status_titulo text, data_vencimento date,
-  omie_codigo_lancamento bigint, numero_pedido text, nome_cliente text, updated_at timestamptz DEFAULT now());
+  omie_codigo_lancamento bigint, numero_pedido text, nome_cliente text, updated_at timestamptz DEFAULT now(),
+  valor_documento numeric, data_emissao date, categoria_codigo text, ausente_omie_desde timestamptz);
 CREATE TABLE public.customer_canonical_alias (
   alias_user_id uuid PRIMARY KEY, canonical_user_id uuid NOT NULL,
   status text NOT NULL DEFAULT 'inactive' CHECK (status IN ('active','inactive','conflict')));
@@ -127,7 +128,8 @@ for m in 20260702233000_trava_credito_fase2 20260703140000_trava_credito_gate_ex
          20261121200000_credito_piso_pagto_parcial 20261124170000_credito_gate_fronteira_60_inclusiva; do
   P -q -1 -f "$M/$m.sql"
 done
-MIG="$M/20261125120000_credito_painel_leitura.sql"
+MIG_BASE="$M/20261125120000_credito_painel_leitura.sql"   # o que a prod tem (#1443)
+MIG="$M/20261126180000_credito_painel_concordancia_ia.sql" # sob prova (bloco IA × regra vivo)
 echo "antecedentes aplicados"
 
 # helpers do harness
@@ -213,6 +215,66 @@ echo "seed ok"
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — ASSERTS (rodam contra a variante instalada)
 # ══════════════════════════════════════════════════════════════════════════════
+# ── IA × regra (fatia 5b ao vivo): seed na MESMA transação do painel, desfeito no ROLLBACK ──
+Z=f0000000-0000-0000-0000-00000000000a
+W=f0000000-0000-0000-0000-00000000000b
+H="(now() AT TIME ZONE 'America/Sao_Paulo')::date"
+PROP="INSERT INTO public.credito_limite_proposta (grupo_user_id, grupo_assinatura, limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_em, created_at) VALUES"
+# o portão do PR 2 (escrita só pelas RPCs) é do ESCRITOR; aqui provamos o LEITOR → trigger fora na transação
+SEED_IA="ALTER TABLE public.credito_limite_proposta DISABLE TRIGGER USER;
+ALTER TABLE public.credito_limite_proposta DROP CONSTRAINT credito_limite_proposta_status_check;
+INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES ('$Z','oben',301);
+$PROP ('$C','x',5000,28,'baixo',jsonb_build_object('piso_estado','livre'),now(),'pendente',NULL,now()-interval '2 days'),
+ ('$C','x',0,0,'alto',jsonb_build_object('piso_estado','comprovado'),now(),'pendente',NULL,now()-interval '1 day'),
+ ('$C','x',9000,28,'baixo',jsonb_build_object('piso_estado','livre'),now(),'aplicada_auto_reducao',now(),now()),
+ ('$Z','z',3000,28,'baixo',jsonb_build_object('piso_estado','livre'),now(),'pendente',NULL,now()-interval '1 day'),
+ ('$W','w',2000,28,'medio',jsonb_build_object('outra','x'),now(),'pendente',NULL,now()-interval '1 day');
+INSERT INTO public.fin_contas_receber (company, omie_codigo_cliente, saldo, status_titulo, data_vencimento, omie_codigo_lancamento, valor_documento, data_emissao, categoria_codigo) VALUES
+ ('oben',101,0,'RECEBIDO',$H-30,9101,100,$H-60,'1.01.01'),
+ ('oben',101,0,'RECEBIDO',$H-40,9102,200,$H-70,'1.01.01'),
+ ('oben',101,300,'ATRASADO',$H-20,9103,300,$H-50,'1.01.01'),
+ ('oben',101,0,'RECEBIDO',$H-30,9104,1000,$H-60,'1.01.01'),
+ ('oben',101,0,'RECEBIDO',$H-30,9105,5000,$H-60,'2.01.01'),
+ ('oben',101,0,'RECEBIDO',$H-10,9106,5000,$H-40,'1.01.01'),
+ ('colacor_sc',202,0,'RECEBIDO',$H-30,9107,400,$H,'1.01.01'),
+ ('oben',301,0,'RECEBIDO',$H-50,9201,1000,$H-80,'1.01.01');
+INSERT INTO public.v_titulo_baixas (company, omie_codigo_lancamento, tipo, data_baixa_final, origem_baixa) VALUES
+ ('oben',9101,'CR',$H-28,'titulo'), ('oben',9102,'CR',$H-30,'titulo'), ('oben',9104,'CP',$H-30,'titulo'),
+ ('oben',9105,'CR',$H-30,'titulo'), ('oben',9106,'CR',$H-10,'titulo'),
+ ('colacor_sc',9107,'CR',$H-30,'titulo'), ('oben',9201,'CR',$H-50,'titulo')"
+# só o grupo W (ficha sem piso): nada comparável
+SEED_W="ALTER TABLE public.credito_limite_proposta DISABLE TRIGGER USER; $PROP ('$W','w',2000,28,'medio',jsonb_build_object('outra','x'),now(),'pendente',NULL,now())"
+
+asserts_ia() {
+  echo "── concordância IA × regra (seed: C alto/comprovado · Z baixo/livre · W sem piso · redução 5b ignorada) ──"
+  local c="r->'concordancia'"
+  local rk="(SELECT f FROM jsonb_array_elements($c->'por_risco') f WHERE f->>'risco'"
+  local xp="(SELECT f->>'grupos' FROM jsonb_array_elements($c->'ia_x_piso') f WHERE (f->>'ia_restringe')"
+  eq "IA: disponível" "$(Jv "$SEED_IA" "$c->>'disponivel'")" "true"
+  eq "IA: 3 grupos com proposta (redução 5b não é proposta)" "$(Jv "$SEED_IA" "$c->>'grupos_com_proposta'")" "3"
+  eq "IA: 2 com desfecho (W sem safra)" "$(Jv "$SEED_IA" "$c->>'grupos_com_desfecho'")" "2"
+  eq "IA: 1 título sem desfecho (RECEBIDO sem baixa CR) contado à parte" "$(Jv "$SEED_IA" "$c->>'titulos_sem_desfecho'")" "1"
+  eq "IA: C = proposta MAIS RECENTE (alto), 4 títulos com desfecho" "$(Jv "$SEED_IA" "$rk='alto')->>'titulos'")" "4"
+  eq "IA: alto — atraso por R\$ = 500/1000 = 50.0 (tolerância 5 d; SC somada)" "$(Jv "$SEED_IA" "$rk='alto')->>'atraso_pct'")" "50.0"
+  eq "IA: alto — atraso grave = 300/1000 = 30.0" "$(Jv "$SEED_IA" "$rk='alto')->>'atraso_grave_pct'")" "30.0"
+  eq "IA: baixo (Z) — zero medido = 0.0" "$(Jv "$SEED_IA" "$rk='baixo')->>'atraso_pct'")" "0.0"
+  eq "IA: sem risco baixo para C (a 1ª proposta e a redução não contam)" "$(Jv "$SEED_IA" "$rk='baixo')->>'titulos'")" "1"
+  eq "IA × piso: restringe · comprovado = 1" "$(Jv "$SEED_IA" "$xp='true' AND f->>'piso_hoje'='comprovado')")" "1"
+  eq "IA × piso: libera · livre = 1" "$(Jv "$SEED_IA" "$xp='false' AND f->>'piso_hoje'='livre')")" "1"
+  eq "concordância: 2 comparáveis, 1 fora (W sem piso)" "$(Jv "$SEED_IA" "($c->'concordancia_piso'->>'comparaveis') || '/' || ($c->'concordancia_piso'->>'fora_da_comparacao')")" "2/1"
+  eq "concordância = 100.0" "$(Jv "$SEED_IA" "$c->'concordancia_piso'->>'concordancia_pct'")" "100.0"
+  eq "prospectivo: só o título emitido depois da 1ª proposta" "$(Jv "$SEED_IA" "$c->'prospectivo'->>'titulos_maduros'")" "1"
+  eq "prospectivo: coorte da 1ª proposta (libera)" "$(Jv "$SEED_IA" "$c->'prospectivo'->'por_ia'->0->>'ia_restringe'")" "false"
+  eq "só W: nada comparável → % null (não 0)" "$(Jv "$SEED_W" "$c->'concordancia_piso'->>'concordancia_pct'")" ""
+  eq "só W: sem desfecho → por_risco vazio" "$(Jv "$SEED_W" "jsonb_array_length($c->'por_risco')")" "0"
+  echo "── guarda de drift (CREATE OR REPLACE sobre corpo divergente é recusado; reaplicar é idempotente) ──"
+  P -q -c "DROP FUNCTION public.credito_painel_resumo(integer);
+           CREATE FUNCTION public.credito_painel_resumo(p_dias integer DEFAULT 90) RETURNS jsonb LANGUAGE sql AS 'SELECT ''{}''::jsonb'"
+  if P -q -1 -f "$CUR" >/dev/null 2>&1; then bad "drift: aplicou sobre corpo divergente"; else ok "drift: corpo divergente → recusado"; fi
+  instala "$CUR"
+  if P -q -1 -f "$CUR" >/dev/null 2>&1; then ok "drift: reaplicar sobre si mesmo passa"; else bad "drift: reaplicação recusada"; fi
+}
+
 asserts() {
   echo "── ACL e gate de papel ──"
   eq "anon sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('anon','public.credito_painel_resumo(integer)','EXECUTE')")" "f"
@@ -232,7 +294,9 @@ asserts() {
   eq "reservas não medidas" "$(J "r->'exposicao'->'reservas'->>'disponivel'")" "false"
   eq "reservado do grupo = null (não 0)" "$(J "(SELECT g->'reservado' FROM jsonb_array_elements(r->'exposicao'->'grupos') g WHERE g->>'grupo_user_id'='$C')")" "null"
   eq "fila indisponível" "$(J "r->'fila'->>'disponivel'")" "false"
-  eq "concordância indisponível" "$(J "r->'concordancia'->>'disponivel'")" "false"
+  eq "sem proposta da IA: concordância indisponível" "$(J "r->'concordancia'->>'disponivel'")" "false"
+  eq "motivo = IA ainda não propôs" "$(J "(r->'concordancia'->>'motivo') LIKE '%IA ainda n%o prop%'")" "t"
+  asserts_ia
   eq "sombra indisponível sem a view do PR 5" "$(J "r->'concordancia'->'sombra'->>'disponivel'")" "false"
   eq "motivo = PR 5 não aplicado" "$(J "(r->'concordancia'->'sombra'->>'motivo') LIKE '%(PR 5) ainda n%o aplicado%'")" "t"
 
@@ -304,7 +368,9 @@ SQL
   eq "reservas medidas" "$(J "r->'exposicao'->'reservas'->>'disponivel'")" "true"
   eq "reservado C = 600" "$(J "$g->>'reservado'")" "600"
   eq "uso_pct C = (6300+600)/12000 = 57.5" "$(J "$g->>'uso_pct'")" "57.5"
-  eq "concordância segue indisponível (sensor do PR 5)" "$(J "r->'concordancia'->>'disponivel'")" "false"
+  eq "com 1 proposta (ficha sem piso): concordância disponível" "$(J "r->'concordancia'->>'disponivel'")" "true"
+  eq "grupos com proposta = 1" "$(J "r->'concordancia'->>'grupos_com_proposta'")" "1"
+  eq "sem piso conhecido: % de concordância é null (não 0)" "$(J "r->'concordancia'->'concordancia_piso'->>'concordancia_pct'")" ""
   eq "gate v2 disponível (só não-verde listado)" "$(J "jsonb_array_length(r->'bloqueios'->'gate_v2'->'por_motivo')")" "0"
 }
 
@@ -315,7 +381,9 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # DROP antes: `CREATE OR REPLACE` PRESERVA o ACL da instalação anterior, então a sabotagem do fecho de
 # ACL ficaria verde (falsificação pegou, 2026-11-25). Cada variante nasce como na 1ª aplicação em prod.
-instala() { P -q -c "DROP FUNCTION IF EXISTS public.credito_painel_resumo(integer)"; P -q -1 -f "$1" >/dev/null; }
+# instala = a cadeia de prod: base (#1443) e, por cima, o arquivo sob prova (a guarda de drift exige a base)
+instala() { CUR="$1"; P -q -c "DROP FUNCTION IF EXISTS public.credito_painel_resumo(integer)";
+            P -q -1 -f "$MIG_BASE" >/dev/null; P -q -1 -f "$1" >/dev/null; }
 
 echo "══ CONTROLE (migration original) ══"
 instala "$MIG"
@@ -349,7 +417,17 @@ sabota gemeo_ignora "s/WHERE g.id = so.gemeo_importado_id AND g.status = 'cancel
 sabota sombra_sem_guarda "s/IF to_regclass('public.credito_sombra_pv_atual') IS NULL THEN/IF false THEN/"
 sabota sombra_sem_excecao "s/EXCEPTION WHEN undefined_column OR undefined_table OR insufficient_privilege THEN/EXCEPTION WHEN division_by_zero THEN/"
 sabota sombra_com_carga "s/FROM public.credito_sombra_pv_atual a WHERE NOT a.carga_inicial),/FROM public.credito_sombra_pv_atual a),/"
-sabota acl_aberta   's/EXECUTE format(.REVOKE ALL ON FUNCTION public.credito_painel_resumo(integer) FROM %s., r.papel);/NULL;/'
+sabota ia_sem_desfecho_em_dia "s/WHEN s.status_titulo = 'RECEBIDO' AND bx.data_baixa IS NULL THEN 'sem_desfecho'/WHEN s.status_titulo = 'RECEBIDO' AND bx.data_baixa IS NULL THEN 'em_dia'/"
+sabota ia_tolerancia_60 "s/bx.data_baixa <= s.data_vencimento + 5 THEN 'em_dia'/bx.data_baixa <= s.data_vencimento + 60 THEN 'em_dia'/"
+sabota ia_conta_reducao "s/^       WHERE p.status <> 'aplicada_auto_reducao'\$/       WHERE true/"
+sabota ia_mais_antiga "s/ORDER BY p.grupo_user_id, p.created_at DESC, p.id/ORDER BY p.grupo_user_id, p.created_at, p.id/"
+sabota ia_prosp_vaza "s/WHERE s.data_emissao > ia1.primeira_em/WHERE true/"
+sabota ia_sem_categoria "s/AND f.categoria_codigo LIKE '1.01.%'/AND true/"
+sabota ia_pct_zero "s/'concordancia_pct', CASE WHEN c.comparaveis > 0 THEN round(100.0 \* c.concordam \/ c.comparaveis, 1) END)/'concordancia_pct', COALESCE(round(100.0 * c.concordam \/ NULLIF(c.comparaveis, 0), 1), 0))/"
+sabota drift_sem_guarda "s/AND position('painel-concordancia-ia-v2' IN v_src) = 0 THEN/AND false THEN/"
+# o CREATE OR REPLACE desta migration PRESERVA o ACL da base (#1443): o REVOKE dela é redundante por desenho
+# (sabotá-lo fica verde). O que é load-bearing aqui é a POSTCONDIÇÃO — um GRANT a mais tem de ser recusado.
+sabota acl_grant_anon 's/GRANT EXECUTE ON FUNCTION public.credito_painel_resumo(integer) TO authenticated;/GRANT EXECUTE ON FUNCTION public.credito_painel_resumo(integer) TO authenticated, anon;/'
 
 echo "══ RESTAURAÇÃO (original de novo) ══"
 instala "$MIG"
