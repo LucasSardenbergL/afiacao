@@ -186,8 +186,9 @@ BEGIN
     -- denominador: pedidos criados NO APP no período (os importados do Omie não passam pelo gate)
     'pedidos_app_periodo', (SELECT COALESCE(jsonb_object_agg(z.account, z.n), '{}'::jsonb) FROM (
         SELECT so.account, count(*) AS n FROM public.sales_orders so
-         WHERE so.created_by IS NOT NULL AND so.deleted_at IS NULL AND so.created_at >= v_desde_ts
-           AND so.status NOT IN ('orcamento','rascunho')
+         WHERE so.created_by IS NOT NULL AND so.created_at >= v_desde_ts
+           -- universo canônico de pedidos (src/lib/farmer/universo-pedidos.ts; gate universo-pedidos-sql)
+           AND so.status NOT IN ('cancelado','orcamento','pendente','rascunho') AND so.deleted_at IS NULL
          GROUP BY so.account) z),
     'por_acao', COALESCE((SELECT jsonb_agg(jsonb_build_object(
         'acao', z.acao, 'eventos', z.n, 'vencido_conhecido', z.vencido, 'sem_valor', z.sem_valor)
@@ -271,10 +272,11 @@ BEGIN
       FROM public.sales_orders so
      WHERE so.created_by IS NOT NULL          -- criado no app (importado do Omie não passou pelo gate)
        AND so.omie_numero_pedido IS NOT NULL  -- chegou ao Omie = foi liberado
-       AND so.deleted_at IS NULL
        AND ltrim(so.omie_numero_pedido, '0') <> ''
-       AND so.status <> 'cancelado'
+       -- universo canônico de pedidos (src/lib/farmer/universo-pedidos.ts; gate universo-pedidos-sql)
+       AND so.status NOT IN ('cancelado','orcamento','pendente','rascunho') AND so.deleted_at IS NULL
        -- o pedido do app fica `enviado`; quem segue o Omie é o GÊMEO importado — cancelado lá = não liberou
+       -- (lookup do gêmeo POR ID, todo status: registrado no gate universo-pedidos-sql, alias g)
        AND NOT EXISTS (SELECT 1 FROM public.sales_orders g
                         WHERE g.id = so.gemeo_importado_id AND g.status = 'cancelado')
        AND so.created_at >= v_desde_ts

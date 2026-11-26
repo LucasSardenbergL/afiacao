@@ -104,7 +104,7 @@ export type PainelCredito = {
       gruposComLimite: number | null;
       gruposVencido60: number | null;
     };
-    reservas: Bloco<Record<string, never>>;
+    reservas: Indisponivel | { disponivel: true };
     grupos: GrupoExposicao[];
     gruposOmitidos: number | null;
     naoConsolidados: NaoConsolidado[];
@@ -206,7 +206,9 @@ export function lerPainelCredito(raw: Json | null): PainelCredito {
         gruposComLimite: num(tot.grupos_com_limite),
         gruposVencido60: num(tot.grupos_vencido_60),
       },
-      reservas: bloco(exp.reservas, () => ({})),
+      reservas: obj(exp.reservas)?.disponivel === true
+        ? { disponivel: true }
+        : { disponivel: false, motivo: str(obj(exp.reservas)?.motivo) ?? 'fonte não informou o motivo' },
       grupos,
       gruposOmitidos: num(exp.grupos_omitidos),
       naoConsolidados: arr(exp.nao_consolidados).flatMap((x) => {

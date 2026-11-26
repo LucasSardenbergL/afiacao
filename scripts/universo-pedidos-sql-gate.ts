@@ -36,6 +36,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'private.atp_pedido_canonico': { tipo: 'lookup', motivo: 'ATP: acha o gêmeo canônico de um pedido empurrado (por id/omie_pedido_id)' },
   'private.expirar_reservas_vencidas_job': { tipo: 'lookup', motivo: 'ATP: expira reserva cujo pedido não virou Omie (por id)' },
   'public.credito_registrar_revisao': { tipo: 'lookup', motivo: 'Crédito-IA PR 3: confere a conta de UM pedido (por id) antes de registrar a revisão da operação' },
+  'public.credito_painel_resumo': { tipo: 'lookup', aliases: ['g'], motivo: 'Crédito-IA PR 8: status do GÊMEO importado de UM pedido do app (por id) — gêmeo cancelado no Omie = pedido não liberado' },
   'public.pedido_por_checkout': { tipo: 'lookup', motivo: 'Checkout: acha a linha do par idempotente (checkout_id, account) para decidir insert/reuse/skip' },
   'public.pedidos_vendedor': { tipo: 'lookup', motivo: 'Meu dia do CEO: vendedor de um lote de pedidos que o front JÁ leu no universo canônico (por ids)' },
   'public.liberar_reserva_checkout': { tipo: 'lookup', motivo: 'ATP 3.2: preserva a reserva cujo pedido já virou PV no Omie (por id)' },

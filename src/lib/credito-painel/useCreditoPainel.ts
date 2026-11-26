@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { lerPainelCredito, type PainelCredito } from './parse';
 
 /** Erro da RPC com a SQLSTATE preservada (42501 = fora de gestor/master — o gate é do banco). */
@@ -29,7 +30,7 @@ export function useCreditoPainel(dias: PeriodoPainel) {
       try {
         return lerPainelCredito(data);
       } catch (e) {
-        throw new ErroPainelCredito(e instanceof Error ? e.message : String(e), null);
+        throw new ErroPainelCredito(mensagemDeErro(e) ?? 'resposta do painel em formato inesperado', null);
       }
     },
   });
