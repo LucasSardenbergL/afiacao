@@ -2252,6 +2252,45 @@ export type Database = {
           },
         ]
       }
+      credito_avaliacao: {
+        Row: {
+          created_at: string
+          proxima_tentativa_em: string | null
+          raiz: string
+          reivindicada_ate: string | null
+          tentativas: number
+          token: string | null
+          ultima_avaliacao_em: string | null
+          ultima_proposta_em: string | null
+          ultima_proposta_id: string | null
+          ultimo_erro: string | null
+        }
+        Insert: {
+          created_at?: string
+          proxima_tentativa_em?: string | null
+          raiz: string
+          reivindicada_ate?: string | null
+          tentativas?: number
+          token?: string | null
+          ultima_avaliacao_em?: string | null
+          ultima_proposta_em?: string | null
+          ultima_proposta_id?: string | null
+          ultimo_erro?: string | null
+        }
+        Update: {
+          created_at?: string
+          proxima_tentativa_em?: string | null
+          raiz?: string
+          reivindicada_ate?: string | null
+          tentativas?: number
+          token?: string | null
+          ultima_avaliacao_em?: string | null
+          ultima_proposta_em?: string | null
+          ultima_proposta_id?: string | null
+          ultimo_erro?: string | null
+        }
+        Relationships: []
+      }
       credito_decisao_pedido: {
         Row: {
           autorizacao_id: string | null
@@ -2324,6 +2363,170 @@ export type Database = {
           sales_order_id?: string
           solicitante?: string | null
           valor_brl?: number
+        }
+        Relationships: []
+      }
+      credito_enforcement: {
+        Row: {
+          alterado_em: string | null
+          alterado_por: string | null
+          company: string
+          ligado: boolean
+          motivo: string | null
+          versao: number
+        }
+        Insert: {
+          alterado_em?: string | null
+          alterado_por?: string | null
+          company: string
+          ligado?: boolean
+          motivo?: string | null
+          versao?: number
+        }
+        Update: {
+          alterado_em?: string | null
+          alterado_por?: string | null
+          company?: string
+          ligado?: boolean
+          motivo?: string | null
+          versao?: number
+        }
+        Relationships: []
+      }
+      credito_enforcement_log: {
+        Row: {
+          company: string
+          created_at: string
+          id: string
+          ligado_antes: boolean
+          ligado_depois: boolean
+          motivo: string
+          por: string
+          prontidao: Json
+          solicitacoes_canceladas: number
+          versao: number
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          id: string
+          ligado_antes: boolean
+          ligado_depois: boolean
+          motivo: string
+          por: string
+          prontidao: Json
+          solicitacoes_canceladas?: number
+          versao: number
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          id?: string
+          ligado_antes?: boolean
+          ligado_depois?: boolean
+          motivo?: string
+          por?: string
+          prontidao?: Json
+          solicitacoes_canceladas?: number
+          versao?: number
+        }
+        Relationships: []
+      }
+      credito_fila_alerta: {
+        Row: {
+          destinatarios: string[]
+          enfileirado_em: string | null
+          motivo_sem_canal: string | null
+          solicitacao_id: string
+          status: string
+          tentativas: number
+          ultima_tentativa_em: string
+        }
+        Insert: {
+          destinatarios: string[]
+          enfileirado_em?: string | null
+          motivo_sem_canal?: string | null
+          solicitacao_id: string
+          status: string
+          tentativas?: number
+          ultima_tentativa_em?: string
+        }
+        Update: {
+          destinatarios?: string[]
+          enfileirado_em?: string | null
+          motivo_sem_canal?: string | null
+          solicitacao_id?: string
+          status?: string
+          tentativas?: number
+          ultima_tentativa_em?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_fila_alerta_solicitacao_id_fkey"
+            columns: ["solicitacao_id"]
+            isOneToOne: true
+            referencedRelation: "credito_solicitacao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_fila_recomendacao: {
+        Row: {
+          atualizado_em: string
+          claim_expira_em: string | null
+          claim_id: string | null
+          codigos: string[]
+          confianca: number | null
+          created_at: string
+          decisao_id: string
+          entrada: Json
+          erro: string | null
+          modelo: string | null
+          origem: string
+          prazo_sugerido_dias: number | null
+          recomendacao: string | null
+          reivindicada_em: string
+          status: string
+          tentativas: number
+          versao_prompt: string | null
+        }
+        Insert: {
+          atualizado_em?: string
+          claim_expira_em?: string | null
+          claim_id?: string | null
+          codigos?: string[]
+          confianca?: number | null
+          created_at?: string
+          decisao_id: string
+          entrada: Json
+          erro?: string | null
+          modelo?: string | null
+          origem: string
+          prazo_sugerido_dias?: number | null
+          recomendacao?: string | null
+          reivindicada_em?: string
+          status: string
+          tentativas?: number
+          versao_prompt?: string | null
+        }
+        Update: {
+          atualizado_em?: string
+          claim_expira_em?: string | null
+          claim_id?: string | null
+          codigos?: string[]
+          confianca?: number | null
+          created_at?: string
+          decisao_id?: string
+          entrada?: Json
+          erro?: string | null
+          modelo?: string | null
+          origem?: string
+          prazo_sugerido_dias?: number | null
+          recomendacao?: string | null
+          reivindicada_em?: string
+          status?: string
+          tentativas?: number
+          versao_prompt?: string | null
         }
         Relationships: []
       }
@@ -2640,6 +2843,280 @@ export type Database = {
             columns: ["decisao_id"]
             isOneToOne: false
             referencedRelation: "credito_decisao_pedido"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_sombra_carga: {
+        Row: {
+          marco: string
+          sales_order_id: string
+          situacao: string
+          status_na_ativacao: string
+        }
+        Insert: {
+          marco?: string
+          sales_order_id: string
+          situacao: string
+          status_na_ativacao: string
+        }
+        Update: {
+          marco?: string
+          sales_order_id?: string
+          situacao?: string
+          status_na_ativacao?: string
+        }
+        Relationships: []
+      }
+      credito_sombra_decisao: {
+        Row: {
+          avaliado_em: string
+          carga_inicial: boolean
+          company: string
+          conteudo_md5: string
+          exposicao_reservas_brl: number | null
+          exposicao_titulos_brl: number | null
+          faixa: string
+          faixa_sem_prazo: string
+          grupo_assinatura: string | null
+          grupo_user_id: string | null
+          id: string
+          limite_brl: number | null
+          limite_versao: number | null
+          lote_id: string
+          motivo: string
+          motivo_sem_prazo: string
+          omie_codigo_cliente: number | null
+          origem: string
+          pedido_data_comercial: string | null
+          piso: Json
+          prazo_dias: number | null
+          prazo_max_dias: number | null
+          sales_order_id: string
+          status_pedido: string
+          sync: Json
+          valor_brl: number
+          versao: string
+        }
+        Insert: {
+          avaliado_em?: string
+          carga_inicial: boolean
+          company: string
+          conteudo_md5: string
+          exposicao_reservas_brl?: number | null
+          exposicao_titulos_brl?: number | null
+          faixa: string
+          faixa_sem_prazo: string
+          grupo_assinatura?: string | null
+          grupo_user_id?: string | null
+          id: string
+          limite_brl?: number | null
+          limite_versao?: number | null
+          lote_id: string
+          motivo: string
+          motivo_sem_prazo: string
+          omie_codigo_cliente?: number | null
+          origem: string
+          pedido_data_comercial?: string | null
+          piso: Json
+          prazo_dias?: number | null
+          prazo_max_dias?: number | null
+          sales_order_id: string
+          status_pedido: string
+          sync: Json
+          valor_brl: number
+          versao: string
+        }
+        Update: {
+          avaliado_em?: string
+          carga_inicial?: boolean
+          company?: string
+          conteudo_md5?: string
+          exposicao_reservas_brl?: number | null
+          exposicao_titulos_brl?: number | null
+          faixa?: string
+          faixa_sem_prazo?: string
+          grupo_assinatura?: string | null
+          grupo_user_id?: string | null
+          id?: string
+          limite_brl?: number | null
+          limite_versao?: number | null
+          lote_id?: string
+          motivo?: string
+          motivo_sem_prazo?: string
+          omie_codigo_cliente?: number | null
+          origem?: string
+          pedido_data_comercial?: string | null
+          piso?: Json
+          prazo_dias?: number | null
+          prazo_max_dias?: number | null
+          sales_order_id?: string
+          status_pedido?: string
+          sync?: Json
+          valor_brl?: number
+          versao?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_sombra_decisao_lote_id_fkey"
+            columns: ["lote_id"]
+            isOneToOne: false
+            referencedRelation: "credito_sombra_lote"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_sombra_lote: {
+        Row: {
+          avaliados: number | null
+          erros: number | null
+          id: string
+          iniciado_em: string
+          liberadas: number | null
+          pendentes: number | null
+          pulados: number | null
+          status: string
+          terminado_em: string | null
+          transferidas: number | null
+        }
+        Insert: {
+          avaliados?: number | null
+          erros?: number | null
+          id: string
+          iniciado_em?: string
+          liberadas?: number | null
+          pendentes?: number | null
+          pulados?: number | null
+          status?: string
+          terminado_em?: string | null
+          transferidas?: number | null
+        }
+        Update: {
+          avaliados?: number | null
+          erros?: number | null
+          id?: string
+          iniciado_em?: string
+          liberadas?: number | null
+          pendentes?: number | null
+          pulados?: number | null
+          status?: string
+          terminado_em?: string | null
+          transferidas?: number | null
+        }
+        Relationships: []
+      }
+      credito_sombra_marco: {
+        Row: {
+          ativado_em: string
+          marco: string
+          pedidos_na_ativacao: number
+        }
+        Insert: {
+          ativado_em?: string
+          marco?: string
+          pedidos_na_ativacao: number
+        }
+        Update: {
+          ativado_em?: string
+          marco?: string
+          pedidos_na_ativacao?: number
+        }
+        Relationships: []
+      }
+      credito_sombra_reserva: {
+        Row: {
+          company: string
+          created_at: string
+          decisao_id: string
+          encerrada_em: string | null
+          grupo_user_id: string | null
+          id: string
+          motivo_encerramento: string | null
+          omie_codigo_cliente: number
+          sales_order_id: string
+          status: string
+          valor_brl: number
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          decisao_id: string
+          encerrada_em?: string | null
+          grupo_user_id?: string | null
+          id: string
+          motivo_encerramento?: string | null
+          omie_codigo_cliente: number
+          sales_order_id: string
+          status?: string
+          valor_brl: number
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          decisao_id?: string
+          encerrada_em?: string | null
+          grupo_user_id?: string | null
+          id?: string
+          motivo_encerramento?: string | null
+          omie_codigo_cliente?: number
+          sales_order_id?: string
+          status?: string
+          valor_brl?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_sombra_reserva_decisao_id_fkey"
+            columns: ["decisao_id"]
+            isOneToOne: false
+            referencedRelation: "credito_sombra_decisao"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credito_sombra_reserva_decisao_id_fkey"
+            columns: ["decisao_id"]
+            isOneToOne: false
+            referencedRelation: "credito_sombra_pv_atual"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_sombra_tentativa: {
+        Row: {
+          company: string
+          conteudo_md5: string
+          criada_em: string
+          detalhe: string | null
+          id: string
+          lote_id: string
+          resultado: string
+          sales_order_id: string
+        }
+        Insert: {
+          company: string
+          conteudo_md5: string
+          criada_em?: string
+          detalhe?: string | null
+          id: string
+          lote_id: string
+          resultado: string
+          sales_order_id: string
+        }
+        Update: {
+          company?: string
+          conteudo_md5?: string
+          criada_em?: string
+          detalhe?: string | null
+          id?: string
+          lote_id?: string
+          resultado?: string
+          sales_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_sombra_tentativa_lote_id_fkey"
+            columns: ["lote_id"]
+            isOneToOne: false
+            referencedRelation: "credito_sombra_lote"
             referencedColumns: ["id"]
           },
         ]
@@ -24006,6 +24483,91 @@ export type Database = {
         }
         Relationships: []
       }
+      credito_fila_v: {
+        Row: {
+          company: string | null
+          criado_em: string | null
+          customer_user_id: string | null
+          decidida_em: string | null
+          decisao_id: string | null
+          exposicao_reservas_brl: number | null
+          exposicao_titulos_brl: number | null
+          faixa: string | null
+          item_id: string | null
+          limite_brl: number | null
+          motivo: string | null
+          omie_numero_pedido: string | null
+          origem: string | null
+          origem_pedido: string | null
+          pedido_status: string | null
+          prazo_dias: number | null
+          prazo_max_dias: number | null
+          prazo_sugerido_dias: number | null
+          recomendacao: string | null
+          recomendacao_codigos: string[] | null
+          recomendacao_confianca: number | null
+          recomendacao_status: string | null
+          revisao: string | null
+          sales_order_id: string | null
+          solicitacao_id: string | null
+          status: string | null
+          valor_brl: number | null
+          vendedor_user_id: string | null
+        }
+        Relationships: []
+      }
+      credito_sombra_pv_atual: {
+        Row: {
+          avaliado_em: string | null
+          carga_inicial: boolean | null
+          company: string | null
+          conteudo_md5: string | null
+          exposicao_reservas_brl: number | null
+          exposicao_titulos_brl: number | null
+          faixa: string | null
+          faixa_sem_prazo: string | null
+          grupo_assinatura: string | null
+          grupo_user_id: string | null
+          id: string | null
+          limite_brl: number | null
+          limite_versao: number | null
+          lote_id: string | null
+          motivo: string | null
+          motivo_sem_prazo: string | null
+          omie_codigo_cliente: number | null
+          origem: string | null
+          pedido_data_comercial: string | null
+          piso: Json | null
+          prazo_dias: number | null
+          prazo_max_dias: number | null
+          sales_order_id: string | null
+          status_pedido: string | null
+          sync: Json | null
+          valor_brl: number | null
+          versao: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_sombra_decisao_lote_id_fkey"
+            columns: ["lote_id"]
+            isOneToOne: false
+            referencedRelation: "credito_sombra_lote"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_sombra_saude: {
+        Row: {
+          ativado_em: string | null
+          carga_pendente: number | null
+          erros_24h: number | null
+          excluido_app_reserva_ativa: number | null
+          lotes_com_sobra_1h: number | null
+          minutos_sem_lote: number | null
+          ultimo_lote_ok: string | null
+        }
+        Relationships: []
+      }
       customer_metrics_mv: {
         Row: {
           atraso_relativo: number | null
@@ -27014,10 +27576,6 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
-      cliente_por_documento: {
-        Args: { p_documentos: string[] }
-        Returns: string
-      }
       cliente_declarar_sucessao: {
         Args: {
           p_antigo_documento: string
@@ -27029,6 +27587,10 @@ export type Database = {
           p_versao_esperada: number
         }
         Returns: Json
+      }
+      cliente_por_documento: {
+        Args: { p_documentos: string[] }
+        Returns: string
       }
       cliente_revogar_sucessao: {
         Args: { p_id: string; p_motivo: string; p_versao_esperada: number }
@@ -27268,7 +27830,49 @@ export type Database = {
         Args: { p_ids: string[]; p_motivo?: string }
         Returns: Json
       }
+      credito_autorizar_solicitacao: {
+        Args: {
+          p_autorizar: boolean
+          p_motivo: string
+          p_solicitacao_id: string
+          p_validade_horas?: number
+        }
+        Returns: string
+      }
       credito_avaliacao_progresso: { Args: never; Returns: Json }
+      credito_carteira_ativa: {
+        Args: never
+        Returns: {
+          raiz: string
+        }[]
+      }
+      credito_decidir_fila: {
+        Args: {
+          p_autorizar: boolean
+          p_motivo: string
+          p_solicitacao_id: string
+          p_validade_horas?: number
+        }
+        Returns: string
+      }
+      credito_definir_enforcement: {
+        Args: { p_company: string; p_ligar: boolean; p_motivo: string }
+        Returns: Json
+      }
+      credito_definir_prazo_override: {
+        Args: {
+          p_codigo_parcela: string
+          p_company: string
+          p_motivo: string
+          p_prazo_dias: number
+        }
+        Returns: Json
+      }
+      credito_enforcement_prontidao: {
+        Args: { p_company: string }
+        Returns: Json
+      }
+      credito_ficha: { Args: { p_raiz: string }; Returns: Json }
       credito_fila_propostas: {
         Args: { p_status?: string }
         Returns: {
@@ -27295,22 +27899,16 @@ export type Database = {
           versao_vigente: number
         }[]
       }
-      credito_autorizar_solicitacao: {
-        Args: {
-          p_autorizar: boolean
-          p_motivo: string
-          p_solicitacao_id: string
-          p_validade_horas?: number
-        }
-        Returns: string
+      credito_fila_reivindicar_recomendacao: {
+        Args: { p_max?: number }
+        Returns: {
+          claim_id: string
+          decisao_id: string
+          entrada: Json
+        }[]
       }
-      credito_definir_prazo_override: {
-        Args: {
-          p_codigo_parcela: string
-          p_company: string
-          p_motivo: string
-          p_prazo_dias: number
-        }
+      credito_gate_v2_efetivo: {
+        Args: { p_company: string; p_revisao: string; p_sales_order_id: string }
         Returns: Json
       }
       credito_grupo_assinatura: { Args: { p_raiz: string }; Returns: string }
@@ -27363,6 +27961,29 @@ export type Database = {
         Args: { p_motivo: string; p_proposta_id: string }
         Returns: undefined
       }
+      credito_registrar_avaliacao: {
+        Args: {
+          p_erro?: string
+          p_proposta: Json
+          p_raiz: string
+          p_token: string
+        }
+        Returns: string
+      }
+      credito_registrar_recomendacao: {
+        Args: {
+          p_claim_id: string
+          p_codigos: string[]
+          p_confianca: number
+          p_decisao_id: string
+          p_erro?: string
+          p_modelo: string
+          p_prazo_sugerido_dias: number
+          p_recomendacao: string
+          p_versao_prompt: string
+        }
+        Returns: string
+      }
       credito_registrar_revisao: {
         Args: {
           p_codigo_parcela: string
@@ -27375,6 +27996,10 @@ export type Database = {
           p_user_id?: string
         }
         Returns: Json
+      }
+      credito_reivindicar_raizes: {
+        Args: { p_n: number; p_token: string; p_ttl_segundos?: number }
+        Returns: string[]
       }
       credito_sou_aprovador: { Args: never; Returns: boolean }
       credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
