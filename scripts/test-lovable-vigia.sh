@@ -21,7 +21,7 @@ printf '#!/bin/sh\necho token-falso\n' > "$TMP/bin/security"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/osascript"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/gh"
 # shellcheck disable=SC2016  # o $* e o $LVT são do bun FALSO, expandem quando ele roda
-printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\nexit 0\n' > "$TMP/bin/bun"
+printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\n[ -f "$LVT/bun_anda" ] && git -C "$LVT/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m anda\nexit 0\n' > "$TMP/bin/bun"
 # claude falso: conta chamadas, emite $CENARIO.jsonl; "deploy" real = cria $TMP/ar-novo
 cat > "$TMP/bin/claude-falso" <<'EOF'
 #!/usr/bin/env bash
@@ -116,6 +116,11 @@ rm -f "$TMP/bun"; roda ledger
 { grep -q 'run pendencias:deploy' "$TMP/bun" && [ "$(cat "$TMP/est-ledger/pendencias-$(cat "$TMP/head")")" = 0 ] \
   && tem "ledger consultado" && tem "liberado: ledger" && tem "PUBLICADO" && [ "$(cat "$TMP/est-ledger/piso")" = "$(cat "$TMP/head")" ]; } \
   && ok "PRECISA_LEDGER → vigia renova o cache, decide de novo, publica e grava o piso" || nok "ledger: $(tail -4 "$LOGV")"
+# Codex #3: a main andou durante a consulta do ledger → a prova não é deste SHA, nada gravado
+touch "$TMP/bun_anda"; roda ledger; rm -f "$TMP/bun_anda"
+{ tem "ledger descartado" && ! ls "$TMP/est-ledger"/pendencias-* >/dev/null 2>&1 && [ ! -f "$TMP/est-ledger/piso" ] && [ "$CHAMADAS" = "" ]; } \
+  && ok "main andou durante o ledger → cache descartado, sem publicar" || nok "ledger_anda: $(tail -3 "$LOGV")"
+git -C "$TMP/origin" reset -q --hard "$(cat "$TMP/head")"
 rm -f "$TMP/decisao" "$TMP/decisao-pos"
 
 RET='ar=aaaaaaaa x
@@ -145,5 +150,5 @@ elif ( VIGIA_SOB_TESTE="$TMP/vigia-sab.sh" episodio ) >/dev/null 2>&1; then nok 
 else ok "falsificação: vigia que re-avisa a cada tick reprova o roteiro"; fi
 rm -f "$TMP/decisao"
 
-[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (11)"; exit 0; }
+[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (12)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1

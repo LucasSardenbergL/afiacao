@@ -125,7 +125,7 @@ sha_no_ar() {
 
 # camadas <de> <até> → lista arquivos de migration/edge no intervalo (vazio = limpo); rc≠0 = git falhou
 camadas() {
-  git diff --name-only "$1" "$2" > "$TMP/cam" 2>/dev/null || return 1
+  git diff --no-renames --name-only "$1" "$2" > "$TMP/cam" 2>/dev/null || return 1
   grep -E "$CAMADAS" "$TMP/cam" | grep -vE "$NAO_CAMADA" || true
 }
 # sha40 <texto> → ecoa o commit se o texto for EXATAMENTE 40 hex resolvível (liberação/piso)
@@ -179,13 +179,23 @@ if [ -n "$ESPERAR" ]; then
         sai 6 "MECANICA=FORA_DA_MAIN:${PEDIDO:0:8} não é ancestral de origin/main (${TIPO:0:8}) — passe o SHA do merge"
       else
         # a MESMA decisão do tick do vigia (mesmo estado, mesmo cache de edge), só leitura
-        J=$(LP_LIBERAR_SHA='' LP_ESTADO="$VIGIA" bash "$0" --decidir "$TIPO" 2>&1); jrc=$?
+        # o decisor é o da main MEDIDA (uma sessão com worktree velho não decide com regra velha)
+        DEC="$0"; git show "$TIPO:scripts/lovable-publish.sh" > "$TMP/decisor.sh" 2>/dev/null \
+          && grep -q -- '--decidir' "$TMP/decisor.sh" && DEC="$TMP/decisor.sh"
+        J=$(LP_LIBERAR_SHA='' LP_ESTADO="$VIGIA" bash "$DEC" --decidir "$TIPO" 2>&1); jrc=$?
+        ARF=$(printf '%s\n' "$J" | sed -n 's/^AR=//p' | head -1)   # o ar que a decisão MEDIU
         VER=$(printf '%s\n' "$J" | tail -1 | sed -n 's/^VEREDITO=//p')
         case "$jrc:$VER" in
           10:RETIDO)
             printf '%s\n' "$J" | grep -E '^  (liberar:|liberado para SHA antigo|liberar .* ignorado)' || true
             sai 10 "$(printf '%s\n' "$J" | grep -m1 '^RETIDO=' || echo RETIDO=?)" ;;
-          0:NADA_A_PUBLICAR) sai 0 "NADA_A_PUBLICAR=$AR" ;;
+          0:NADA_A_PUBLICAR)
+            [ -n "$ARF" ] || ARF=$AR
+            git merge-base --is-ancestor "$PEDIDO" "$ARF" 2>/dev/null && sai 0 "NO_AR=$ARF"
+            # nada a publicar até a main, mas o front do pedido difere do ar → foi revertido sem sair
+            git diff --no-renames --name-only "$ARF" "$PEDIDO" 2>/dev/null | grep -qvE "$INERTE" \
+              && sai 6 "MECANICA=FRONT_SUPERADO:${PEDIDO:0:8} nunca vai ao ar — a main reverteu o front dele (ar=${ARF:0:8})"
+            sai 0 "NADA_A_PUBLICAR=$ARF" ;;
           0:PUBLICAR) diz "ar=${AR:0:8} main=${TIPO:0:8} · liberado ($(printf '%s\n' "$J" | sed -n 's/^LIBERADO=//p' | head -1)) — aguardando o Publish do vigia" ;;
           11:PRECISA_LEDGER) diz "ar=${AR:0:8} · só edge no intervalo; o vigia ainda não consultou o ledger (ou o cache venceu)" ;;
           *) diz "ar=${AR:0:8} main=${TIPO:0:8} · decidir: ${VER:-?} (rc $jrc) — sigo esperando" ;;
@@ -206,48 +216,62 @@ HEAD_SHA=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || mecanica
 # ── 1. o que o ar serve ────────────────────────────────────────────────────────────────────────
 AR=$(sha_no_ar) || mecanica "$AR"
 echo "ar=${AR:0:8} head=${HEAD_SHA:0:8} app=$APP"
-[ "$AR" = "$HEAD_SHA" ] && { [ "$DECIDIR" = 1 ] && echo "PISO=$HEAD_SHA"; fim 0 JA_NO_AR; }
+[ "$DECIDIR" = 1 ] && echo "AR=$AR"
+[ "$AR" = "$HEAD_SHA" ] && fim 0 JA_NO_AR   # sem PISO: carimbo igual prova o front, não a migration
 git merge-base --is-ancestor "$AR" "$HEAD_SHA" 2>/dev/null \
   || mecanica "NAO_ANCESTRAL: o ar (${AR:0:8}) não é ancestral de HEAD — reconciliar à mão"
 git diff --name-only "$AR" "$HEAD_SHA" > "$TMP/diff" 2>/dev/null || mecanica "DIFF_FALHOU ${AR:0:8}..${HEAD_SHA:0:8}"
 
-# ── 2. gate de ordem: camadas a partir da atestação mais nova ───────────────────────────────────
-# Duas bases: BASE (migrations) avança por piso, LP_LIBERAR_SHA e `liberar`; BASE_E (edges) só por
-# piso e LP_LIBERAR_SHA — o `liberar` do --decidir atesta "apliquei as migrations", não edge (edge
-# tem prova melhor: o ledger). Só SHA de 40 hex, ancestral de HEAD e mais novo que a base.
-BASE=$AR; FONTE="ar"; BASE_E=$AR
-considera() {  # considera <texto> <fonte> <cobre-edge 0|1>
-  local s; s=$(sha40 "$1") || { echo "  liberar/$2 '$(printf '%s' "$1" | head -c 45)' ignorado: não é SHA de 40 hex resolvível"; return 0; }
-  git merge-base --is-ancestor "$s" "$HEAD_SHA" 2>/dev/null || { echo "  liberar/$2 ${s:0:8} ignorado: não é ancestral de ${HEAD_SHA:0:8}"; return 0; }
-  if [ "$s" != "$BASE" ] && git merge-base --is-ancestor "$BASE" "$s" 2>/dev/null; then BASE=$s; FONTE=$2; fi
-  if [ "$3" = 1 ] && [ "$s" != "$BASE_E" ] && git merge-base --is-ancestor "$BASE_E" "$s" 2>/dev/null; then BASE_E=$s; fi
+# ── 2. gate de ordem ────────────────────────────────────────────────────────────────────────────
+# MIGRATIONS: limpas se ALGUMA atestação c (ar, LP_LIBERAR_SHA; no --decidir também `liberar` e
+#   `piso`) for 40 hex, ancestral de HEAD e sem migration em c..HEAD — cada uma testada sozinha
+#   (piso e liberar podem ser incomparáveis entre si: ramos irmãos unidos por merge).
+# EDGES: sempre de AR..HEAD (ou LP_LIBERAR_SHA, a atestação humana do workflow) — no --decidir a
+#   única prova é o ledger FRESCO para HEAD; piso e liberar não cobrem edge (o ledger vale 15 min,
+#   uma edge pode sofrer rollback depois).
+FONTE=""
+atestacao() {  # atestacao <texto> <fonte> → 0 se cobre as migrations até HEAD
+  local s m; s=$(sha40 "$1") || { echo "  $2 '$(printf '%s' "$1" | head -c 45)' ignorado: não é SHA de 40 hex resolvível"; return 1; }
+  git merge-base --is-ancestor "$s" "$HEAD_SHA" 2>/dev/null || { echo "  $2 ${s:0:8} ignorado: não é ancestral de ${HEAD_SHA:0:8}"; return 1; }
+  m=$(camadas "$s" "$HEAD_SHA") || return 1
+  printf '%s\n' "$m" | grep -q '^supabase/migrations/' && return 1
+  [ "$s" = "$AR" ] || FONTE="$2 ${s:0:8}"
   return 0
 }
-[ -n "${LP_LIBERAR_SHA:-}" ] && considera "$LP_LIBERAR_SHA" LP_LIBERAR_SHA 1
+BASE_E=$AR
+if [ -n "${LP_LIBERAR_SHA:-}" ] && L=$(sha40 "$LP_LIBERAR_SHA") && git merge-base --is-ancestor "$AR" "$L" 2>/dev/null \
+   && git merge-base --is-ancestor "$L" "$HEAD_SHA" 2>/dev/null; then BASE_E=$L; fi
+LIB_ARQ=""; PISO_ARQ=""
 if [ "$DECIDIR" = 1 ]; then
-  [ -s "$ESTADO/piso" ] && considera "$(head -1 "$ESTADO/piso")" piso 1
   LIB_ARQ=$(head -1 "$ESTADO/liberar" 2>/dev/null || true)
-  [ -n "$LIB_ARQ" ] && considera "$LIB_ARQ" liberar 0
+  PISO_ARQ=$(head -1 "$ESTADO/piso" 2>/dev/null || true)
 fi
-CM=$(camadas "$BASE" "$HEAD_SHA") || mecanica "DIFF_FALHOU ${BASE:0:8}..${HEAD_SHA:0:8}"
+MIG_OK=0
+atestacao "$AR" ar && MIG_OK=1
+[ "$MIG_OK" = 0 ] && [ -n "${LP_LIBERAR_SHA:-}" ] && atestacao "$LP_LIBERAR_SHA" LP_LIBERAR_SHA && MIG_OK=1
+[ "$MIG_OK" = 0 ] && [ -n "$LIB_ARQ" ] && atestacao "$LIB_ARQ" liberar && MIG_OK=1
+[ "$MIG_OK" = 0 ] && [ -n "$PISO_ARQ" ] && atestacao "$PISO_ARQ" piso && MIG_OK=1
+CA=$(camadas "$AR" "$HEAD_SHA") || mecanica "DIFF_FALHOU ${AR:0:8}..${HEAD_SHA:0:8}"
 CE=$(camadas "$BASE_E" "$HEAD_SHA") || mecanica "DIFF_FALHOU ${BASE_E:0:8}..${HEAD_SHA:0:8}"
-PEND=$( { printf '%s\n' "$CM" | grep '^supabase/migrations/'; printf '%s\n' "$CE" | grep '^supabase/functions/'; } || true)
-[ "$BASE" != "$AR" ] && echo "migrations atestadas até ${BASE:0:8} ($FONTE)$([ "$BASE_E" != "$AR" ] && echo "; edges até ${BASE_E:0:8}") — ar=${AR:0:8}"
+PEND=$( { [ "$MIG_OK" = 1 ] || printf '%s\n' "$CA" | grep '^supabase/migrations/'; printf '%s\n' "$CE" | grep '^supabase/functions/'; } || true)
+[ -n "$FONTE" ] && echo "migrations atestadas até ${HEAD_SHA:0:8} por $FONTE — ar=${AR:0:8}"
+BASE=$AR
 
 # ── 3. há algo publicável? (antes do RETIDO: sem front novo, ninguém espera o Publish) ───────────
 if ! grep -qvE "$INERTE" "$TMP/diff"; then
   if [ -n "$PEND" ]; then echo "  camadas pendentes (${BASE:0:8}..${HEAD_SHA:0:8}), mas nada publicável — seguem no intervalo do próximo PR"
-  elif [ "$DECIDIR" = 1 ]; then echo "PISO=$HEAD_SHA"; fi
+  elif [ "$DECIDIR" = 1 ] && [ -n "$FONTE" ]; then echo "PISO=$HEAD_SHA"; fi
   fim 0 NADA_A_PUBLICAR
 fi
 
 retido() {  # retido <tipo> <arquivo>
-  echo "Camadas pendentes até ${HEAD_SHA:0:8} (ar=${AR:0:8}, migrations desde ${BASE:0:8}, edges desde ${BASE_E:0:8}; aplicar ANTES do Publish — DDL → edges):"
+  echo "Camadas pendentes até ${HEAD_SHA:0:8} (ar=${AR:0:8}; aplicar ANTES do Publish — DDL → edges):"
   printf '%s\n' "$PEND" | sed 's/^/  - /'
   echo "Commits:"
   git log --format='  - %h %s' "$BASE_E..$HEAD_SHA" -- supabase/migrations supabase/functions
   if [ "$1" = migration ]; then
-    if [ -n "${LIB_ARQ:-}" ] && L=$(sha40 "$LIB_ARQ") && [ "$L" != "$HEAD_SHA" ]; then
+    if [ -n "${LIB_ARQ:-}" ] && L=$(sha40 "$LIB_ARQ") && [ "$L" != "$HEAD_SHA" ] \
+       && git merge-base --is-ancestor "$L" "$HEAD_SHA" 2>/dev/null; then
       echo "  liberado para SHA antigo ${L:0:8} — migration(s) depois dele até ${HEAD_SHA:0:8}:"
       git diff --name-only "$L" "$HEAD_SHA" -- supabase/migrations 2>/dev/null | sed 's/^/      /'
     fi
@@ -272,10 +296,11 @@ if [ -n "$PEND" ]; then
     1) retido edge "$EDG" ;;
     *) mecanica "LEDGER_FALHOU: pendencias:deploy exit $(head -1 "$CACHE") — ver $ESTADO/pendencias.txt" ;;
   esac
-elif [ "$BASE" != "$AR" ]; then
-  echo "LIBERADO=$FONTE base=${BASE:0:8} ar=${AR:0:8}"
+elif [ -n "$FONTE" ]; then
+  echo "LIBERADO=$FONTE ar=${AR:0:8}"
 fi
-[ "$DECIDIR" = 1 ] && echo "PISO=$HEAD_SHA"
+# piso = migrations atestadas até HEAD por HUMANO (liberar/piso anterior), nunca só pelo carimbo do ar
+[ "$DECIDIR" = 1 ] && [ -n "$FONTE" ] && echo "PISO=$HEAD_SHA"
 [ "$JULGAR" = 1 ] && fim 0 PUBLICAR
 
 # ── 4. workspace do Lovable em HEAD ────────────────────────────────────────────────────────────

@@ -171,10 +171,10 @@ O que mudou (só `scripts/` e docs):
   em `LIBERADO..HEAD`). `HEAD`, ramo e abreviado são ignorados com aviso. Comando novo:
   `bash scripts/lovable-publish.sh --liberar <sha40>` — valida contra a origin/main, mostra a main
   medida e as migrations cobertas, grava atômico (tmp + mv). Vale também para `LP_LIBERAR_SHA` do workflow.
-- **`liberar` cobre SÓ migration:** edge entre o ar e o liberado segue pelo ledger (a base das edges avança só por ar/piso/`LP_LIBERAR_SHA`) — o humano atesta "apliquei as migrations", não edge.
-- **Piso de camadas atestadas** (`$EST/piso`): toda decisão limpa (`PUBLICAR`, `JA_NO_AR`, `NADA` sem
-  camada pendente) imprime `PISO=<main>` e o vigia grava. A base das camadas é a atestação mais nova
-  ancestral de HEAD entre ar, piso e liberar — o PR de front seguinte a uma migration liberada não re-trava.
+- **`liberar` cobre SÓ migration:** edge entre o ar e o liberado segue pelo ledger — o humano atesta "apliquei as migrations", não edge.
+- **Piso de migrations atestadas** (`$EST/piso`): decisão limpa que se apoiou em atestação humana
+  (liberar ou piso anterior) imprime `PISO=<main>` e o vigia grava — o PR de front seguinte a uma
+  migration liberada não re-trava, mesmo que o `liberar` seja sobrescrito.
 - **Só migration/inerte no intervalo → `NADA_A_PUBLICAR`** (sem avançar o piso): ninguém espera Publish,
   e a camada continua no intervalo do próximo PR porque o marcador é o ar.
 - **Não retêm:** `supabase/functions/**/*_test.ts` e `supabase/functions/**/*.md`.
@@ -183,6 +183,18 @@ O que mudou (só `scripts/` e docs):
   Antes era 1 aviso por SHA (cada merge re-notificava o mesmo bloqueio). `PUBLICAR` loga `liberado: <fonte>`.
 - **`--esperar` em RETIDO** imprime o comando de liberação da main atual e distingue
   `liberado para SHA antigo <sha> — migration(s) depois dele`.
+
+**Challenge Codex (gpt-6.2-astra/high) — 9 achados, 8 novos, todos aceitos:**
+o piso NÃO cobre edge (o ledger vale 15 min e a edge pode sofrer rollback depois — edge é sempre
+`ar..HEAD` + ledger fresco para HEAD); o ledger mede a main que ele mesmo buscou → o vigia confere
+`ls-remote` depois e descarta a prova se a main andou; `JA_NO_AR` e decisão sem atestação humana não
+gravam piso (carimbo igual prova o front, não a migration — um rollback do ar deixaria piso falso);
+`git diff --no-renames` (mover `index.ts` para `index_test.ts` esconderia a remoção da edge); cada
+atestação (ar, liberar, piso) é testada SOZINHA contra HEAD — piso e liberar em ramos irmãos são
+incomparáveis e a regra "a mais nova" ignorava o liberar; o `--esperar` usa o ar que a decisão MEDIU
+(`AR=` completo) e sai `MECANICA=FRONT_SUPERADO` quando a main reverteu o front pedido sem publicá-lo;
+e o `--esperar` roda o decisor da main medida (`git show <main>:scripts/lovable-publish.sh`), para que
+um worktree velho não decida com a regra velha.
 
 Prova: `scripts/test-lovable-publish.sh` reproduz os dois casos reais (`dec_caso_2511` pelo `--decidir`,
 `esperar_caso_2611` pelo `--esperar`) e ambos saem LIBERADO/NO_AR; falsificação com controle verde na

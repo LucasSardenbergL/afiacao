@@ -113,8 +113,11 @@ if [ "$VER" = PRECISA_LEDGER ]; then
   rm -f "$EST"/pendencias-*
   [ "$(shasum "$WT/bun.lock" 2>/dev/null)" = "$(cat "$EST/bun-lock.sha" 2>/dev/null)" ] \
     || { (cd "$WT" && timeout 600 bun install --frozen-lockfile >>"$LOG" 2>&1) && shasum "$WT/bun.lock" > "$EST/bun-lock.sha"; }
-  (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1
-  grava "$EST/pendencias-$HEAD_SHA" "$?"
+  (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1; PRC=$?
+  # o ledger mede a main que ELE buscou: se ela andou durante a consulta, a prova não é deste SHA
+  REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>/dev/null | cut -f1)
+  [ "$REMOTA" = "$HEAD_SHA" ] || { log "ledger descartado: a main foi a ${REMOTA:0:8} durante a consulta de ${HEAD_SHA:0:8}"; exit 0; }
+  grava "$EST/pendencias-$HEAD_SHA" "$PRC"
   log "ledger consultado para ${HEAD_SHA:0:8}: pendencias:deploy exit $(cat "$EST/pendencias-$HEAD_SHA")"
   decidir; VER=$(veredito)
 fi

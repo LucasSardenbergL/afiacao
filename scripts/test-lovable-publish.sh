@@ -169,6 +169,11 @@ CENARIO=esperar_edge_servida; semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendenc
 git push -q origin "$DOC:refs/heads/main" -f 2>/dev/null
 CENARIO=esperar_inerte;  semeia "$FRONT" x; espera 0 "NADA_A_PUBLICAR=$FRONT" "$DOC"
 git push -q origin "$FRONT2:refs/heads/main" -f 2>/dev/null
+# Codex #8: B muda o front, C reverte e só deixa migration → o front de B nunca vai ao ar
+git checkout -q -b sup "$FRONT2"; B8=$(c src/sup.ts b8); git rm -q src/sup.ts; C8=$(c supabase/migrations/4_w.sql c8); git checkout -q main
+git push -q origin "$C8:refs/heads/main" -f 2>/dev/null
+CENARIO=esperar_front_superado; semeia "$FRONT2" x; espera 6 'MECANICA=FRONT_SUPERADO:.*' "$B8"
+git push -q origin "$FRONT2:refs/heads/main" -f 2>/dev/null
 CENARIO=esperar_fora_main; semeia "$BASE" x; espera 6 'MECANICA=FORA_DA_MAIN:.*' "$EDGE"
 CENARIO=esperar_sha_ruim;  semeia "$BASE" x; espera 6 'MECANICA=SHA_NAO_RESOLVE:.*' deadbeef
 CENARIO=esperar_ar_fora;   semeia "$BASE" x; touch "$F/fora"; espera 6 'MECANICA=AR_ILEGIVEL:.*' "$FRONT"
@@ -195,7 +200,7 @@ tem_dec() { printf '%s' "$DEC_OUT" | grep -qF -- "$1" || { echo "FALHOU [$CENARI
 sem_dec() { printf '%s' "$DEC_OUT" | grep -qF -- "$1" && { echo "FALHOU [$CENARIO]: não devia ter '$1'"; fail=1; }; return 0; }
 # caso real 25/11 23:04: liberou 3bda3e02 (= a main), a main foi a c39f1f5a (só front) 3 min depois
 CENARIO=dec_caso_2511;   semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"
-                         decide 0 PUBLICAR "$FRONT2" && { tem_dec "LIBERADO=liberar base=${MIG:0:8} ar=${BASE:0:8}"; tem_dec "PISO=$FRONT2"; }
+                         decide 0 PUBLICAR "$FRONT2" && { tem_dec "LIBERADO=liberar ${MIG:0:8} ar=${BASE:0:8}"; tem_dec "PISO=$FRONT2"; }
 CENARIO=dec_sem_liberar; semeia "$BASE" x; vigia; decide 10 RETIDO "$FRONT2" && { tem_dec "RETIDO=migration:supabase/migrations/1_x.sql"; tem_dec "--liberar $FRONT2"; sem_dec PISO=; }
 CENARIO=dec_lib_curto;   semeia "$BASE" x; vigia; echo "${MIG:0:12}" > "$F/vigia/liberar"; decide 10 RETIDO "$FRONT2" && tem_dec "ignorado"
 CENARIO=dec_lib_HEAD;    semeia "$BASE" x; vigia; echo HEAD > "$F/vigia/liberar"; decide 10 RETIDO "$FRONT2" && tem_dec "ignorado"
@@ -204,10 +209,10 @@ CENARIO=dec_piso;        semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/piso";
 CENARIO=dec_piso_fora;   semeia "$BASE" x; vigia; echo "$EDGE" > "$F/vigia/piso"; decide 10 RETIDO "$FRONT2" && tem_dec "não é ancestral"
 # só migration + inerte: nada publicável → NADA_A_PUBLICAR (ninguém retido), mas SEM avançar o piso
 CENARIO=dec_so_mig;      semeia "$FRONT" x; vigia; decide 0 NADA_A_PUBLICAR "$MIG" && { sem_dec PISO=; tem_dec "camadas pendentes"; }
-CENARIO=dec_ja;          semeia "$FRONT2" x; vigia; decide 0 JA_NO_AR "$FRONT2" && tem_dec "PISO=$FRONT2"
+CENARIO=dec_ja;          semeia "$FRONT2" x; vigia; decide 0 JA_NO_AR "$FRONT2" && sem_dec PISO=   # carimbo igual não atesta migration (Codex #4)
 # só edge: o cache do ledger com a MESMA validade (15 min) para vigia e --esperar
 CENARIO=dec_edge_sem;    semeia "$MIG" x; vigia; decide 11 PRECISA_LEDGER "$EDGE"
-CENARIO=dec_edge_0;      semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendencias-$EDGE"; decide 0 PUBLICAR "$EDGE" && { tem_dec "LIBERADO=ledger"; tem_dec "PISO=$EDGE"; }
+CENARIO=dec_edge_0;      semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendencias-$EDGE"; decide 0 PUBLICAR "$EDGE" && { tem_dec "LIBERADO=ledger"; sem_dec PISO=; }   # ledger não vira piso (Codex #2)
 CENARIO=dec_edge_1;      semeia "$MIG" x; vigia; echo 1 > "$F/vigia/pendencias-$EDGE"; decide 10 RETIDO "$EDGE" && tem_dec "RETIDO=edge:supabase/functions/f/index.ts"
 CENARIO=dec_edge_velho;  semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendencias-$EDGE"; touch -t 202001010000 "$F/vigia/pendencias-$EDGE"
                          decide 11 PRECISA_LEDGER "$EDGE"
@@ -218,6 +223,15 @@ F3=$(c src/z.ts f3); git checkout -q main
 CENARIO=dec_lib_nao_cobre_edge; semeia "$FRONT2" x; vigia; echo "$M2" > "$F/vigia/liberar"; decide 11 PRECISA_LEDGER "$F3"
 CENARIO=dec_lib_edge_ledger0;   semeia "$FRONT2" x; vigia; echo "$M2" > "$F/vigia/liberar"; echo 0 > "$F/vigia/pendencias-$F3"
                                 decide 0 PUBLICAR "$F3" && tem_dec "LIBERADO=ledger"
+# Codex #6: piso e liberar em ramos IRMÃOS (incomparáveis) — o liberar vale sozinho
+git checkout -q -b p6 "$FRONT2"; P6=$(c docs/p.md p6); git checkout -q -b l6 "$FRONT2"; L6=$(c supabase/migrations/3_z.sql l6)
+git checkout -q p6; git merge -q --no-edit l6 >/dev/null 2>&1; H6=$(c src/h.ts h6); git checkout -q main
+CENARIO=dec_irmaos; semeia "$FRONT2" x; vigia; echo "$P6" > "$F/vigia/piso"; echo "$L6" > "$F/vigia/liberar"
+                    decide 0 PUBLICAR "$H6" && tem_dec "LIBERADO=liberar ${L6:0:8}"
+# Codex #5: mover a edge para *_test.ts REMOVE o caminho de produção — tem de reter
+git checkout -q -b rn "$FRONT2"; R0=$(c supabase/functions/r/index.ts r0)
+git mv supabase/functions/r/index.ts supabase/functions/r/index_test.ts; RN=$(c src/rn.ts rn); git checkout -q main
+CENARIO=julgar_rename_teste; semeia "$R0" x; julga 10 RETIDO "$RN"
 # teste e doc de edge não são camada: só _test.ts/.md em supabase/functions + front → PUBLICAR
 git checkout -q -b edgeteste "$FRONT2"; c supabase/functions/f/x_test.ts t >/dev/null; c supabase/functions/f/README.md d >/dev/null
 ETESTE=$(c src/t.ts front3); git checkout -q main
@@ -257,13 +271,18 @@ s_nada()     { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; }
 s_lib_edge() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo "$M2" > "$F/vigia/liberar"; }
 # liberar volta a cobrir edge → publica sem ledger
 # shellcheck disable=SC2016
-sabota_dec lib_edge 's/considera "\$LIB_ARQ" liberar 0/considera "$LIB_ARQ" liberar 1/' s_lib_edge 11 PRECISA_LEDGER "$F3"
+sabota_dec lib_edge 's/^CE=\$(camadas "\$BASE_E"/CE=$(camadas "$HEAD_SHA"/' s_lib_edge 11 PRECISA_LEDGER "$F3"
+# shellcheck disable=SC2329
+s_rn() { semeia "$R0" x; vigia; rm -f "$F/vigia"/*; }
+# renames de volta → mover a edge para *_test.ts some do gate
+# shellcheck disable=SC2016
+sabota_dec renames 's/git diff --no-renames --name-only "\$1" "\$2"/git diff --name-only "$1" "$2"/' s_rn 11 PRECISA_LEDGER "$RN"
 # ancestral → igualdade (o código de antes): o caso real volta a ficar RETIDO
 # shellcheck disable=SC2016
 sabota_dec ancestral 's/git merge-base --is-ancestor "\$s" "\$HEAD_SHA" 2>\/dev\/null ||/[ "$s" = "$HEAD_SHA" ] ||/' s_lib_mig 0 PUBLICAR "$FRONT2"
 # piso ignorado → o próximo PR re-trava
 # shellcheck disable=SC2016
-sabota_dec piso 's/\[ -s "\$ESTADO\/piso" \] && considera/false \&\& considera/' s_piso_mig 0 PUBLICAR "$FRONT2"
+sabota_dec piso 's/atestacao "\$PISO_ARQ" piso \&\& MIG_OK=1/false/' s_piso_mig 0 PUBLICAR "$FRONT2"
 # filtro de teste/doc de edge desligado → RETIDO por *_test.ts
 sabota_dec teste_edge "s/^NAO_CAMADA=.*/NAO_CAMADA='^\$'/" s_nada 0 PUBLICAR "$ETESTE"
 
@@ -294,6 +313,13 @@ sabota retido 's/\[ -n "\$MIG" \] \&\& retido migration "\$MIG"/true/' \
 # o ar vira no meio da espera, mas a cópia lê o ar uma vez só → TIMEOUT
 # shellcheck disable=SC2016
 sabota rele 's/if AR=\$(ar_lido); then/if AR=${AR0:=$(ar_lido)}; then/' s_vira 0 "NO_AR=$FRONT2" "$FRONT"
+# front revertido sem sair → a cópia confirma NADA_A_PUBLICAR com exit 0 (verde falso)
+git push -q origin "$C8:refs/heads/main" -f 2>/dev/null
+# shellcheck disable=SC2329
+s_sup() { semeia "$FRONT2" x; }
+# shellcheck disable=SC2016
+sabota sup 's/\&\& sai 6 "MECANICA=FRONT_SUPERADO/\&\& true "MECANICA=FRONT_SUPERADO/' s_sup 6 'MECANICA=FRONT_SUPERADO:.*' "$B8"
+git push -q origin "$FRONT2:refs/heads/main" -f 2>/dev/null
 
 [ "$fail" = 0 ] && echo "test-lovable-publish: OK"
 exit "$fail"
