@@ -21,11 +21,12 @@
 --                  de venc + 15;
 --       sem_desfecho = valor NULL, RECEBIDO sem baixa inferida, ou status fora do vocabulário.
 --     AUSENTE ≠ ZERO: sem_desfecho sai da conta e é contado à parte (nunca vira "em dia").
---   * Regra point-in-time (o que o piso diria em T): piso_T = título do grupo (qualquer categoria) com
---     vencimento ≤ T − 60, emitido até T, e ainda não baixado em T (aberto hoje, ou RECEBIDO com baixa
---     > T). RECEBIDO sem baixa inferida nessa condição ⇒ piso_T `indeterminado`.
+--   * Piso RECONSTRUÍDO em T (composição de grupo de HOJE — não é point-in-time pleno): título do grupo
+--     (qualquer categoria) com vencimento ≤ T − 60, emitido até T, e comprovadamente não baixado em T
+--     (aberto hoje com saldo, ou RECEBIDO com baixa > T). Emissão/saldo/baixa desconhecidos ⇒ `indeterminado`.
 --     Limitação: título CANCELADO depois de T sai da régua (não sabemos se estava aberto em T).
---   * IA = a proposta MAIS RECENTE do grupo (credito_limite_proposta, PR 4), qualquer status.
+--   * IA = a proposta MAIS RECENTE do grupo (credito_limite_proposta, PR 4), qualquer status, fora as
+--     linhas de redução automática (5b). O prospectivo usa a 1ª proposta (coorte fixa).
 --     `ia_restringe` = limite pós-trava 0 OU risco alto/sem_evidencia. Também o risco BRUTO da IA
 --     (saida_ia.risco), antes das travas.
 --     ⚠️ IN-SAMPLE: a ficha da IA foi calculada HOJE e já contém as baixas destas safras
@@ -89,7 +90,7 @@ baixa AS (
 ),
 tit AS (
   SELECT p.raiz, p.motivo_fora, f.company, f.omie_codigo_lancamento, f.valor_documento,
-         f.data_emissao, f.data_vencimento, f.status_titulo, f.categoria_codigo, bx.data_baixa,
+         f.data_emissao, f.data_vencimento, f.status_titulo, f.categoria_codigo, f.saldo, bx.data_baixa,
          (f.status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL','PAGTO PARCIAL')) AS aberto_hoje
     FROM public.fin_contas_receber f
     JOIN par p ON p.company = f.company AND p.codigo = f.omie_codigo_cliente
@@ -111,8 +112,14 @@ safra AS (
 ),
 piso_t AS (
   SELECT t.raiz,
-         CASE WHEN bool_or(t.aberto_hoje OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa > h.t)) THEN 'comprovado'
-              WHEN bool_or(t.status_titulo = 'RECEBIDO' AND t.data_baixa IS NULL) THEN 'indeterminado'
+         -- comprovado só com prova: emitido até T, e aberto hoje com saldo (ou PAGTO PARCIAL), ou
+         -- baixado depois de T. Saldo/emissão/baixa desconhecidos ⇒ indeterminado (Codex diff P2).
+         CASE WHEN bool_or(t.data_emissao IS NOT NULL AND t.data_emissao <= h.t
+                           AND ((t.aberto_hoje AND (t.saldo > 0 OR t.status_titulo = 'PAGTO PARCIAL'))
+                                OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa > h.t))) THEN 'comprovado'
+              WHEN bool_or(t.data_emissao IS NULL
+                           OR (t.aberto_hoje AND t.saldo IS NULL)
+                           OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa IS NULL)) THEN 'indeterminado'
               ELSE 'livre' END AS piso_t
     FROM tit t CROSS JOIN hoje h
    WHERE t.raiz IS NOT NULL
@@ -128,6 +135,12 @@ ia AS (
     FROM public.credito_limite_proposta p
    WHERE p.status <> 'aplicada_auto_reducao'      -- redução automática (5b) não é proposta da IA
    ORDER BY p.grupo_user_id, p.created_at DESC, p.id
+),
+ia1 AS (   -- coorte FIXA do prospectivo: a 1ª proposta da IA de cada grupo (a reavaliação não a desloca)
+  SELECT p.grupo_user_id AS raiz, min(p.created_at) AS primeira_em
+    FROM public.credito_limite_proposta p
+   WHERE p.status <> 'aplicada_auto_reducao'
+   GROUP BY 1
 ),
 v2 AS (
   SELECT s.grupo_user_id AS raiz,
@@ -167,6 +180,12 @@ linhas AS (
                       ELSE s.desfecho END AS chave,
                  count(*) AS n, sum(s.valor_documento) AS valor
             FROM safra s GROUP BY 1) x
+  UNION ALL
+  SELECT 0, 'cobertura', 'fora_do_grupo:sem_mapa', NULL, count(*), sum(f.valor_documento), NULL, NULL
+    FROM public.fin_contas_receber f CROSS JOIN hoje h
+   WHERE f.status_titulo IS DISTINCT FROM 'CANCELADO' AND f.ausente_omie_desde IS NULL
+     AND f.categoria_codigo LIKE '1.01.%' AND f.data_vencimento > h.t AND f.data_vencimento <= h.d - 15
+     AND NOT EXISTS (SELECT 1 FROM par p WHERE p.company = f.company AND p.codigo = f.omie_codigo_cliente)
   UNION ALL
   SELECT 0, 'cobertura', 'sem_desfecho:vencimento_nulo', NULL, count(*), sum(t.valor_documento), NULL, NULL
     FROM tit t WHERE t.categoria_codigo LIKE '1.01.%' AND t.data_vencimento IS NULL
@@ -216,8 +235,8 @@ linhas AS (
 --    proposta não podia conhecer estes títulos.
 , prosp AS (
   SELECT ia.raiz, ia.ia_restringe, ia.risco, s.desfecho, s.valor_documento
-    FROM safra s JOIN ia ON ia.raiz = s.raiz
-   WHERE s.data_emissao > (ia.criada_em AT TIME ZONE 'America/Sao_Paulo')::date
+    FROM safra s JOIN ia ON ia.raiz = s.raiz JOIN ia1 ON ia1.raiz = s.raiz
+   WHERE s.data_emissao > (ia1.primeira_em AT TIME ZONE 'America/Sao_Paulo')::date
 )
 SELECT 5 AS ord, 'prospectivo' AS secao,
        (CASE WHEN ia_restringe THEN 'proposta_restringe' ELSE 'proposta_libera' END) || ' · ' || desfecho AS chave,

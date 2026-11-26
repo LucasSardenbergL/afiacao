@@ -420,12 +420,13 @@ check_trigger() {
   local aid=eeee0000-0000-0000-0000-000000000002
   q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
      limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_em, motivo_decisao)
-     VALUES ('$aid', '$C', 'x', 1, 9999, 21, 'baixo', '{}', now(), 'aplicada_auto_reducao', now(), 'forjada')\$q\$)" >/dev/null
+     VALUES ('$aid', '$C', 'x', 1, 9999, 21, 'alto', '{}', now(), 'aplicada_auto_reducao', now(), 'forjada')\$q\$)" >/dev/null
+  # piora o risco (há piora estrita) E sobe o limite: só a monotonia do trigger pega
   tem "T2 origem de redução com valor MAIOR (writer contornado) barrada pelo trigger" \
-      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$C'); UPDATE public.credito_limite SET limite_brl = 9999, versao = 2, origem_proposta_id = '$aid' WHERE grupo_user_id = '$C'\$x\$)")" "42501:credito_limite: redução automática só desce"
+      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$C'); UPDATE public.credito_limite SET limite_brl = 9999, risco = 'alto', versao = 2, origem_proposta_id = '$aid' WHERE grupo_user_id = '$C'\$x\$)")" "42501:credito_limite: redução automática só desce"
   q "SELECT public.t_forca(\$q\$UPDATE public.credito_limite_proposta SET limite_sugerido_brl = 100 WHERE id = '$aid'\$q\$)" >/dev/null
   tem "T3 redução que troca ficha_calculada_em (lavaria limite_desatualizado)" \
-      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$C'); UPDATE public.credito_limite SET limite_brl = 100, versao = 2, origem_proposta_id = '$aid', ficha_calculada_em = now() + interval '1 day' WHERE grupo_user_id = '$C'\$x\$)")" "redução automática só desce"
+      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$C'); UPDATE public.credito_limite SET limite_brl = 100, risco = 'alto', versao = 2, origem_proposta_id = '$aid', ficha_calculada_em = now() + interval '1 day' WHERE grupo_user_id = '$C'\$x\$)")" "redução automática só desce"
   local fid=eeee0000-0000-0000-0000-000000000003
   q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
      limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_em, motivo_decisao)
