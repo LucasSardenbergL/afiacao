@@ -65,6 +65,16 @@
   2→3→2 entre a reserva e o claim; `LC_ALL=C` e `pt_BR.UTF-8`) com uma sabotagem por camada.
   - Codex do claim (r1, BLOQUEANTE sim → corrigido): versão no claim (ATP × claim), multiconjunto (retry do
     pedido programado relê sem `ORDER BY`), cor da tinta, recusa por `throw`.
+  - Codex do claim (r2, BLOQUEANTE sim → 3 corrigidos + 1 residual): o pedido programado
+    (`pedido-programado-enviar` v1.1) não marca `[OMIE-INCERTO]` numa recusa `[pedido_alterado]` (travaria o
+    "Cancelar") e preserva a incerteza HERDADA do `erro_motivo` anterior; a mensagem diz "esta tentativa NÃO
+    enviou nada" (outra tela pode ter enviado); a ordenação TS é por unidade de código (o `localeCompare`
+    empatava composições Unicode). O BLOQUEANTE (reserva ATP obsoleta adotada no retry do checkout) é
+    PRÉ-EXISTENTE — `reservar_estoque` retorna sem liberar a reserva anterior e `atp_confirmar_pv` vincula
+    todas as ativas; qualquer retry com carrinho trocado após falha pós-ATP o alcança. A v1.53 o ESTREITA (a
+    pré-checagem recusa antes do ATP; sobra a janela de segundos entre ela e o ATP) e não o piora (antes, o PV
+    saía com B e vinculava a reserva de A direto). Liberar a reserva na recusa foi DESCARTADO: com duas telas
+    enviando o mesmo pedido, a perdedora liberaria a reserva da vencedora antes do `atp_confirmar_pv`.
   - Residuais aceitos: (i) `ensureSalesOrderRow` (checkout/retry) regrava a linha sem versão — apaga a
     edição de outra aba, pré-existente; (ii) editor aberto DEPOIS do claim salva com o `updated_at` novo
     enquanto o PID é nulo; (iii) recusa depois do gate ATP deixa a reserva até o TTL (30 min), como todo

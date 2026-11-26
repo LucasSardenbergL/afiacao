@@ -43,6 +43,12 @@ Deno.test("item a mais, lista vazia, não-lista ou item sem valor → divergente
   assertEquals(mesmosItensDeEnvio([{ ...A, valor_unitario: "10,50" }], [{ ...A, valor_unitario: "10,50" }]), false);
 });
 
+Deno.test("cores em composição Unicode diferente não empatam (paridade com a collation C)", () => {
+  const nfc = "caf\u00e9", nfd = "cafe\u0301";
+  const L = [{ ...A, tint_cor_id: nfc }, { ...A, tint_cor_id: nfd }];
+  assertEquals(mesmosItensDeEnvio(L, [...L].reverse()), true);
+});
+
 Deno.test("projeção ordena pelo conteúdo", () => {
   assertEquals(projecaoItensEnvio([B, A]), [[1, 2, 10, null], [2, 1, 7.5, null]]);
 });
@@ -50,5 +56,5 @@ Deno.test("projeção ordena pelo conteúdo", () => {
 Deno.test("mensagem carrega a marca estável que a tela procura", () => {
   const m = mensagemPedidoAlterado("so-1");
   assertEquals(m.includes(MARCA_PEDIDO_ALTERADO), true);
-  assertEquals(m.includes("O Omie NÃO foi atualizado"), true);
+  assertEquals(m.includes("Esta tentativa NÃO enviou nada ao Omie"), true);
 });

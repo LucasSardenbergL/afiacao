@@ -24,6 +24,13 @@ function numero(v: unknown): number | null {
   return null;
 }
 
+/** Ordem por unidade de código (a collation "C" do SQL), nunca `localeCompare` — que empata
+ * composições Unicode diferentes e faria a pré-checagem recusar um multiconjunto que a RPC aceita. */
+function porCodigo(a: string | null, b: string | null): number {
+  const x = a ?? "", y = b ?? "";
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
 /**
  * Projeção [código, quantidade, valor unitário, cor] de cada item, ORDENADA pelo conteúdo (a ordem
  * da lista não é dado comercial — um retry que relê os itens noutra ordem é o mesmo pedido).
@@ -42,7 +49,7 @@ export function projecaoItensEnvio(itens: unknown): Tupla[] | null {
     tuplas.push([c, q, v, cor]);
   }
   return tuplas.sort((a, b) =>
-    a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || (a[3] ?? "").localeCompare(b[3] ?? "")
+    a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || porCodigo(a[3], b[3])
   );
 }
 
@@ -57,6 +64,6 @@ export function mesmosItensDeEnvio(daLinha: unknown, doEnvio: unknown): boolean 
 /** Mensagem da recusa (lançada: caller antigo lê `blocked` desconhecido como sucesso). */
 export function mensagemPedidoAlterado(salesOrderId: string): string {
   return `Envio recusado ${MARCA_PEDIDO_ALTERADO}: o pedido ${salesOrderId} foi alterado (em outra aba ou por ` +
-    "outra pessoa) depois que esta tela o abriu — recarregue e confira os itens antes de enviar. " +
-    "O Omie NÃO foi atualizado.";
+    "outra pessoa) depois que esta tela o abriu — recarregue e confira os itens e o status antes de enviar " +
+    "(outra tela pode já tê-lo enviado). Esta tentativa NÃO enviou nada ao Omie.";
 }

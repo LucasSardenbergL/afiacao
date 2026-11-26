@@ -179,7 +179,7 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     await clickEnviar();
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith(
       'Conversão recusada: o orçamento mudou',
-      expect.objectContaining({ description: expect.stringContaining('O Omie NÃO foi atualizado') }),
+      expect.objectContaining({ description: expect.stringContaining('Esta tentativa NÃO enviou nada ao Omie') }),
     ));
     expect(h.toastSuccess).not.toHaveBeenCalled();
     expect(h.updateSalesOrder).not.toHaveBeenCalled();

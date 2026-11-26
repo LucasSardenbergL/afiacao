@@ -147,7 +147,7 @@ const SalesQuotes = () => {
           // próxima conversão já sair com os itens que estão no banco.
           queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
           toast.error('Conversão recusada: o orçamento mudou', {
-            description: 'Ele foi alterado depois que esta tela o abriu. A lista foi recarregada — confira os itens e converta de novo. O Omie NÃO foi atualizado.',
+            description: 'Ele foi alterado depois que esta tela o abriu. A lista foi recarregada — confira os itens e o status (outra tela pode já tê-lo enviado) e converta de novo se ainda for orçamento. Esta tentativa NÃO enviou nada ao Omie.',
             duration: 12000,
           });
           return;

@@ -5261,6 +5261,28 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(criar, 'REGRESSÃO: a v1.53 voltou ao claim sem conferência').not.toMatch(/\.rpc\("sales_order_reivindicar_envio",/);
   });
 
+  // Claim conferido (v1.53), Codex r2 #2: a recusa `[pedido_alterado]` é ANTES do IncluirPedido — o
+  // pedido programado não pode marcá-la como [OMIE-INCERTO] (travaria o "Cancelar"), mas também não
+  // pode apagar a incerteza HERDADA de uma tentativa anterior.
+  it('pedido programado: recusa [pedido_alterado] não marca incerteza nova e preserva a herdada', () => {
+    const pp = readFileSync(resolve(__dirname, '../../supabase/functions/pedido-programado-enviar/index.ts'), 'utf-8');
+    const claimTs = readFileSync(resolve(__dirname, '../../supabase/functions/omie-vendas-sync/claim-conferido.ts'), 'utf-8');
+    const marcaPp = pp.match(/export const PEDIDO_ALTERADO_MARK = '([^']+)';/)?.[1];
+    const marcaVendas = claimTs.match(/export const MARCA_PEDIDO_ALTERADO = "([^"]+)";/)?.[1];
+    expect(marcaPp, 'PARIDADE: a marca do programado é a mesma que a omie-vendas-sync lança').toBe(marcaVendas);
+    expect(marcaPp).toBe('[pedido_alterado]');
+    const codigo = removerComentarios(pp);
+    expect(codigo, 'a incerteza herdada vem do erro_motivo da tentativa anterior').toMatch(
+      /let tentouOmie = \(envio\.erro_motivo \?\? ""\)\.includes\(OMIE_INCERTO_MARK\);/,
+    );
+    expect(codigo, 'o select dos envios traz o erro_motivo').toMatch(/select\("id, pedido_programado_id, status, data_envio, erro_motivo"\)/);
+    const ramo = codigo.indexOf('String(body?.error ?? "").includes(PEDIDO_ALTERADO_MARK)');
+    const generico = codigo.indexOf('if (!resp.ok || body?.error) throw new Error(`criar_pedido ${account} falhou');
+    expect(ramo, 'o ramo da recusa conferida existe').toBeGreaterThan(-1);
+    expect(ramo, 'o ramo vem ANTES do throw genérico').toBeLessThan(generico);
+    expect(codigo.slice(ramo, generico), 'a recusa restaura a incerteza de ANTES desta chamada').toMatch(/tentouOmie = tentouAntes;\s*throw new Error\(/);
+  });
+
   // Codex 2026-11-20 (P1): sem rastro ATP a consulta indeterminada SEGUIA para o DELETE físico.
   it('consulta indeterminada RECUSA sempre — com ou sem rastro ATP (só a ausência afirmada apaga)', () => {
     const ini = exclusao.indexOf('if (consulta.tipo === "indeterminado") {');
