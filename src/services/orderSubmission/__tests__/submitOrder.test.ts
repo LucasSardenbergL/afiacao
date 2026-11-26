@@ -325,8 +325,8 @@ describe('submitOrder', () => {
       defaultProductionAssigneeId: 'assignee-1',
     }));
     expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('edge caiu'))).toBe(true);
-    // Transporte = resultado indeterminado (a edge pode ter criado): manda conferir, nunca só o erro bruto.
-    expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('antes de criar outra'))).toBe(true);
+    // Transporte = resultado indeterminado (a edge pode ter criado ou ainda estar criando): nunca manda criar à mão.
+    expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('Não crie à mão'))).toBe(true);
   });
 
   it('8.4: invoke da OP que LANÇA (rede caiu no meio) também manda conferir por produto', async () => {
@@ -346,7 +346,7 @@ describe('submitOrder', () => {
     const op = r.errors.filter((e) => e.step === 'create_production_order');
     expect(op).toHaveLength(1);
     expect(op[0].message).toContain('Failed to fetch');
-    expect(op[0].message).toContain('antes de criar outra');
+    expect(op[0].message).toContain('Não crie à mão');
   });
 
   it('Modo cliente (autoatendimento): OS de afiação NÃO é bloqueada pelo preflight (cliente sintético code 0)', async () => {

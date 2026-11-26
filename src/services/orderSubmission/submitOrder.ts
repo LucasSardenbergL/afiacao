@@ -550,12 +550,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                 produtoAcabadoCount: produtoAcabadoItems.length,
               });
             } else {
-              // Para o aviso de transporte: a edge junta as linhas do mesmo código numa OP só.
-              const itensEnviadosOp = produtoAcabadoItems.map(c => ({
-                descricao: c.product.descricao || c.product.codigo,
-                omie_codigo_produto: c.product.omie_codigo_produto,
-                quantidade: c.quantity,
-              }));
+              // Para o aviso de transporte (sem quantidade: a conferência é de quem cuida da produção).
+              const itensEnviadosOp = produtoAcabadoItems.map(c => c.product.descricao || c.product.codigo);
               try {
                 // 8.4: o invoke NÃO lança — antes `error` e o desfecho eram ignorados e a OP recusada pelo
                 // Omie saía como "criada". A edge v1.48 devolve o desfecho por item (./ordemProducao.ts lê também a resposta da v1.47).
