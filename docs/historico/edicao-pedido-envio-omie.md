@@ -1,6 +1,6 @@
 # Edição de pedido em /sales — o que vai ao Omie (P0 5–8) e a trava do gêmeo (2026-11-26)
 
-> Continuação dos PRs #4187 e #4198 (P0 1–4 da tela de edição). Money-path. Edge `omie-vendas-sync` v1.49,
+> Continuação dos PRs #4187 e #4198 (P0 1–4 da tela de edição). Money-path. Edge `omie-vendas-sync` v1.50,
 > sem migration. Módulo puro: `supabase/functions/omie-vendas-sync/edicao-omie.ts` (+ `_test.ts`).
 
 ## Medido na prod (psql-ro, 2026-11-26)
