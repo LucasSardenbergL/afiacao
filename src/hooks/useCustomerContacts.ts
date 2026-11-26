@@ -42,7 +42,7 @@ export function useSaveContact() {
   const qc = useQueryClient();
   return useMutation({
     // Onda D fatia 4a: a releitura pós-escrita pede só a chave — o contato (telefone, e-mail, nota)
-    // fecha a authenticated na tabela (20261126140000) e a lista relê pela `v_cliente_contatos`.
+    // fecha a authenticated na tabela (20261126170000) e a lista relê pela `v_cliente_contatos`.
     mutationFn: async (input: SaveInput): Promise<Pick<CustomerContact, 'id' | 'customer_user_id'>> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Não autenticado');
@@ -71,7 +71,7 @@ export function useSaveContact() {
       };
 
       if (input.id) {
-        // O dono do contato e quem o criou são imutáveis na edição (grant de coluna de UPDATE, 20261126140000):
+        // O dono do contato e quem o criou são imutáveis na edição (grant de coluna de UPDATE, 20261126170000):
         // reatribuir um contato para um cliente da carteira o exibiria inteiro pela view.
         const { customer_user_id: _dono, created_by: _criador, ...edicao } = payload;
         const { data, error } = await supabase.from('customer_contacts')

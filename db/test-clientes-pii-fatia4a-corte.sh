@@ -7,7 +7,7 @@
 # ║
 # ║  Base: o setup INTEIRO de db/test-clientes-pii-fatia3-corte.sh (fatias 1+2 reais, corpos de PROD de
 # ║  antes da 3, 3a e 3b reais) + o ACL/policies de PROD (psql-ro, 2026-11-26) de sales_orders,
-# ║  customer_metrics_mv e customer_contacts → 20261126130000 (4a-1) → 20261126140000 (4a-2).
+# ║  customer_metrics_mv e customer_contacts → 20261126160000 (4a-1) → 20261126170000 (4a-2).
 # ║  Negativos casam a SQLSTATE pelo NOME e re-lançam o resto. Digests linha a linha por persona antes
 # ║  e depois. FALSIFICAÇÃO na MESMA invocação: suíte verde antes, uma sabotagem POR CAMADA com o seu
 # ║  vermelho EXATO, suíte verde de novo depois.
@@ -318,8 +318,8 @@ eq "L1 antes do corte: back-office lê o telefone alheio DIRETO de profiles (fur
 P -q -f "$MIGA"; P -q -f "$MIGB"
 echo "fatia 3 (3a+3b) aplicada — estado de PROD de 2026-11-26"
 
-M4A="$REPO_ROOT/supabase/migrations/20261126130000_clientes_pii_fatia4a_fontes.sql"
-M4B="$REPO_ROOT/supabase/migrations/20261126140000_clientes_pii_fatia4a_corte.sql"
+M4A="$REPO_ROOT/supabase/migrations/20261126160000_clientes_pii_fatia4a_fontes.sql"
+M4B="$REPO_ROOT/supabase/migrations/20261126170000_clientes_pii_fatia4a_corte.sql"
 
 # ── ZONA 3: ACL/policies de PROD das 3 superfícies (psql-ro, 2026-11-26) ──────────
 P -q <<'SQL'

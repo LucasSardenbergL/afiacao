@@ -1,4 +1,4 @@
--- Onda D da tela Clientes — fatia 4a-1: fontes seguras ANTES do corte da 4a-2 (20261126140000).
+-- Onda D da tela Clientes — fatia 4a-1: fontes seguras ANTES do corte da 4a-2 (20261126170000).
 -- Diário: docs/historico/clientes-onda-d-pii-carteira.md (§Fatia 4).
 --
 -- 1. public.v_pedido_snapshot_proprio — o CLIENTE lê o snapshot de contato do PRÓPRIO pedido

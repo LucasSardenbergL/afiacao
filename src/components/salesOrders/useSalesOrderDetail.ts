@@ -84,7 +84,7 @@ async function snapshotDoPedido(id: string, ehStaff: boolean): Promise<{ enderec
     return { endereco: c?.pedido_endereco ?? null, telefone: c?.pedido_telefone ?? null };
   }
   // Onda D fatia 4a: o cliente lê o snapshot do PRÓPRIO pedido pela view-gate (as colunas cruas de
-  // sales_orders fecham a authenticated em 20261126140000).
+  // sales_orders fecham a authenticated em 20261126170000).
   const { data, error } = await supabase
     .from('v_pedido_snapshot_proprio').select('customer_address, customer_phone').eq('id', id).maybeSingle();
   if (error) throw error;

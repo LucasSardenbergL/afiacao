@@ -6,7 +6,7 @@
 --    Codex P0 da fatia 3: qualquer employee lia o snapshot de todo pedido sem ledger.
 --    Depois disto o snapshot sai só por:
 --      · contato_cliente_operacional('pedido', …) — staff, com ledger;
---      · v_pedido_snapshot_proprio (20261126130000) — o cliente, só os próprios pedidos.
+--      · v_pedido_snapshot_proprio (20261126160000) — o cliente, só os próprios pedidos.
 -- 2. customer_contacts: REVOKE SELECT de TABELA + GRANT SELECT só das colunas SEM contato (id, dono,
 --    flags, carimbos). Leitura de contato só pela v_cliente_contatos (mascarada por carteira, fatia 2).
 --    INSERT/DELETE seguem no nível de tabela (as policies de escrita não mudam); o `.select()` pós-escrita
@@ -16,7 +16,7 @@
 --    dela o exibiria inteiro. O dono do contato fica imutável na edição; o front tira os dois do update.
 --
 -- PRÉ-REQUISITOS (não aplicar antes):
---   1. 20261126130000 aplicada (a fonte do cliente existe);
+--   1. 20261126160000 aplicada (a fonte do cliente existe);
 --   2. o front da fatia 4a PUBLICADO e com o BUILD_SHA servido = merge (o ramo do cliente já lê a view
 --      e o `.select()` dos contatos já não pede coluna de contato). Antes disso: 42501 na tela.
 -- Leitor antigo quebra ALTO (42501), não some com linha calada. service_role/postgres não mudam.
@@ -100,7 +100,7 @@ BEGIN
   IF to_regclass('public.v_pedido_snapshot_proprio') IS NULL
      OR NOT has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'SELECT')
      OR NOT has_table_privilege('authenticated', 'public.v_cliente_contatos', 'SELECT') THEN
-    RAISE EXCEPTION 'B4 FALHOU: fonte mascarada ausente (v_pedido_snapshot_proprio / v_cliente_contatos) — aplicar 20261126130000 antes';
+    RAISE EXCEPTION 'B4 FALHOU: fonte mascarada ausente (v_pedido_snapshot_proprio / v_cliente_contatos) — aplicar 20261126160000 antes';
   END IF;
   IF NOT has_table_privilege('service_role', 'public.sales_orders', 'SELECT')
      OR NOT has_table_privilege('service_role', 'public.customer_contacts', 'SELECT') THEN

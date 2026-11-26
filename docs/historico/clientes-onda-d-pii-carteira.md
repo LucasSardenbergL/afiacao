@@ -141,7 +141,7 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 ## Fatia 4a — snapshot de pedido, métrica e contatos do cliente (os P0 de leitura do Codex)
 - **Recorte:** a lista da fatia 4 não coube num PR. A 4a fecha as três superfícies sem dependência de decisão de
   produto. O resto vai para a 4b (abaixo).
-- **4a-1 `20261126130000`** (segura já, sem Publish):
+- **4a-1 `20261126160000`** (segura já, sem Publish):
   - `public.v_pedido_snapshot_proprio` (view-gate `invoker=off` + `barrier`, só SELECT): o CLIENTE lê o
     snapshot do próprio pedido.
   - Exclui o titular que é staff (papel atual OU flag `is_employee`, mesmo filtro da `selfservice_meus_pedidos`).
@@ -150,7 +150,7 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   - Igualdade exata do uuid: cliente com 2 cadastros vê cada pedido pelo seu login, como na RLS.
   - `customer_metrics_mv.document` fecha por grant de COLUNA. Nenhum leitor do front pede a coluna; `service_role`
     (ai-ops-agent, `select("*")`) continua com a view inteira.
-- **4a-2 `20261126140000`** (só depois do Publish servir o merge):
+- **4a-2 `20261126170000`** (só depois do Publish servir o merge):
   - `sales_orders.customer_document/address/phone` perdem o SELECT de coluna. O UPDATE de coluna e o INSERT de
     tabela continuam, então o pedido segue gravando.
   - `customer_contacts` passa a REVOKE SELECT de tabela + GRANT SELECT só de chave, flags e carimbos.
