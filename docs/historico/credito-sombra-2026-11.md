@@ -61,6 +61,17 @@ Redução automática + backtest → fatia 5b (após o PR 4). Condições de ati
   O piso domina a carga: mais da metade dos PVs em trânsito é de cliente com vencido ≥ 60 d no grupo. Vale olhar no PR 6 se esses "importado/separacao" são trânsito real ou status parado. O sensor `excluido_app_reserva_ativa` = 13 (PVs excluídos no app que seguem com reserva, como o desenho manda).
 - Sem edge e sem Publish.
 
+## Follow-up: `carga_pendente` sem os não avaliáveis (2026-11-26)
+
+Na 1ª leitura da medição, a `carga_pendente` da saúde estava em **22 fixo**. Eram os 22 PVs antigos do app, anteriores ao PR 3, que o lote já tinha observado como `revisao_ausente`. Eles nunca drenariam, e o sensor parecia carga travada. A migration `20261126130000_credito_sombra_saude_carga_pendente.sql` redefine só a view (mesmas colunas, `security_invoker` repetido, ACL preservado):
+
+- PV da carga com tentativa **não-erro** sai da conta.
+- PV com tentativa só de **erro** continua na conta, mesmo depois das 3 tentativas: é defeito real, e a `erros_24h` esquece depois de 24 h.
+
+Prova: S8 em `db/test-credito-sombra.sh`, mais as sabotagens F13 (view antiga) e F14 (erro contado como observado). A migration roda em toda rodada da suíte e é reaplicada no A1b. Resultado: **164 ok / 0 fail** em `C` e `pt_BR.UTF-8`, com as duas sabotagens vermelhas no S8.2 e a re-prova verde.
+
+Aplicada em 2026-11-26 pelo `db:aplicar` a partir da main (#4212 → `990b2364b`): **`db_aplicacoes` #1474 `aplicada`** às 15:48:50Z (sha256 `43be06c9…`), com ensaio verde antes. 2ª testemunha por psql-ro: `security_invoker=on`, ACL igual ao de antes (só SELECT para authenticated, service_role e claude_ro) e **`carga_pendente` 22 → 0**. A migration divide a versão `20261126130000` com `credito_policies_carteira_private` (PR 6), sem conflito: o ledger é por arquivo.
+
 ## Como reverter
 
 `SELECT cron.unschedule('credito-sombra-lote-10min');` para parar. Remover de vez: `DROP` das 6 tabelas, 2 views e 7 funções `credito_sombra_*` (os 2 índices podem ficar) (founder, SQL Editor). Nenhuma decisão de venda depende delas.

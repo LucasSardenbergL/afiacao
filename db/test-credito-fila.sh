@@ -282,6 +282,18 @@ asserts() {
   Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.credito_enforcement(company) VALUES ('oben')\$q\$);" >/dev/null
   eq "E1.5 authenticated não chama o gate" "$(como "$L" "SELECT public.credito_gate_v2_efetivo('$SOA','oben','$r')")" "42501"
   eq "E1.6 3 empresas semeadas desligadas" "$(Pq -c "SELECT count(*) FILTER (WHERE NOT ligado) FROM public.credito_enforcement")" "3"
+  # 6b — o gate como a EDGE chama (gate-v2.ts): service_role, revisão da RPC do PR 3 ou NULL (registro falhou).
+  # Com o flag desligado, toda forma que a edge pode mandar devolve exatamente o par que ela aceita
+  # como "segue" ({resultado:'desligado', ligado:false}) e não escreve nada.
+  eq "E1.7 6b: revisão NULL → desligado/ligado=false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'oben', NULL) r) x;" | tail -1)" "desligado/false"
+  eq "E1.8 6b: revisão real → desligado/ligado=false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'oben', '$r') r) x;" | tail -1)" "desligado/false"
+  # Codex diff P2: com as 2 contas desligadas o teste passaria também lendo o flag da conta DECLARADA.
+  # Liga só a declarada (colacor); o pedido é da oben (desligada) → tem de ser desligado/false.
+  Pq -c "SELECT public.t_forca(\$q\$UPDATE public.credito_enforcement SET ligado = true WHERE company = 'colacor'\$q\$);" >/dev/null
+  eq "E1.9 6b: declarada LIGADA (colacor), conta REAL desligada (oben) → desligado/false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'colacor', '$r') r) x;" | tail -1)" "desligado/false"
+  Pq -c "SELECT public.t_forca(\$q\$UPDATE public.credito_enforcement SET ligado = false WHERE company = 'colacor'\$q\$);" >/dev/null
+  eq "E1.10 6b: NULL/real/conta errada → trilhas intocadas" "$(Pq -c "SELECT public.t_foto();")" "$antes"
+  eq "E1.11 6b: pedido inexistente → pedido_inexistente (a edge SEGURA; nunca 'desligado')" "$(gate "00000000-0000-0000-0000-0000000000ff" "$r" | J "['resultado']")" "pedido_inexistente"
 
   echo "E2 flag LIGADO → 🔴 bloqueia, 🟡 vai à fila, 🟢 reserva; revisão errada é resultado explícito"
   liga
@@ -591,6 +603,57 @@ eq "E11.5 a tela lê a view inteira" "$(como "$L" "SELECT count(*) FROM public.c
 eq "E11.6 security_invoker segue ligado" "$(Pq -c "SELECT 'security_invoker=on' = ANY (reloptions) FROM pg_class WHERE oid = 'public.credito_fila_v'::regclass")" "t"
 eq "E11.7 anon segue sem ler; claude_ro segue lendo" "$(Pq -c "SELECT has_table_privilege('anon','public.credito_fila_v','SELECT') || '/' || has_table_privilege('claude_ro','public.credito_fila_v','SELECT')")" "false/true"
 eq "E11.8 vendedor_user_id vem NULL (nunca o valor da coluna fechada)" "$(Pq -c "SELECT count(*) FILTER (WHERE vendedor_user_id IS NOT NULL) FROM public.credito_fila_v")" "0"
+
+# ── E12: incidente 2026-11-26 ~11h40 — na prod a public.pode_ver_carteira_completa NÃO é executável pelo
+#    authenticated desde 20260718180000 (só a private.). As policies *_select_gestor da família crédito
+#    chamam a public → a view security_invoker dá 42501 (403) para o master. Reproduz o ACL e prova o fix.
+Pq -c "CREATE OR REPLACE FUNCTION private.pode_ver_carteira_completa(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$f\$ SELECT has_role(_uid, 'master'::app_role) OR (has_role(_uid, 'employee'::app_role) AND get_commercial_role(_uid) IN ('gerencial'::commercial_role,'estrategico'::commercial_role,'super_admin'::commercial_role)); \$f\$;" \
+   -c "REVOKE ALL ON FUNCTION private.pode_ver_carteira_completa(uuid) FROM PUBLIC, anon;" \
+   -c "GRANT EXECUTE ON FUNCTION private.pode_ver_carteira_completa(uuid) TO authenticated, service_role;" \
+   -c "REVOKE EXECUTE ON FUNCTION public.pode_ver_carteira_completa(uuid) FROM authenticated, anon, PUBLIC;" \
+   -c "ALTER POLICY venda_excecao_insert_gestor ON public.venda_excecao_credito WITH CHECK ((SELECT private.cap_credito_escrever((SELECT auth.uid()))) AND aprovado_por = (SELECT auth.uid()));" >/dev/null
+# ↑ a policy de INSERT da prod já é esta (medida no psql-ro 2026-11-26); o harness não aplica a migration que a trocou.
+eq "E12.1 reproduz o 403: public sem EXECUTE → a view nega o master (42501)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v WHERE origem = 'efetivo' AND status = 'aberta'")" "42501"
+eq "E12.2 reproduz também numa tabela de base (credito_enforcement)" "$(como "$L" "SELECT count(*) FROM public.credito_enforcement")" "42501"
+MIG4="$REPO_ROOT/supabase/migrations/20261126130000_credito_policies_carteira_private.sql"
+python3 - "$MIG4" "$SAB/m4.sql" <<'PY4'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+n = t.replace("    v_n := v_n + 1;\n", "    v_n := v_n + 1;\n    EXIT;\n", 1)   # sabotagem: reaponta só a 1ª policy
+assert n != t, "sabotagem não alterou o texto"
+open(sys.argv[2], "w", encoding="utf-8").write(n)
+PY4
+if P -1 -q -f "$SAB/m4.sql" > "$SAB/pos4.log" 2>&1; then bad "F19 reapontando 1 só policy a migration APLICOU (postcondição sem dente)"
+elif grep -q 'POS FALHOU: policy ainda chama a public.pode_ver_carteira_completa' "$SAB/pos4.log"; then ok "F19 reapontar só 1 policy → postcondição abortou listando as que sobraram"
+else bad "F19 falhou por OUTRO motivo: $(head -c 300 "$SAB/pos4.log")"; fi
+eq "E12.3 a sabotagem fez ROLLBACK (segue negando)" "$(como "$L" "SELECT count(*) FROM public.credito_enforcement")" "42501"
+P -1 -q -f "$MIG4" 2>"$SAB/apl5.log" || { echo "MIG4 falhou:"; head -c 1500 "$SAB/apl5.log"; }
+P -1 -q -f "$MIG4" 2>>"$SAB/apl5.log" || { echo "MIG4 (2ª) falhou:"; tail -c 800 "$SAB/apl5.log"; }   # 2×: idempotente
+eq "E12.4 POS OK da 20261126130000 (2×)" "$(grep -c 'POS OK: policies de crédito leem a carteira pela private' "$SAB/apl5.log")" "2"
+eq "E12.5 a 2ª rodada não achou nada para reapontar" "$(grep -c 'policies reapontadas para private.pode_ver_carteira_completa: 0' "$SAB/apl5.log")" "1"
+eq "E12.6 master lê a view (query exata do contador)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v WHERE origem = 'efetivo' AND status = 'aberta'")" "OK"
+eq "E12.7 master lê as 3 empresas do flag" "$(Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$L\",\"role\":\"authenticated\"}', false);" -c "SET ROLE authenticated;" -c "SELECT count(*) FROM public.credito_enforcement;" | tail -1)" "3"
+eq "E12.8 RLS segue FECHADA: vendedor não-gestor lê 0 empresas" "$(Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$V\",\"role\":\"authenticated\"}', false);" -c "SET ROLE authenticated;" -c "SELECT count(*) FROM public.credito_enforcement;" | tail -1)" "0"
+eq "E12.9 nenhuma policy de crédito chama mais a public" "$(Pq -c "SELECT count(*) FROM pg_policy WHERE pg_get_expr(polqual, polrelid) ~ '(^|[^._a-z])pode_ver_carteira_completa\('")" "0"
+
+# ── E13: prontidão pós-6b — sai o item 6b, entram m (front da fila/retomada) e n (fail-closed antes de ligar).
+MIG5="$REPO_ROOT/supabase/migrations/20261126150000_credito_prontidao_pos_6b.sql"
+python3 - "$MIG5" "$SAB/m5.sql" <<'PY5'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+n = t.replace("    'n_gate_v2_volta_a_fail_closed_antes_de_ligar'];", "    'n_gate_v2_volta_a_fail_closed_antes_de_ligar',\n    '6b_edge_omie_vendas_sync_chama_o_gate_efetivo'];", 1)
+assert n != t, "sabotagem não alterou o texto"
+open(sys.argv[2], "w", encoding="utf-8").write(n)
+PY5
+if P -1 -q -f "$SAB/m5.sql" > "$SAB/pos5.log" 2>&1; then bad "F20 com o 6b de volta a migration APLICOU (postcondição sem dente)"
+elif grep -q 'POS FALHOU: o item 6b continua pendente' "$SAB/pos5.log"; then ok "F20 6b de volta na lista → postcondição abortou"
+else bad "F20 falhou por OUTRO motivo: $(head -c 300 "$SAB/pos5.log")"; fi
+P -1 -q -f "$MIG5" 2>"$SAB/apl6.log" || { echo "MIG5 falhou:"; head -c 1200 "$SAB/apl6.log"; }
+P -1 -q -f "$MIG5" 2>>"$SAB/apl6.log" || { echo "MIG5 (2ª) falhou:"; tail -c 600 "$SAB/apl6.log"; }
+eq "E13.1 POS OK da 20261126150000 (2×)" "$(grep -c 'POS OK: prontidão sem o 6b' "$SAB/apl6.log")" "2"
+eq "E13.2 pendentes: sem 6b, com m e n, 13 itens" "$(Pq -c "SELECT ((c->'valor'->'pendentes') ? '6b_edge_omie_vendas_sync_chama_o_gate_efetivo')::text || '/' || ((c->'valor'->'pendentes') ? 'n_gate_v2_volta_a_fail_closed_antes_de_ligar')::text || '/' || jsonb_array_length(c->'valor'->'pendentes') FROM jsonb_array_elements(public.credito_enforcement_prontidao('oben')->'condicoes') c WHERE c->>'chave' = 'prereq_codigo'")" "false/true/13"
+eq "E13.3 prontidão segue recusando nas 3 empresas" "$(Pq -c "SELECT count(*) FILTER (WHERE (public.credito_enforcement_prontidao(e)->>'pronto')::boolean) FROM unnest(ARRAY['oben','colacor','colacor_sc']) e")" "0"
+eq "E13.4 ligar continua recusado (prontidão)" "$(como "$L" "SELECT public.credito_definir_enforcement('oben', true, 'teste pós-6b')")" "P0001"
 
 echo "RESULTADO: $PASS ok / $FAIL fail"
 if [ "$FAIL" -ne 0 ]; then echo "❌ HARNESS VERMELHO"; exit 1; fi

@@ -14,26 +14,43 @@ const ehTier = (t: string): t is Tier => t === 'A' || t === 'B' || t === 'C';
  * Tier comercial A/B/C do cliente por conta (cliente_tier_preco). Staff-readable — o
  * badge orienta o vendedor. Ausência de tier na conta → null (comportamento vigente).
  * O types tipa `tier` como `string` (CHECK no banco) → estreita por `ehTier`; valor fora de
- * A/B/C vira ausente, nunca um tier inventado.
+ * A/B/C vira ausente, nunca um tier inventado. Exportada para quem não usa react-query (a tela de
+ * edição de pedido) — o `useClienteTier` abaixo é a mesma leitura.
  */
+export async function buscarTierPorConta(customerUserId: string): Promise<TierPorConta> {
+  const { data, error } = await supabase
+    .from('cliente_tier_preco')
+    .select('company, tier')
+    .eq('customer_user_id', customerUserId);
+  if (error) throw error;
+  const out: TierPorConta = { oben: null, colacor: null };
+  for (const row of data ?? []) {
+    if ((row.company === 'oben' || row.company === 'colacor') && ehTier(row.tier)) out[row.company] = row.tier;
+  }
+  return out;
+}
+
 export function useClienteTier(customerUserId: string | null | undefined) {
   return useQuery<TierPorConta>({
     queryKey: ['cliente-tier', customerUserId ?? null],
     enabled: !!customerUserId,
     staleTime: 60_000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cliente_tier_preco')
-        .select('company, tier')
-        .eq('customer_user_id', customerUserId as string);
-      if (error) throw error;
-      const out: TierPorConta = { oben: null, colacor: null };
-      for (const row of data ?? []) {
-        if ((row.company === 'oben' || row.company === 'colacor') && ehTier(row.tier)) out[row.company] = row.tier;
-      }
-      return out;
-    },
+    queryFn: () => buscarTierPorConta(customerUserId as string),
   });
+}
+
+/** Leitura do multiplicador de partida — a MESMA do `useTierPrecoConfig`. Valor inválido/ausente é
+ *  OMITIDO (nunca vira 0 — money-path: ausente ≠ zero; precoPartida degrada p/ tabela pura). */
+export async function buscarMultConfig(): Promise<MultConfig> {
+  const { data, error } = await supabase.from('tier_preco_config').select('company, tier, mult_partida');
+  if (error) throw error;
+  const out: MultConfig = { oben: {}, colacor: {} };
+  for (const row of data ?? []) {
+    if ((row.company !== 'oben' && row.company !== 'colacor') || !ehTier(row.tier)) continue;
+    const m = Number(row.mult_partida);
+    if (Number.isFinite(m) && m > 0) out[row.company][row.tier] = m;
+  }
+  return out;
 }
 
 /**
@@ -45,17 +62,7 @@ export function useTierPrecoConfig() {
   return useQuery<MultConfig>({
     queryKey: ['tier-preco-config'],
     staleTime: 5 * 60_000,
-    queryFn: async () => {
-      const { data, error } = await supabase.from('tier_preco_config').select('company, tier, mult_partida');
-      if (error) throw error;
-      const out: MultConfig = { oben: {}, colacor: {} };
-      for (const row of data ?? []) {
-        if ((row.company !== 'oben' && row.company !== 'colacor') || !ehTier(row.tier)) continue;
-        const m = Number(row.mult_partida);
-        if (Number.isFinite(m) && m > 0) out[row.company][row.tier] = m;
-      }
-      return out;
-    },
+    queryFn: buscarMultConfig,
   });
 }
 

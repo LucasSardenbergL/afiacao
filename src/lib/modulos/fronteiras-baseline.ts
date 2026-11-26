@@ -95,6 +95,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/components/rota/planner/ScheduledVisitsPanel.tsx", para: "src/lib/visitas/today.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/rota/planner/ScheduledVisitsPanel.tsx", para: "src/lib/visitas/visita-status.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/sales/print/buildPrintHtml.ts", para: "src/components/OrderPrintLayout.tsx", deModulo: "vendas", paraModulo: "loja-afiacao", kind: "runtime" },
+  { de: "src/components/salesOrderEdit/useSalesOrderEdit.ts", para: "src/hooks/useClienteTier.ts", deModulo: "vendas", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/salesOrders/print.ts", para: "src/components/OrderPrintLayout.tsx", deModulo: "vendas", paraModulo: "loja-afiacao", kind: "runtime" },
   { de: "src/components/salesOrders/useSalesOrders.ts", para: "src/utils/whatsappShare.ts", deModulo: "vendas", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/shell/DataHealthBadge.tsx", para: "src/hooks/useDataHealth.ts", deModulo: "plataforma", paraModulo: "governanca", kind: "runtime" },
