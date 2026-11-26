@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # PROVA PG17 — crédito-IA PR 5: gate v2 em MODO SOMBRA (lote pg_cron + ledger + sensores).
-# Migration sob prova: supabase/migrations/20261125200000_credito_gate_v2_sombra.sql (a MIGS5).
+# Migration sob prova: supabase/migrations/20261125200000_credito_gate_v2_sombra.sql (a MIGS5)
+# + o follow-up 20261126130000_credito_sombra_saude_carga_pendente.sql (a MIGSA, view de saúde).
 # Base = o que está em prod: PR 1 → PR 2 → PAGTO PARCIAL → PR 3 → fronteira 60 (migrations reais).
 # Método: um banco-MODELO com a base; cada rodada = banco novo clonado do modelo + a MIGS5 (real ou
 # sabotada) + a suíte inteira. Controle verde e sabotagens na MESMA invocação.
@@ -34,6 +35,7 @@ Pq() { P -tA -q "$@"; }
 
 MIGS5="$REPO_ROOT/supabase/migrations/20261125200000_credito_gate_v2_sombra.sql"
 MIGI="$REPO_ROOT/supabase/migrations/20261125195900_credito_sombra_indices.sql"
+MIGSA="$REPO_ROOT/supabase/migrations/20261126130000_credito_sombra_saude_carga_pendente.sql"
 
 # ══ ZONA 1 — pré-requisitos (o que as migrations leem e não criam) ═══════════════════════════
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -416,6 +418,23 @@ suite() {
   eq "S7.3 núcleo efetivo do grupo não espera a sombra (timeout 1 s)" \
      "$(Pq -c "SET statement_timeout = '1s'; SELECT pg_advisory_xact_lock(hashtextextended('credito_grupo:' || '$D', 0)); SELECT 'livre';" | tail -1)" "livre"
   exec 3>&-; wait "$pa" || true
+
+  # ── S8 saúde: PV da carga já observado e não avaliável sai de carga_pendente; só-erro continua ──
+  limpa_dados
+  a=$(u 8 21); F "INSERT INTO public.sales_orders(id, account, status, total, items, customer_user_id, omie_numero_pedido, created_by) VALUES ('$a','oben','enviado',50,'[{\"quantidade\":1,\"valor_unitario\":50}]','$D','8021','$V')"
+  b=$(u 8 22); pv "$b" oben separacao 40 "$D" 8022
+  F "INSERT INTO public.credito_sombra_carga(sales_order_id, situacao, status_na_ativacao) VALUES ('$a','aberto','enviado'),('$b','aberto','separacao')"
+  eq "S8.0 carga nunca observada conta como pendente" "$(Pq -c 'SELECT carga_pendente FROM public.credito_sombra_saude')" "2"
+  lote >/dev/null
+  eq "S8.1 pré: app sem revisão virou tentativa, importado virou decisão" \
+     "$(Pq -c "SELECT resultado FROM public.credito_sombra_tentativa WHERE sales_order_id='$a'")/$(dec "$b" "count(*)")" "revisao_ausente/1"
+  x=$(u 8 23); pv "$x" oben separacao 30 "$D" 8023
+  F "INSERT INTO public.credito_sombra_carga(sales_order_id, situacao, status_na_ativacao) VALUES ('$x','aberto','separacao');
+     INSERT INTO public.credito_sombra_tentativa(id, lote_id, sales_order_id, company, conteudo_md5, resultado)
+       SELECT gen_random_uuid(), (SELECT id FROM public.credito_sombra_lote LIMIT 1), '$x', 'oben', 'md5-teste', 'erro'"
+  eq "S8.2 revisao_ausente fora, só-erro dentro → 1 pendente" "$(Pq -c 'SELECT carga_pendente FROM public.credito_sombra_saude')" "1"
+  eq "S8.3 gestor lê a saúde" "$(como "$G" 'SELECT carga_pendente FROM public.credito_sombra_saude')" "1"
+  F "DELETE FROM public.credito_sombra_carga WHERE sales_order_id IN ('$a','$b','$x')"   # o inventário volta ao marco (A1)
 }
 
 CORPOS_PROD=$(Pq -c "SELECT string_agg(md5(prosrc), ',' ORDER BY proname) FROM pg_proc WHERE oid IN ('private.credito_avaliar_reservar(uuid,text,bigint,text,numeric,integer,text,uuid)'::regprocedure,'public.venda_gate_credito_grupo(uuid,text,bigint)'::regprocedure)")
@@ -427,6 +446,7 @@ rodada() {   # $1 = arquivo da migration
   DB=prove
   P -q -1 -f "$MIGI" >/dev/null 2>&1 || { echo "  (índices falharam)"; return 1; }
   P -q -1 -f "$1" > "$SAB/apl.log" 2>&1 || { echo "  (migration falhou: $(grep -v NOTICE "$SAB/apl.log" | head -c 900))"; return 1; }
+  P -q -1 -f "${2:-$MIGSA}" > "$SAB/apl.log" 2>&1 || { echo "  (saúde falhou: $(grep -v NOTICE "$SAB/apl.log" | head -c 900))"; return 1; }
   suite
 }
 
@@ -437,6 +457,7 @@ echo "· re-aplicar é idempotente (marco não move, cron não duplica)"
 M0=$(Pq -c "SELECT ativado_em FROM public.credito_sombra_marco")
 F "INSERT INTO public.sales_orders(id, account, status, total, items, customer_user_id, omie_numero_pedido, created_at) VALUES ('$(u 8 1)','oben','importado',10,'[{\"quantidade\":1,\"valor_unitario\":10}]','$D','8001', now() - interval '2 days')"
 if P -q -1 -f "$MIGS5" >/dev/null 2>&1; then ok "A1 2ª aplicação passa (com importado retrodatado depois do marco)"; else bad "A1 2ª aplicação falhou"; fi
+if P -q -1 -f "$MIGSA" >/dev/null 2>&1; then ok "A1b 2ª aplicação da view de saúde passa"; else bad "A1b 2ª aplicação da saúde falhou"; fi
 eq "A2 marco intacto" "$(Pq -c "SELECT ativado_em FROM public.credito_sombra_marco")" "$M0"
 eq "A3 1 cron" "$(Pq -c "SELECT count(*) FROM cron.job WHERE jobname='credito-sombra-lote-10min'")" "1"
 
@@ -485,6 +506,23 @@ sabota "F6 sem sub-bloco (1 erro aborta o lote)" "S4\.7|S4\.8" \
       GET STACKED DIAGNOSTICS"
 sabota "F7 residual gravado (desconta título 2×)" "S3\.5" \
   "SELECT COALESCE(sum(private.credito_sombra_residual(r.valor_brl, r.company, r.omie_codigo_cliente, r.sales_order_id)), 0)=>SELECT COALESCE(sum(greatest(private.credito_sombra_residual(r.valor_brl, r.company, r.omie_codigo_cliente, r.sales_order_id) - COALESCE(private.credito_sombra_titulos_pv(r.company, r.omie_codigo_cliente, (SELECT s.omie_numero_pedido FROM public.sales_orders s WHERE s.id = r.sales_order_id)),0), 0)), 0)"
+# a view de saúde: sabota a MIGSA (a MIGS5 vai real)
+sabota_saude() {   # $1 = rótulo · $2 = asserts vermelhos (regex) · $3 = trecho · $4 = troca
+  local rot="$1" alvo="$2"
+  python3 -c 'import sys
+src, dst, de, para = sys.argv[1:]
+t = open(src).read()
+if de not in t: raise SystemExit("trecho não encontrado: " + de)
+open(dst, "w").write(t.replace(de, para, 1))' "$MIGSA" "$SAB/s.sql" "$3" "$4"
+  local p0=$PASS f0=$FAIL out
+  QUIETO=0; out=$(rodada "$MIGS5" "$SAB/s.sql" 2>&1 || true); PASS=$p0; FAIL=$f0
+  if echo "$out" | grep -E "❌ ($alvo)" >/dev/null; then ok "$rot → vermelho em $(echo "$out" | grep -cE '❌') assert(s), incl. $alvo"
+  else bad "$rot passou sem derrubar $alvo"; echo "$out" | grep -E "❌|falhou" | head -5; fi
+}
+sabota_saude "F13 saúde conta a carga não avaliável (view antiga)" "S8\.2" \
+  "           AND NOT EXISTS (SELECT 1 FROM public.credito_sombra_tentativa t
+                            WHERE t.sales_order_id = k.sales_order_id AND t.resultado <> 'erro'))" ")"
+sabota_saude "F14 saúde trata erro como observado" "S8\.2" " AND t.resultado <> 'erro'))" "))"
 # pós-condição pega o gate efetivo alterado (a sombra não pode mexer no núcleo)
 python3 - "$MIGS5" "$SAB/m.sql" <<'PY'
 import sys
