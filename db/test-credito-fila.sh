@@ -282,6 +282,14 @@ asserts() {
   Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.credito_enforcement(company) VALUES ('oben')\$q\$);" >/dev/null
   eq "E1.5 authenticated não chama o gate" "$(como "$L" "SELECT public.credito_gate_v2_efetivo('$SOA','oben','$r')")" "42501"
   eq "E1.6 3 empresas semeadas desligadas" "$(Pq -c "SELECT count(*) FILTER (WHERE NOT ligado) FROM public.credito_enforcement")" "3"
+  # 6b — o gate como a EDGE chama (gate-v2.ts): service_role, revisão da RPC do PR 3 ou NULL (registro falhou).
+  # Com o flag desligado, toda forma que a edge pode mandar devolve exatamente o par que ela aceita
+  # como "segue" ({resultado:'desligado', ligado:false}) e não escreve nada.
+  eq "E1.7 6b: revisão NULL → desligado/ligado=false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'oben', NULL) r) x;" | tail -1)" "desligado/false"
+  eq "E1.8 6b: revisão real → desligado/ligado=false" "$(Pq -c "SET ROLE service_role;" -c "SELECT r->>'resultado' || '/' || (r->'ligado')::text FROM (SELECT public.credito_gate_v2_efetivo('$SOA', 'oben', '$r') r) x;" | tail -1)" "desligado/false"
+  eq "E1.9 6b: conta declarada errada, flag da conta REAL desligado → desligado" "$(gate "$SOA" "$r" colacor | J "['resultado']")" "desligado"
+  eq "E1.10 6b: NULL/real/conta errada → trilhas intocadas" "$(Pq -c "SELECT public.t_foto();")" "$antes"
+  eq "E1.11 6b: pedido inexistente → pedido_inexistente (a edge SEGURA; nunca 'desligado')" "$(gate "00000000-0000-0000-0000-0000000000ff" "$r" | J "['resultado']")" "pedido_inexistente"
 
   echo "E2 flag LIGADO → 🔴 bloqueia, 🟡 vai à fila, 🟢 reserva; revisão errada é resultado explícito"
   liga
