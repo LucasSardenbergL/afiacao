@@ -19,6 +19,11 @@
 -- Reversão: ALTER POLICY <nome> ON <tabela> USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid())))) (volta o 403).
 -- ============================================================
 
+-- pg_get_expr depende destes dois (Codex): com aspas forçadas ou `private` à frente no search_path o
+-- texto muda e o filtro exato / a regex da postcondição dariam falso OK. Fixados só nesta transação.
+SET LOCAL quote_all_identifiers = off;
+SET LOCAL search_path = pg_catalog, public;
+
 DO $fix$
 DECLARE
   r record;
