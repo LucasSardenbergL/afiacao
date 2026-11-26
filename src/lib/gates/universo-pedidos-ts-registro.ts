@@ -44,7 +44,7 @@ interface EntradaRegistro {
 
 export const REGISTRO: readonly EntradaRegistro[] = [
   // ── lookup ──────────────────────────────────────────────────────────────────────────────────
-  { arquivo: 'src/components/salesOrders/useSalesOrderDetail.ts', forma: 'select·eq(id)·maybeSingle', n: 2, categoria: 'lookup', motivo: 'snapshot de entrega do customer no PRÓPRIO pedido (onda D) + detalhe de UM pedido por id (abre cancelado e orçamento também)' },
+  { arquivo: 'src/components/salesOrders/useSalesOrderDetail.ts', forma: 'select·eq(id)·maybeSingle', n: 1, categoria: 'lookup', motivo: 'detalhe de UM pedido por id (abre cancelado e orçamento também); o snapshot do customer saiu para v_pedido_snapshot_proprio (onda D 4a)' },
   { arquivo: 'src/components/salesOrderEdit/useSalesOrderEdit.ts', forma: 'select·eq(id)·single', categoria: 'lookup', motivo: 'edição de UM pedido por id' },
   { arquivo: 'src/pages/UnifiedOrder.tsx', forma: 'select·eq(id)·maybeSingle', categoria: 'lookup', motivo: 'retoma/edita UM pedido por id' },
   { arquivo: 'src/services/whatsappProposta/enviarProposta.ts', forma: 'select·eq(whatsapp_proposta_dedupe)·maybeSingle', categoria: 'lookup', motivo: 'dedupe da proposta: acha o orçamento já criado por ela' },

@@ -137,3 +137,58 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   policies de `customer_contacts` e `addresses`; `cliente_grupo_membros.documento` e
   `v_grupo_contas_receber_por_doc`; endereço em `v_grupo_contatos`; edges `omie-cliente` (busca de staff e
   oráculo público) e `analyze-unified-order`; `cobranca_regua_hoje`; unicidade de documento mediada no servidor.
+
+## Fatia 4a — snapshot de pedido, métrica e contatos do cliente (os P0 de leitura do Codex)
+- **Recorte:** a lista da fatia 4 não coube num PR. A 4a fecha as três superfícies sem dependência de decisão de
+  produto. O resto vai para a 4b (abaixo).
+- **4a-1 `20261126160000`** (segura já, sem Publish):
+  - `public.v_pedido_snapshot_proprio` (view-gate `invoker=off` + `barrier`, só SELECT): o CLIENTE lê o
+    snapshot do próprio pedido.
+  - Exclui o titular que é staff (papel atual OU flag `is_employee`, mesmo filtro da `selfservice_meus_pedidos`).
+    O pedido e o orçamento gravam `customerUserId || user.id`: sem vínculo local, o titular vira o VENDEDOR e o
+    snapshot é do comprador. Em prod: **19 pedidos de 3 staff, o último em 2026-11-21**.
+  - Igualdade exata do uuid: cliente com 2 cadastros vê cada pedido pelo seu login, como na RLS.
+  - `customer_metrics_mv.document` fecha por grant de COLUNA. Nenhum leitor do front pede a coluna; `service_role`
+    (ai-ops-agent, `select("*")`) continua com a view inteira.
+- **4a-2 `20261126170000`** (só depois do Publish servir o merge):
+  - `sales_orders.customer_document/address/phone` perdem o SELECT de coluna. O UPDATE de coluna e o INSERT de
+    tabela continuam, então o pedido segue gravando.
+  - `customer_contacts` passa a REVOKE SELECT de tabela + GRANT SELECT só de chave, flags e carimbos.
+  - O UPDATE de `customer_contacts` vira de COLUNA, sem `customer_user_id`/`created_by`/`id`. A view decide
+    pelo dono ATUAL da linha, então reatribuir um contato de fora para um cliente da carteira o exibiria inteiro.
+- **Front:**
+  - o ramo do cliente em `useSalesOrderDetail` lê a view nova;
+  - `useSaveContact` relê só `id, customer_user_id` e não manda dono nem criador no update.
+- **Codex** (`gpt-6.2-astra`, high, 155 s, 103 k tokens): **NÃO APLICAR** a 1ª versão. Integrados:
+  - P0 titular staff;
+  - P0 reatribuição do dono do contato;
+  - P2 asserts verdes de graça (S3 sem pedido de titular staff; T7/T8 sem índice único de principal; B3 com
+    `has_table_privilege(…, 'INSERT, UPDATE, DELETE')`, que responde "algum deles" — agora verbo a verbo).
+- **Prova:** `db/test-clientes-pii-fatia4a-corte.sh` — **213 ok / 0 fail** em `C` e `pt_BR.UTF-8`, digests por
+  persona antes/depois (métrica, pedidos, Caça, grupo, `v_cliente_contatos`), 23 sabotagens com o vermelho EXATO
+  (5 delas são postcondição abortando com a sua marca).
+- **Lições do harness:**
+  - `GRANT SELECT, UPDATE (cols)` concede SELECT de TABELA: a lista de colunas é só do último privilégio. Escreva
+    `SELECT (cols), UPDATE (cols)`.
+  - `WHERE <col revogada>` num UPDATE também dá 42501: o filtro exige SELECT.
+  - Casar a mensagem "permission denied" é vermelho que só existe em `C` (o pt_BR traduz) → case a SQLSTATE.
+  - O K7 mostrou que o furo era real: view nova nasce `ALL` (default privileges) e o UPDATE pela view de OWNER
+    GRAVOU no pedido.
+- **Lacuna declarada (L6 do harness):** `contato_cliente_operacional('pedido', …)` trata o pedido de titular staff
+  como leitura PRÓPRIA (`cid = v_uid`) e entrega sem ledger. Entra na 4b.
+
+## Fatia 4b — o que falta (não entra na 4a)
+- `contato_cliente_operacional`: o ramo "próprio" não pode valer para titular staff.
+- Escrita do pedido e do orçamento: parar de gravar o vendedor como titular (`customerUserId || user.id`).
+- `addresses`: staff ainda lê tudo. O cliente lê os próprios com `select('*')` (`Addresses.tsx`, `useProfile`
+  head count), então o corte por coluna exige migrar esses leitores para `v_endereco_contato`.
+- `v_grupo_contatos`: o endereço sai cru, e essa view depende de `addresses.street/number`.
+- `cliente_grupo_membros.documento` (embed `membros(*)` em `useClienteGrupos`) e `v_grupo_contas_receber_por_doc`:
+  🧭 o founder decide quem vê o documento no contas a receber por grupo.
+- `cobranca_regua_hoje`: já filtra `gestão OR dona = uid`. Conferir se "dona da cobrança" basta como carteira.
+- `resolver_cliente_por_telefone`: oráculo telefone→cliente para qualquer staff (Codex P1 da 4a). Pode ser
+  exceção deliberada da telefonia; se for, registrar no contrato.
+- Edges `omie-cliente` (busca de staff e oráculo público) e `analyze-unified-order`.
+- Unicidade de documento mediada no servidor (oráculo do UPDATE do próprio perfil) e `cliente_por_documento`.
+- Flag de equipe que sobrevive ao desligamento.
+- Troca de contato principal em 2 requisições, não atômica (Codex P1, pré-existente; 0 linhas hoje).
