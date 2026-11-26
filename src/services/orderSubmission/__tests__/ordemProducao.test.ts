@@ -103,7 +103,8 @@ describe('falhasDaOrdemProducao (PR 8.4)', () => {
   });
 
   it('resposta sem confirmação reconhecível → aviso genérico, nunca calado (5ª e 6ª rodadas do Codex)', () => {
-    for (const corpo of [null, undefined, 'x', {}, { success: false }, { success: false, desfecho: [] }, { success: true, desfecho: [] }]) {
+    for (const corpo of [null, undefined, 'x', {}, { success: false }, { success: false, desfecho: [] }, { success: true, desfecho: [] },
+      { success: false, desfecho: [{ status: 'criada' }] }]) {
       const m = falhasDaOrdemProducao(corpo);
       expect(m).toHaveLength(1);
       expect(m[0]).toContain(NAO_CRIE);
