@@ -70,6 +70,8 @@ Na 1ª leitura da medição, a `carga_pendente` da saúde estava em **22 fixo**.
 
 Prova: S8 em `db/test-credito-sombra.sh`, mais as sabotagens F13 (view antiga) e F14 (erro contado como observado). A migration roda em toda rodada da suíte e é reaplicada no A1b. Resultado: **164 ok / 0 fail** em `C` e `pt_BR.UTF-8`, com as duas sabotagens vermelhas no S8.2 e a re-prova verde.
 
+Aplicada em 2026-11-26 pelo `db:aplicar` a partir da main (#4212 → `990b2364b`): **`db_aplicacoes` #1474 `aplicada`** às 15:48:50Z (sha256 `43be06c9…`), com ensaio verde antes. 2ª testemunha por psql-ro: `security_invoker=on`, ACL igual ao de antes (só SELECT para authenticated, service_role e claude_ro) e **`carga_pendente` 22 → 0**. A migration divide a versão `20261126130000` com `credito_policies_carteira_private` (PR 6), sem conflito: o ledger é por arquivo.
+
 ## Como reverter
 
 `SELECT cron.unschedule('credito-sombra-lote-10min');` para parar. Remover de vez: `DROP` das 6 tabelas, 2 views e 7 funções `credito_sombra_*` (os 2 índices podem ficar) (founder, SQL Editor). Nenhuma decisão de venda depende delas.
