@@ -122,6 +122,7 @@ K2=c0000000-0000-0000-0000-0000000000c2  # cobre O (vencida)
 G=9e000000-0000-0000-0000-000000000009   # gestor (employee + gerencial)
 M=3a000000-0000-0000-0000-000000000003   # master
 B=b0000000-0000-0000-0000-0000000000b0   # back-office sem carteira
+# shellcheck disable=SC2034  # persona do setup herdado da fatia 3 (seed de papéis); a 4a não a consulta
 X=e0000000-0000-0000-0000-0000000000e0   # ex-employee (sem papel)
 E=e1000000-0000-0000-0000-0000000000e1   # employee com profile pendente (nunca é "cliente")
 C1=10000000-0000-0000-0000-000000000001  # cliente da F (também é o customer self)
@@ -303,9 +304,6 @@ equipe() { como "$1" "SELECT coalesce(string_agg(user_id::text||':'||coalesce(em
 
 # linha de base com os corpos de PROD (antes): o que a 3a NÃO pode mudar
 BASE_FAT_F="$(fat $F)"; BASE_COMPR_SRV="$(compr como_srv)"; BASE_CACA_F="$(cacadoc $F $C3)"
-BASE_DIG_COMPR="$(dig_compr)"; BASE_DIG_CAND_F="$(dig_cand $F)"; BASE_DIG_CAND_B="$(dig_cand $B)"; BASE_DIG_GRUPO_F="$(dig_grupo $F)"
-BASE_DIG_LISTA_F="$(dig_lista $F prioridade)"; BASE_DIG_LISTA_B="$(dig_lista $B nome)"
-for _q in F O K G M B X C1; do printf -v "BASE_DIG_VPC_$_q" '%s' "$(dig_vpc "${!_q}")"; done
 echo "linha de base: fat(F)=$BASE_FAT_F compradores(service_role)=$BASE_COMPR_SRV caca(F,C3)=$BASE_CACA_F"
 [ "$BASE_FAT_F" = "200" ] || bad "L0 fixture: faturamento do grupo (C1+C3) não é 200 (veio $BASE_FAT_F) — a prova abaixo seria de graça"
 [ "${BASE_COMPR_SRV%%|*}" != "0" ] || bad "L0 fixture: service_role não vê compradores — o assert A1 seria de graça"
@@ -415,6 +413,7 @@ for _q in F B G M C1; do
   printf -v "BASE_SO_$_q" '%s' "$(dig_so "${!_q}")"
   printf -v "BASE_CCV_$_q" '%s' "$(dig_cc_view "${!_q}")"
 done
+# shellcheck disable=SC2153  # BASE_CCV_* nascem por printf -v no laço acima
 echo "linha de base 4a: metr(B)=$BASE_METR_B so(B)=$BASE_SO_B so(C1)=$BASE_SO_C1 ccv(F)=$BASE_CCV_F"
 [ "${BASE_METR_B##*:}" = "2" ] || bad "L0 fixture: back-office não vê as 2 métricas (veio $BASE_METR_B) — S7 seria de graça"
 [ "${BASE_METR_C1##*:}" = "0" ] || bad "L0 fixture: customer vê métrica (veio $BASE_METR_C1) — a view de prod não é esta"
