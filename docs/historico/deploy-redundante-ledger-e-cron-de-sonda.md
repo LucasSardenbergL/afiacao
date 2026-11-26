@@ -378,3 +378,25 @@ O que a soma **não** dá é a metade verbatim: ela segue exatamente onde o pilo
   1 vermelho, controle 2 verdes).
 - **Regra:** `request_id` do pg_net é chave só **dentro da janela do disparo** — todo JOIN por ele contra
   histórico precisa do corte temporal.
+
+## `request_id` reciclado — o lado do ESCRITOR: disparo pulado em silêncio (2026-11-26)
+
+**Sintoma (latente, pego no pré-voo de um disparo manual):** `deploy_sonda_disparos` tinha PK só em
+`request_id`, e o dispatcher gravava a atribuição com `WHERE NOT EXISTS (… request_id = v_req)`. Com o
+pg_net reiniciando a sequência, todo disparo cujo id já existisse num disparo antigo **saía** (o post é
+feito) e **não era registrado** — a função ainda devolvia a linha. Às 21:30Z o contador estava em ~1629
+e havia 284 disparos antigos com id entre 1672 e 3000: o ciclo seguinte do cron cegaria a sonda por cron
+(o ledger para de atestar → `pendencias:deploy` acusa → o vigia RETÉM o Publish).
+
+**2º defeito, mesma família:** o pg_net retém respostas ~6 h e o coletor `deploy_sonda_resultados_colher`
+reprocessa 48 h; resposta purgada chegava como NULL e o `ON CONFLICT DO UPDATE` **rebaixava** o resultado
+já colhido (346/383 dos resultados de 48 h estavam NULL).
+
+**Correção:** migration `20261126220000_deploy_sonda_request_id_reciclado.sql` — PK `(request_id, tick_id)`
+nas duas tabelas; INSERT sem o filtro (colisão de `(request_id, tick_id)` é impossível — se ocorrer, falha
+ALTO); o coletor casa a resposta com o disparo MAIS RECENTE daquele id enfileirado até o `created` e nunca
+rebaixa para NULL. Prova: `db/test-deploy-sonda-request-id-reciclado.sh` (12 asserts sobre as migrations de
+base reais; `--falsificar`: controle verde + 5 sabotagens, todas vermelhas).
+
+**Regra:** id de `net._http_response` **não é identidade** — nem em leitor (#4207) nem em escritor. Chave
+de disparo = id **+** algo que só aquele disparo tem (`tick_id`), e casamento com resposta exige tempo.
