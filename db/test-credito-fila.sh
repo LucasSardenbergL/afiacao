@@ -159,7 +159,7 @@ python3 - "$MIG" "$REPO_ROOT/supabase/functions/credito-fila-recomendar/recomend
 import re, sys
 sql = open(sys.argv[1], encoding="utf-8").read(); ts = open(sys.argv[2], encoding="utf-8").read()
 a = sorted(re.findall(r"'([a-z_]+)'", re.search(r"CHECK \(codigos <@ ARRAY\[([\s\S]*?)\]::text\[\]\)", sql).group(1)))
-b = sorted(re.findall(r'"([a-z_]+)"', re.search(r"export const CODIGOS = \[([\s\S]*?)\] as const", ts).group(1)))
+b = sorted(re.findall(r'"([a-z_]+)"', re.search(r"const CODIGOS = \[([\s\S]*?)\] as const", ts).group(1)))
 assert a == b and len(a) >= 10, (a, b)
 print(f"espelho CODIGOS edge × CHECK: {len(a)} iguais")
 PY2

@@ -7,18 +7,18 @@
 
 export const VERSAO_PROMPT = "fila-v1";
 
-export const RECOMENDACOES = ["aprovar", "recusar", "sem_recomendacao"] as const;
-export type Recomendacao = (typeof RECOMENDACOES)[number];
+const RECOMENDACOES = ["aprovar", "recusar", "sem_recomendacao"] as const;
+type Recomendacao = (typeof RECOMENDACOES)[number];
 
 // Espelho do CHECK de credito_fila_recomendacao.codigos — mudou lá, muda aqui.
-export const CODIGOS = [
+const CODIGOS = [
   "dentro_historico", "estouro_pequeno", "estouro_grande", "prazo_acima_historico", "prazo_desconhecido",
   "risco_alto", "sem_historico", "exposicao_alta", "pagador_pontual", "atraso_recente",
   "limite_desatualizado", "sem_limite", "limite_mudou",
 ] as const;
 
 // Degraus de prazo da spec §9 (builder-check).
-export const DEGRAUS_PRAZO = [7, 14, 21, 28, 35, 42, 56, 63, 70, 84, 90, 120] as const;
+const DEGRAUS_PRAZO = [7, 14, 21, 28, 35, 42, 56, 63, 70, 84, 90, 120] as const;
 
 const CHAVES_ENUM = new Set(["company", "modo", "faixa", "motivo", "risco"]);
 const ENUM_RE = /^[a-z0-9_]{1,40}$/;
@@ -77,7 +77,7 @@ export const TOOL = {
   },
 } as const;
 
-export interface SaidaValida {
+interface SaidaValida {
   recomendacao: Recomendacao;
   prazo_sugerido_dias: number | null;
   confianca: number | null;

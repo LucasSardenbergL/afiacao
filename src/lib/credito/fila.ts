@@ -2,8 +2,8 @@
 // Banco: supabase/migrations/20261125230000_credito_fila_enforcement_dormente.sql (view credito_fila_v).
 // Ausente ≠ zero: número que o banco não mediu chega como null e é exibido como "—", nunca "R$ 0".
 
-export type OrigemFila = 'efetivo' | 'sombra';
-export type StatusFila = 'aberta' | 'congelada' | 'superada' | 'simulada' | 'autorizada' | 'recusada' | 'cancelada';
+type OrigemFila = 'efetivo' | 'sombra';
+type StatusFila = 'aberta' | 'congelada' | 'superada' | 'simulada' | 'autorizada' | 'recusada' | 'cancelada';
 export type Empresa = 'oben' | 'colacor' | 'colacor_sc';
 
 export interface ItemFila {
@@ -95,7 +95,7 @@ export function usoPosPedido(i: Pick<ItemFila, 'limite_brl' | 'exposicao_titulos
   return (i.exposicao_titulos_brl + i.exposicao_reservas_brl + i.valor_brl) / i.limite_brl;
 }
 
-export const SLA_HORAS = 2;
+const SLA_HORAS = 2;
 
 /** Horas na fila (inteiras para baixo). */
 export function horasNaFila(criadoEm: string, agora: Date = new Date()): number {
@@ -142,7 +142,7 @@ export function motivoValido(m: string): boolean {
   return m.trim().length >= 3;
 }
 
-export interface CondicaoProntidao {
+interface CondicaoProntidao {
   chave: string;
   ok: boolean;
   criterio: string;
