@@ -1,0 +1,5 @@
+# Espelho das OS do Omie da Colacor SC (20261126233000, crédito-IA PR 7 opção C, fatia 1): RPCs abrir/gravar/fechar
+# só service_role sob lock por empresa; o BANCO decide a integridade (staging = distintas = total declarado); só o
+# run íntegro promove a geração; sumiço só na 2ª varredura íntegra com a 1ª data preservada; reaparecer zera; fechar
+# repetido é no-op; ausente ≠ zero (tipo jsonb errado → NULL); view com faturada/cancelada IS FALSE; elo normalizado.
+db/test-omie-os-sync.sh 40  falsificar=13

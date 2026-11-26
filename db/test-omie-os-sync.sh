@@ -36,7 +36,7 @@ MEDIR="$REPO_ROOT/db/medir-omie-os.sql"
 # no controle e virou vermelho. Uma camada por vez.
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="uma_integra_basta:U2 nao_integra_conta:U3 primeira_data_sobrescrita:U4 reaparecer_nao_zera:U5
+  SABOTAGENS="uma_integra_basta:U1 nao_integra_conta:U3 primeira_data_sobrescrita:U4 reaparecer_nao_zera:U5
               staging_diferente_passa:F3 erro_passa:F4 fechar_repetido_conta:F6 view_null_blind:V1
               normaliza_sem_zeros:E1 campo_nulo_vira_zero:N1 gravar_sem_rodando:G1 abrir_concorrente:R2
               staging_legivel:S1"
@@ -115,9 +115,12 @@ trap cleanup EXIT
 "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone='UTC';" >/dev/null
 P()  { "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA -q "$@"; }
+# C: passo de cenário (ciclo do sync). Falha NÃO aborta a suíte: o assert seguinte acusa (o CHECK da tabela é
+# uma 2ª camada; sem isto, a sabotagem de uma camada viraria "vermelho de aborto" e não julgaria o assert)
+C()  { P -q -c "$1" >/dev/null 2>&1 || echo "  (passo falhou: ${1:0:80})"; }
 # E: valor de uma consulta; erro vira o texto "ERRO:<sqlstate>" (o assert decide), nunca aborta a suíte
 E()  { local out; if out="$(P -tA -q -v VERBOSITY=verbose -c "$1" 2>&1)"; then printf '%s' "$out";
-       else printf 'ERRO:%s' "$(grep -Eo 'ERROR:  [0-9A-Z]{5}' <<<"$out" | head -1 | awk '{print $2}')"; fi; }
+       else printf 'ERRO:%s' "$(grep -Eo '(ERROR|ERRO):  [0-9A-Z]{5}' <<<"$out" | head -1 | awk '{print $2}')"; fi; }
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -263,11 +266,11 @@ eq "A5 claude_ro lê a view e o espelho" "$(E "SELECT has_table_privilege('claud
 eq "A6 cron :53 com {action:sync}, Vault e timeout" "$(E "SELECT count(*) FROM cron.job WHERE jobname='omie-os-sync-1h' AND schedule='53 * * * *' AND command LIKE '%{\"action\":\"sync\"}%' AND command LIKE '%timeout_milliseconds:=150000%' AND command LIKE '%vault.decrypted_secrets%'")" "1"
 
 echo "── R. runs"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))"
 R1="$(E "SET ROLE service_role; SELECT omie_os_sync_abrir('colacor_sc')")"
 eq "R1 service_role abre run" "$( [[ "$R1" =~ ^[0-9]+$ ]] && echo num || echo "$R1")" "num"
 eq "R2 2º run concorrente recusado" "$(E "SET ROLE service_role; SELECT omie_os_sync_abrir('colacor_sc')")" "ERRO:55P03"
-P -q -c "SET ROLE service_role; SELECT omie_os_sync_gravar($R1, jsonb_build_array(t_linha(9,'9',9)))" >/dev/null
+C "SET ROLE service_role; SELECT omie_os_sync_gravar($R1, jsonb_build_array(t_linha(9,'9',9)))"
 P -q -c "UPDATE omie_os_sync_runs SET iniciado_em = now() - interval '20 minutes' WHERE id = $R1" >/dev/null
 R3="$(E "SET ROLE service_role; SELECT omie_os_sync_abrir('colacor_sc')")"
 eq "R3 rodando velho vira erro e o staging dele some" \
@@ -279,49 +282,49 @@ eq "G1 gravar em run fechado é recusado" "$(E "SET ROLE service_role; SELECT om
 eq "G2 n_cod_os ausente/zero/texto recusado" \
   "$(E "SET ROLE service_role; SELECT omie_os_sync_gravar($R3, '[{\"payload\":{}}]')")/$(E "SET ROLE service_role; SELECT omie_os_sync_gravar($R3, '[{\"n_cod_os\":0,\"payload\":{}}]')")/$(E "SET ROLE service_role; SELECT omie_os_sync_gravar($R3, '[{\"n_cod_os\":\"5\",\"payload\":{}}]')")" \
   "ERRO:22023/ERRO:22023/ERRO:22023"
-P -q -c "SET ROLE service_role; SELECT omie_os_sync_gravar($R3, jsonb_build_array(t_linha(5,'5',5)))" >/dev/null
+C "SET ROLE service_role; SELECT omie_os_sync_gravar($R3, jsonb_build_array(t_linha(5,'5',5)))"
 eq "G3 n_cod_os repetido no run = erro" "$(E "SET ROLE service_role; SELECT omie_os_sync_gravar($R3, jsonb_build_array(t_linha(5,'5',5)))")" "ERRO:23505"
-P -q -c "SET ROLE service_role; SELECT omie_os_sync_fechar($R3, '{\"integra\":false}', 'teste')" >/dev/null
+C "SET ROLE service_role; SELECT omie_os_sync_fechar($R3, '{\"integra\":false}', 'teste')"
 
 echo "── F. fechar"
 eq "F1 run íntegro promove ao espelho" "$(E "SELECT count(*) FROM omie_os_espelho")" "2"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77), t_linha(3,'3',3)), false)" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77), t_linha(3,'3',3)), false)"
 eq "F2 edge diz não íntegro: espelho intacto (valor, contagem, ausência)" \
   "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT count(*) FROM omie_os_espelho) || '/' || (SELECT sum(ausencias_integras) FROM omie_os_espelho)")" "100/2/0"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, NULL, 3, 3)" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, NULL, 3, 3)"
 eq "F3 staging ≠ total declarado (a edge afirma 3 = 3): não íntegro pelo banco" "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT integra FROM omie_os_sync_runs ORDER BY id DESC LIMIT 1)")" "100/false"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, 'Omie caiu')" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)), true, 'Omie caiu')"
 eq "F4 run com erro: não íntegro, status erro" "$(E "SELECT (SELECT valor_total FROM omie_os_espelho WHERE n_cod_os=1)::int || '/' || (SELECT status || ':' || integra FROM omie_os_sync_runs ORDER BY id DESC LIMIT 1)")" "100/erro:false"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"valor_total\":555}'), t_linha(2,'0462',77)))"
 eq "F5 íntegro atualiza o valor" "$(E "SELECT valor_total::int FROM omie_os_espelho WHERE n_cod_os=1")" "555"
 
 echo "── U. sumiço (2 varreduras íntegras, 1ª data preservada)"
 # run U1: só a OS 1 aparece → OS 2 ganha a 1ª ausência
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666)))"
 INI_U1="$(E "SELECT iniciado_em FROM omie_os_sync_runs ORDER BY id DESC LIMIT 1")"
 eq "U1 1ª ausência: contada, ainda NÃO ausente" "$(E "SELECT ausencias_integras || '/' || (ausente_desde IS NULL) || '/' || (primeira_ausencia_em = '$INI_U1'::timestamptz) FROM omie_os_espelho WHERE n_cod_os=2")" "1/true/true"
 eq "U2 uma varredura íntegra não basta para sumir (a OS segue aberta na view)" "$(E "SELECT count(*) FROM omie_os_abertas_v WHERE n_cod_os=2")" "1"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666)), false)" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666)), false)"
 eq "U3 varredura NÃO íntegra não conta ausência" "$(E "SELECT ausencias_integras FROM omie_os_espelho WHERE n_cod_os=2")" "1"
 P -q -c "SELECT pg_sleep(0.05)" >/dev/null
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666)))"
 eq "U4 2ª íntegra confirma, com a 1ª data de ausência" "$(E "SELECT ausencias_integras || '/' || (ausente_desde = '$INI_U1'::timestamptz) || '/' || (SELECT count(*) FROM omie_os_abertas_v WHERE n_cod_os=2) FROM omie_os_espelho WHERE n_cod_os=2")" "2/true/0"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))"
 eq "U5 reapareceu: ausência zerada" "$(E "SELECT ausencias_integras || '/' || (ausente_desde IS NULL) || '/' || (primeira_ausencia_em IS NULL) FROM omie_os_espelho WHERE n_cod_os=2")" "0/true/true"
 eq "U6 nenhuma linha apagada do espelho" "$(E "SELECT count(*) FROM omie_os_espelho")" "2"
 
 echo "── F6. fechar repetido não conta 2ª ausência"
 F6RUN="$(E "SET ROLE service_role; SELECT omie_os_sync_abrir('colacor_sc')")"
-P -q -c "SET ROLE service_role; SELECT omie_os_sync_gravar($F6RUN, jsonb_build_array(t_linha(1,'461',3545104666)))" >/dev/null
-P -q -c "SET ROLE service_role; SELECT omie_os_sync_fechar($F6RUN, '{\"integra\":true,\"distintas\":1,\"total_registros_declarado\":1}', NULL)" >/dev/null
+C "SET ROLE service_role; SELECT omie_os_sync_gravar($F6RUN, jsonb_build_array(t_linha(1,'461',3545104666)))"
+C "SET ROLE service_role; SELECT omie_os_sync_fechar($F6RUN, '{\"integra\":true,\"distintas\":1,\"total_registros_declarado\":1}', NULL)"
 F6B="$(E "SET ROLE service_role; SELECT omie_os_sync_fechar($F6RUN, '{\"integra\":true,\"distintas\":0,\"total_registros_declarado\":0}', NULL) ->> 'status'")"
 eq "F6 2º fechar do mesmo run = no-op; OS 2 com 1 ausência só" "$F6B/$(E "SELECT ausencias_integras FROM omie_os_espelho WHERE n_cod_os=2")" "ja_fechado/1"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77)))"
 
 echo "── N. ausente ≠ zero"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77),
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77),
   t_linha(10,'10',10, '{\"valor_total\":null,\"prazo_max_dias\":null,\"n_cod_cli\":\"\",\"faturada\":null,\"data_inclusao\":\"31/02/2026\",\"data_alteracao\":null}'),
-  t_linha(11,'11',11, '{\"valor_total\":\"\",\"prazo_max_dias\":\"30\",\"cancelada\":\"N\"}')))" >/dev/null
+  t_linha(11,'11',11, '{\"valor_total\":\"\",\"prazo_max_dias\":\"30\",\"cancelada\":\"N\"}')))"
 eq "N1 valor nulo/vazio vira NULL, não 0" "$(E "SELECT coalesce(string_agg(coalesce(valor_total::text,'NULL'), ',' ORDER BY n_cod_os), '') FROM omie_os_espelho WHERE n_cod_os IN (10,11)")" "NULL,NULL"
 eq "N2 prazo nulo/texto vira NULL" "$(E "SELECT count(*) FROM omie_os_espelho WHERE n_cod_os IN (10,11) AND prazo_max_dias IS NULL")" "2"
 eq "N3 cliente texto vira NULL" "$(E "SELECT n_cod_cli IS NULL FROM omie_os_espelho WHERE n_cod_os=10")" "t"
@@ -331,9 +334,9 @@ eq "N5 data fora do formato vira NULL" "$(E "SELECT data_inclusao IS NULL FROM o
 echo "── V. view das abertas"
 eq "V1 flag NULL não é aberta (só faturada IS FALSE AND cancelada IS FALSE)" "$(E "SELECT count(*) FROM omie_os_abertas_v WHERE n_cod_os IN (10,11)")" "0"
 eq "V2 idade e dias sem movimento (dias corridos de Brasília)" "$(E "SELECT idade_dias || '/' || dias_sem_movimento FROM omie_os_abertas_v WHERE n_cod_os=1")" "10/4"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77), t_linha(12,'12',12, '{\"data_inclusao\":null,\"data_alteracao\":null}')))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666), t_linha(2,'0462',77), t_linha(12,'12',12, '{\"data_inclusao\":null,\"data_alteracao\":null}')))"
 eq "V3 sem data: idade e parada NULL (indeterminado)" "$(E "SELECT (idade_dias IS NULL) || '/' || (dias_sem_movimento IS NULL) FROM omie_os_abertas_v WHERE n_cod_os=12")" "true/true"
-P -q -c "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"faturada\":true}'), t_linha(2,'0462',77, '{\"cancelada\":true}'), t_linha(12,'12',12)))" >/dev/null
+C "SET ROLE service_role; SELECT t_ciclo(jsonb_build_array(t_linha(1,'461',3545104666, '{\"faturada\":true}'), t_linha(2,'0462',77, '{\"cancelada\":true}'), t_linha(12,'12',12)))"
 eq "V4 faturada e cancelada saem da view" "$(E "SELECT count(*) FROM omie_os_abertas_v WHERE n_cod_os IN (1,2)")" "0"
 eq "V5 RLS: quem vê a SC lê; quem não vê lê 0; staging fechado" \
   "$(E "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000aa'; SELECT count(*) FROM omie_os_abertas_v")/$(E "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT count(*) FROM omie_os_espelho")/$(E "SET ROLE authenticated; SELECT count(*) FROM omie_os_staging")" \
