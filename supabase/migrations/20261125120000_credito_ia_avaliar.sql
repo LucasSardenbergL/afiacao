@@ -21,6 +21,8 @@
 --     GRUPO; data_recebimento do CR é NULL em 100%.
 --   * piso = mesma régua do gate (vencimento <= hoje_SP − 60, PAGTO PARCIAL conta, saldo/vencimento
 --     NULL = indeterminado) — 20261124170000.
+-- Escopo declarado: o cliente COMPROVADAMENTE NOVO (0 título) não está na carteira ativa (que exige
+-- título) — o ramo existe na ficha, mas quem o alcança é o 1º pedido (gate do PR 5/6), não esta leva.
 -- Escopo declarado: a reavaliação semanal só roda para grupo SEM limite vigente (os vigentes são a
 -- varredura da sombra do PR 5 — sem isso a fila do Lucas receberia a carteira inteira toda semana).
 --
@@ -80,10 +82,11 @@ BEGIN
       EXECUTE format('REVOKE SELECT ON public.credito_avaliacao FROM %s', r.papel);
     END IF;
   END LOOP;
-  GRANT SELECT ON public.credito_avaliacao TO authenticated, service_role;
+  -- leitura só pelas RPCs (credito_avaliacao_progresso): em prod authenticated NÃO tem EXECUTE no
+  -- helper pode_ver_carteira_completa, então uma policy nele negaria até o gestor (Codex diff P2-8).
+  REVOKE SELECT ON public.credito_avaliacao FROM authenticated;
+  GRANT SELECT ON public.credito_avaliacao TO service_role;
   DROP POLICY IF EXISTS credito_avaliacao_select_gestor ON public.credito_avaliacao;
-  CREATE POLICY credito_avaliacao_select_gestor ON public.credito_avaliacao FOR SELECT TO authenticated
-    USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));
 END
 $rls$;
 
@@ -108,7 +111,10 @@ AS $$
            -- mesma régua do piso (20261124170000): >= 60 d, PAGTO PARCIAL conta com saldo cheio
            (f.data_vencimento <= h.d - 60 AND (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL')) AS v60,
            (f.data_vencimento <= h.d - 15 AND (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL')) AS v15,
-           (f.saldo IS NULL OR f.data_vencimento IS NULL) AS indet
+           (f.saldo IS NULL OR f.data_vencimento IS NULL) AS indet,
+           -- valor desconhecido: saldo NULL, ou PAGTO PARCIAL com saldo <= 0 (o status prova resíduo
+           -- que o espelho do saldo não mostra) — vira NULL, nunca R$ 0 (Codex diff P1-5)
+           (f.saldo IS NULL OR (f.status_titulo = 'PAGTO PARCIAL' AND f.saldo <= 0)) AS valor_indet
       FROM pares p
       JOIN public.fin_contas_receber f ON f.company = p.company AND f.omie_codigo_cliente = p.codigo
       CROSS JOIN hoje h
@@ -119,13 +125,13 @@ AS $$
                         WHEN COALESCE(bool_or(indet), false) THEN 'indeterminado'
                         ELSE 'livre' END,
     'n_titulos_vencidos_60d', count(*) FILTER (WHERE v60),
-    'vencido_60d_brl', CASE WHEN COALESCE(bool_or(v60 AND saldo IS NULL), false) THEN NULL
+    'vencido_60d_brl', CASE WHEN COALESCE(bool_or(v60 AND valor_indet), false) THEN NULL
                             ELSE COALESCE(sum(saldo) FILTER (WHERE v60), 0) END,
     'n_titulos_vencidos_15d', count(*) FILTER (WHERE v15),
-    'vencido_15d_brl', CASE WHEN COALESCE(bool_or(v15 AND saldo IS NULL), false) THEN NULL
+    'vencido_15d_brl', CASE WHEN COALESCE(bool_or(v15 AND valor_indet), false) THEN NULL
                             ELSE COALESCE(sum(saldo) FILTER (WHERE v15), 0) END,
     'n_titulos_abertos', count(*),
-    'em_aberto_brl', CASE WHEN COALESCE(bool_or(saldo IS NULL), false) THEN NULL
+    'em_aberto_brl', CASE WHEN COALESCE(bool_or(valor_indet), false) THEN NULL
                           ELSE COALESCE(sum(saldo) FILTER (WHERE saldo > 0), 0) END
   )
   FROM ab;
@@ -176,6 +182,8 @@ DECLARE
   v_honrado integer;
   v_sem_baixa integer;
   v_doc text;
+  v_d text;
+  v_cands text[];
   v_vig text;
   v_sit text;
   v_cad text;
@@ -287,22 +295,33 @@ BEGIN
    WHERE f.status_titulo = 'RECEBIDO'
      AND NOT EXISTS (SELECT 1 FROM public.v_titulo_baixas b
                       WHERE b.company = f.company AND b.omie_codigo_lancamento = f.omie_codigo_lancamento
-                        AND b.tipo = 'CR' AND b.data_baixa_final IS NOT NULL);
+                        AND b.tipo = 'CR' AND b.origem_baixa = 'titulo' AND b.data_baixa_final IS NOT NULL);
 
   -- situação cadastral da raiz (lote PUBLICADO do Radar; ausência é ausência, não "ativa")
+  -- espelho de cliente_situacao_receita (20261030000642): lote PUBLICADO = situação aplicada no
+  -- fechamento VIGENTE (reprocessamento troca finalizado_em); CNPJ só-dígitos ∪ alfanumérico.
   SELECT p.document INTO v_doc FROM public.profiles p WHERE p.user_id = p_raiz LIMIT 1;
-  v_doc := regexp_replace(COALESCE(v_doc, ''), '[^0-9]', '', 'g');
   SELECT max(i.mes_referencia) INTO v_vig FROM public.radar_ingest_state i
-   WHERE i.status = 'complete' AND i.situacao_aplicada_em IS NOT NULL;
-  IF v_doc = '' THEN
+   WHERE i.status = 'complete'
+     AND i.situacao_aplicada_fechamento IS NOT NULL
+     AND i.situacao_aplicada_fechamento = i.finalizado_em;
+  v_d := btrim(upper(COALESCE(v_doc, '')));
+  SELECT array_agg(DISTINCT c) INTO v_cands
+    FROM (SELECT regexp_replace(COALESCE(v_doc, ''), '[^0-9]', '', 'g') AS c
+          UNION ALL
+          SELECT regexp_replace(v_d, '[-./]', '', 'g')
+           WHERE v_d ~ '^[0-9A-Z]{12}[0-9]{2}$'
+              OR v_d ~ '^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}/[0-9A-Z]{4}-[0-9]{2}$') x
+   WHERE c ~ '^[0-9A-Z]{12}[0-9]{2}$';
+  IF v_d = '' THEN
     v_cad := 'sem_documento';
-  ELSIF length(v_doc) <> 14 THEN
+  ELSIF v_cands IS NULL THEN
     v_cad := 'sem_cnpj';
   ELSIF v_vig IS NULL THEN
     v_cad := 'sem_dado';
   ELSE
     SELECT s.situacao INTO v_sit FROM public.radar_situacao_cadastral s
-     WHERE s.cnpj = v_doc AND s.lote <= v_vig ORDER BY s.lote DESC LIMIT 1;
+     WHERE s.cnpj = ANY (v_cands) AND s.lote <= v_vig ORDER BY s.lote DESC, s.cnpj LIMIT 1;
     v_cad := CASE WHEN v_sit IS NULL THEN 'sem_dado'
                   WHEN v_sit IN ('03','04','08') THEN 'irregular'
                   WHEN v_sit = '02' THEN 'ativa'
@@ -479,7 +498,7 @@ DECLARE
   v_prazo integer;
   v_risco text;
   v_em timestamptz;
-  v_s jsonb;
+  v_fr jsonb;
   v_old uuid;
   v_id uuid;
 BEGIN
@@ -518,15 +537,19 @@ BEGIN
   IF v_em IS NULL OR v_em < now() - interval '30 minutes' OR v_em > now() + interval '5 minutes' THEN
     RAISE EXCEPTION 'credito_registrar_avaliacao: ficha fora da janela de 30 min' USING ERRCODE = 'P0001';
   END IF;
-  IF (v_f ->> 'limite_versao_base') IS DISTINCT FROM
-     (SELECT l.versao::text FROM public.credito_limite l WHERE l.grupo_user_id = p_raiz) THEN
-    RAISE EXCEPTION 'credito_registrar_avaliacao: limite vigente mudou desde a ficha' USING ERRCODE = 'P0001';
+  -- escopo do PR 4 = grupo SEM vigente (o vigente é da sombra do PR 5). Cobre também a corrida
+  -- "o Lucas aprovou a pendente anterior enquanto esta raiz estava reivindicada" (Codex diff P2-7).
+  IF EXISTS (SELECT 1 FROM public.credito_limite l WHERE l.grupo_user_id = p_raiz) THEN
+    RAISE EXCEPTION 'credito_registrar_avaliacao: grupo_com_limite_vigente' USING ERRCODE = 'P0001';
   END IF;
-  -- a deterioração que aconteceu entre a ficha e a gravação também barra
-  v_s := private.credito_sinais_grupo(p_raiz);
-  IF (v_s ->> 'piso_estado') IS DISTINCT FROM (v_f ->> 'piso_estado')
-     OR (v_s ->> 'n_titulos_vencidos_15d')::integer > COALESCE((v_f ->> 'n_titulos_vencidos_15d')::integer, -1) THEN
-    RAISE EXCEPTION 'credito_registrar_avaliacao: ficha_superada (deterioração desde a ficha)' USING ERRCODE = 'P0001';
+  -- a ficha enviada é conferida contra a RECALCULADA agora: tetos, piso, estado, evidência e risco
+  -- forçado têm de bater, e nenhum vencido > 15 d novo (Codex diff P1-1 — a assinatura só cobre os pares)
+  v_fr := public.credito_ficha(p_raiz);
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['piso_estado','estado_historico','teto_limite_brl','teto_prazo_dias',
+                                        'risco_forcado','evidencia_suficiente']) k
+              WHERE (v_fr -> k) IS DISTINCT FROM (v_f -> k))
+     OR (v_fr ->> 'n_titulos_vencidos_15d')::integer > COALESCE((v_f ->> 'n_titulos_vencidos_15d')::integer, -1) THEN
+    RAISE EXCEPTION 'credito_registrar_avaliacao: ficha_superada (a ficha enviada difere da recalculada)' USING ERRCODE = 'P0001';
   END IF;
 
   v_lim := (p_proposta ->> 'limite_brl')::numeric;
@@ -590,7 +613,7 @@ DECLARE
   v_p public.credito_limite_proposta%ROWTYPE;
   v_versao_atual integer;
   v_nova integer;
-  v_s jsonb;
+  v_fr jsonb;
 BEGIN
   IF NOT (COALESCE(private.cap_credito_escrever(v_uid), false)
           AND EXISTS (SELECT 1 FROM public.credito_aprovador a WHERE a.user_id = v_uid)) THEN
@@ -627,10 +650,16 @@ BEGIN
                     IS DISTINCT FROM v_p.grupo_user_id::text) THEN
     RAISE EXCEPTION 'credito_aprovar_proposta: grupo_mudou (titularidade de um par)' USING ERRCODE = 'P0001';
   END IF;
-  v_s := private.credito_sinais_grupo(v_p.grupo_user_id);
-  IF ((v_p.ficha ->> 'piso_estado') = 'livre' AND (v_s ->> 'piso_estado') <> 'livre')
-     OR (v_p.ficha ->> 'piso_estado') IS NULL
-     OR (v_s ->> 'n_titulos_vencidos_15d')::integer > COALESCE((v_p.ficha ->> 'n_titulos_vencidos_15d')::integer, -1) THEN
+  -- a ficha de HOJE manda: o teto cai quando venda sai da janela, o piso zera o teto, o cadastro
+  -- irregular força o risco (Codex diff P1-2). Teto ausente = 0 (lado seguro).
+  v_fr := public.credito_ficha(v_p.grupo_user_id);
+  IF v_p.limite_sugerido_brl > COALESCE((v_fr ->> 'teto_limite_brl')::numeric, 0)
+     OR v_p.prazo_max_dias > COALESCE((v_fr ->> 'teto_prazo_dias')::integer, 0)
+     OR ((v_fr ->> 'risco_forcado') IS NOT NULL AND v_p.risco IS DISTINCT FROM (v_fr ->> 'risco_forcado')) THEN
+    RAISE EXCEPTION 'credito_aprovar_proposta: ficha_superada (teto ou risco de hoje abaixo da proposta)' USING ERRCODE = 'P0001';
+  END IF;
+  IF (v_p.ficha ->> 'n_titulos_vencidos_15d') IS NULL
+     OR (v_fr ->> 'n_titulos_vencidos_15d')::integer > (v_p.ficha ->> 'n_titulos_vencidos_15d')::integer THEN
     RAISE EXCEPTION 'credito_aprovar_proposta: ficha_superada (o grupo piorou desde a ficha)' USING ERRCODE = 'P0001';
   END IF;
 

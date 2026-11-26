@@ -128,7 +128,8 @@ CREATE TABLE public.v_titulo_baixas (company text, omie_codigo_lancamento bigint
                                      data_baixa_final date, origem_baixa text);
 CREATE TABLE public.sync_state (account text, entity_type text, last_sync_at timestamptz);
 CREATE TABLE public.profiles (user_id uuid, name text, razao_social text, document text);
-CREATE TABLE public.radar_ingest_state (mes_referencia text, status text, situacao_aplicada_em timestamptz);
+CREATE TABLE public.radar_ingest_state (mes_referencia text, status text, situacao_aplicada_em timestamptz,
+                                        situacao_aplicada_fechamento timestamptz, finalizado_em timestamptz);
 CREATE TABLE public.radar_situacao_cadastral (cnpj text, lote text, situacao text);
 CREATE OR REPLACE FUNCTION cron.schedule(p_nome text, p_sched text, p_cmd text) RETURNS bigint
 LANGUAGE plpgsql AS $f$
@@ -191,10 +192,14 @@ INSERT INTO public.customer_canonical_alias VALUES ('$A1','$C','active');
 INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES
   ('$C','oben',101), ('$A1','colacor_sc',202), ('$D','oben',501), ('$F','oben',701);
 INSERT INTO public.profiles VALUES ('$C','SENTINELA_NOME_PROFILE','SENTINELA_RAZAO','12345678000190'),
-                                   ('$F','Cliente F',NULL,'98765432000110');
-INSERT INTO public.radar_ingest_state VALUES ('2026-10','complete',now());
+                                   ('$F','Cliente F',NULL,'98765432000110'),
+                                   ('$D','Cliente D',NULL,'12.ABC.345/01DE-35');  -- CNPJ alfanumérico
+INSERT INTO public.radar_ingest_state VALUES ('2026-10','complete',now(),'2026-11-01','2026-11-01'),
+  -- 2026-12 REPROCESSADO: situação aplicada no fechamento ANTERIOR (≠ finalizado_em) ⇒ não publicado
+  ('2026-12','complete',now(),'2026-12-01','2026-12-05');
 INSERT INTO public.radar_situacao_cadastral VALUES ('12345678000190','2026-10','02'), ('98765432000110','2026-10','08'),
-                                                   ('98765432000110','2026-12','02');  -- lote em carga: não lido
+                                                   ('98765432000110','2026-12','02'),  -- lote não publicado: não lido
+                                                   ('12ABC34501DE35','2026-10','04');
 
 CREATE FUNCTION public.t_forca(p_sql text) RETURNS void LANGUAGE plpgsql SET session_replication_role = replica AS \$f\$
 BEGIN EXECUTE p_sql; END \$f\$;
@@ -316,6 +321,16 @@ check_pagamento() {
   eq "F9 p80 sobre as parcelas do grupo (média dos p80 dos pares daria 16)" "$(fx $C atraso_p80_dias)" "2.0"
   eq "F9 %% do valor atrasado por soma de valores" "$(fx $C pct_valor_atrasado)" "0.1429"
   eq "F9 maior prazo honrado ignora o atrasado" "$(fx $C maior_prazo_honrado_dias)" "20"
+  eq "F9b recebido só com baixa conta_corrente conta como SEM baixa" "$(fx $C n_recebidos_sem_baixa)" "1"
+}
+check_pagto_parcial_zero() {
+  base_c; tit oben 101 80 'PAGTO PARCIAL' 40 20 500 0
+  eq "F11 PAGTO PARCIAL com saldo 0 ⇒ exposição desconhecida (não R\$ 0)" "$(fx $C em_aberto_brl)/$(fx $C vencido_15d_brl)" "/"
+  eq "F11 ⇒ sem evidência" "$(fx $C evidencia_suficiente)" "false"
+}
+check_cnpj_alfanumerico() {
+  reset
+  eq "F12 CNPJ alfanumérico irregular é lido (não vira sem_cnpj)" "$(fx $D situacao_cadastral)" "irregular"
 }
 check_injection() {
   base_c
@@ -383,6 +398,18 @@ check_superada_no_registro() {
   tit oben 101 70 ATRASADO 40 20 100 100
   tem "R5c vencido > 15 d surgido entre a ficha e a gravação barra" "$(q "SELECT public.t_trym(\$x\$SELECT public.t_registra('$T1', '$C', 3300, 21, 'baixo', (SELECT f FROM public.t_f))\$x\$);")" "ficha_superada"
 }
+check_ficha_adulterada() {
+  base_c; q "SELECT public.t_claim(5, '$T1');" >/dev/null
+  tit oben 101 63 'A VENCER' 3 -20 400 N     # piso REAL indeterminado (teto 0), sem vencido > 15 d
+  tem "R5d ficha adulterada (piso livre, teto 3.300, sem risco forçado) não passa" \
+      "$(q "SELECT public.t_trym(\$x\$SELECT public.t_registra('$T1', '$C', 3300, 21, 'baixo', public.credito_ficha('$C') || '{\"piso_estado\":\"livre\",\"teto_limite_brl\":3300,\"teto_prazo_dias\":21,\"risco_forcado\":null,\"evidencia_suficiente\":true}'::jsonb)\$x\$);")" "ficha_superada (a ficha enviada difere"
+}
+check_vigente_writer() {
+  base_c; P_ID=$(pend_c); lucas "SELECT public.credito_aprovar_proposta('$P_ID')" >/dev/null
+  q "SELECT public.t_forca(\$q\$UPDATE public.credito_avaliacao SET token = '$T2', reivindicada_ate = now() + interval '5 minutes' WHERE raiz = '$C'\$q\$)" >/dev/null
+  tem "R8 aprovado durante a reavaliação: o writer não recria pendente" \
+      "$(q "SELECT public.t_trym(\$x\$SELECT public.t_registra('$T2', '$C', 3300, 21, 'baixo')\$x\$);")" "grupo_com_limite_vigente"
+}
 check_falha() {
   base_c; q "SELECT public.t_claim(5, '$T1');" >/dev/null
   q "SELECT public.credito_registrar_avaliacao('$T1', '$C', NULL, 'timeout anthropic');" >/dev/null
@@ -407,6 +434,7 @@ check_acl() {
   tem "ACL service_role reivindica" "$(comorole service_role "SELECT public.credito_reivindicar_raizes(1, gen_random_uuid(), 60)")" "OK"
   eq "ACL builder do Lovable sem EXECUTE nas RPCs novas" \
      "$(q "SELECT bool_or(has_function_privilege('sandbox_exec_teste', f, 'EXECUTE')) FROM unnest(ARRAY['public.credito_ficha(uuid)','public.credito_registrar_avaliacao(uuid,uuid,jsonb,text)','public.credito_aprovar_propostas_lote(uuid[],text)']) f")" "f"
+  tem "ACL authenticated não lê credito_avaliacao direto (só pela RPC)" "$(como "$G" "SELECT count(*) FROM public.credito_avaliacao")" "42501"
   tem "ACL authenticated não escreve em credito_avaliacao" "$(como "$L" "INSERT INTO public.credito_avaliacao(raiz) VALUES (gen_random_uuid())")" "42501"
 }
 check_fila() {
@@ -432,6 +460,11 @@ check_deteriorou_15d() {
 check_deteriorou_piso() {
   base_c; P_ID=$(pend_c); tit oben 101 72 'A VENCER' 3 -20 400 N
   tem "A3b piso livre → indeterminado desde a ficha ⇒ superada" "$(lucas_try "SELECT public.credito_aprovar_proposta('$P_ID')")" "ficha_superada"
+}
+check_teto_caiu() {
+  base_c; P_ID=$(pend_c)
+  q "SELECT public.t_forca(\$q\$UPDATE public.fin_contas_receber SET data_emissao = $HOJE - 181 WHERE omie_codigo_lancamento IN (1,2,3)\$q\$)" >/dev/null
+  tem "A6 venda saiu da janela de 180 d (teto 3.300 → 1.800) ⇒ superada" "$(lucas_try "SELECT public.credito_aprovar_proposta('$P_ID')")" "ficha_superada (teto ou risco de hoje"
 }
 check_titularidade() {
   base_c; P_ID=$(pend_c)
@@ -461,7 +494,7 @@ check_lote_parcial() {
   PC=$(q "SELECT public.t_registra('$T1', '$C', 3300, 21, 'baixo');")
   PF=$(q "SELECT public.t_registra('$T1', '$F', 3000, 21, 'alto');")
   q "SELECT public.t_forca(\$q\$UPDATE public.credito_limite_proposta SET ficha_calculada_em = now() - interval '15 days' WHERE id = '$PC'\$q\$)" >/dev/null
-  R=$(lucas "SELECT public.credito_aprovar_propostas_lote(ARRAY['$PC','$PF']::uuid[])")
+  R=$(lucas "SELECT public.credito_aprovar_propostas_lote(ARRAY['$PC','$PF']::uuid[])" 2>/dev/null || echo '{"aprovadas":-1,"resultados":[]}')
   eq "L5 a vencida falha sozinha; a boa vira vigente" "$(echo "$R" | JX "d['aprovadas']")/$(q "SELECT count(*) FROM public.credito_limite")" "1/1"
 }
 check_cron() {
@@ -470,10 +503,11 @@ check_cron() {
 }
 
 TODOS=(check_ficha check_categoria check_emissao_nula check_piso check_indeterminado check_novo check_sync
-       check_pagamento check_injection check_radar check_claim check_token check_token_vencido check_registro
-       check_substitui check_travas check_risco_forcado check_superada_no_registro check_falha check_vigente
+       check_pagamento check_pagto_parcial_zero check_cnpj_alfanumerico check_injection check_radar check_claim check_token check_token_vencido check_registro
+       check_substitui check_travas check_risco_forcado check_superada_no_registro check_ficha_adulterada
+       check_vigente_writer check_falha check_vigente
        check_acl check_fila check_aprovar check_vencida check_deteriorou_15d check_deteriorou_piso
-       check_titularidade check_lote check_lote_parcial check_cron)
+       check_teto_caiu check_titularidade check_lote check_lote_parcial check_cron)
 echo "· asserts"
 for c in "${TODOS[@]}"; do "$c"; done
 echo "controle: PASS=$PASS FAIL=$FAIL"
@@ -514,25 +548,33 @@ sabota "S5 novo sem as 3 empresas em dia" check_novo "WHEN v_hist_n = 0 AND v_sy
 sabota "S6 sync defasado não tira evidência" check_sync "  v_evid := v_sync_ok
             AND" "  v_evid := true
             AND"
-sabota "S7 baixa bancária entra" check_pagamento "AND b.tipo = 'CR' AND b.origem_baixa = 'titulo'" "AND b.tipo = 'CR'"
-sabota "S8 lote em carga lido" check_radar "WHERE s.cnpj = v_doc AND s.lote <= v_vig" "WHERE s.cnpj = v_doc"
+sabota "S7 baixa bancária entra" check_pagamento "AND b.tipo = 'CR' AND b.origem_baixa = 'titulo'
+     WHERE" "AND b.tipo = 'CR'
+     WHERE"
+sabota "S7b baixa bancária cobre o recebido" check_pagamento "AND b.tipo = 'CR' AND b.origem_baixa = 'titulo' AND b.data_baixa_final IS NOT NULL);" "AND b.tipo = 'CR' AND b.data_baixa_final IS NOT NULL);"
+sabota "S7c PAGTO PARCIAL zero vira R\$ 0" check_pagto_parcial_zero "(f.saldo IS NULL OR (f.status_titulo = 'PAGTO PARCIAL' AND f.saldo <= 0)) AS valor_indet" "(f.saldo IS NULL) AS valor_indet"
+sabota "S8 lote não publicado lido" check_radar "WHERE s.cnpj = ANY (v_cands) AND s.lote <= v_vig" "WHERE s.cnpj = ANY (v_cands)"
+sabota "S8b mês reprocessado conta como publicado" check_radar "     AND i.situacao_aplicada_fechamento = i.finalizado_em;
+  v_d :=" "     ;
+  v_d :="
+sabota "S8c CNPJ alfanumérico descartado" check_cnpj_alfanumerico "          SELECT regexp_replace(v_d, '[-./]', '', 'g')" "          SELECT NULL::text"
 sabota "S9 reivindicação viva ignorada" check_claim "       AND (a.reivindicada_ate IS NULL OR a.reivindicada_ate < now())
      ORDER BY" "     ORDER BY"
 sabota "S10 token não conferido" check_token "IF NOT FOUND OR v_a.token IS DISTINCT FROM p_token OR" "IF NOT FOUND OR"
 sabota "S11 validade da reivindicação não conferida" check_token_vencido " OR v_a.reivindicada_ate < now() THEN" " THEN"
 sabota "S12 janela de 7 d" check_registro "a.ultima_proposta_em < now() - interval '7 days'" "a.ultima_proposta_em < now() + interval '1 day'"
-sabota "S13 pendente antiga não expira" check_substitui "       SET status = 'expirada'," "       SET status = 'recusada', motivo_decisao = 'x',"
+sabota "S13 pendente antiga vira recusada" check_substitui "       SET status = 'expirada'," "       SET status = 'recusada',"
 sabota "S14 teto de limite não conferido" check_travas "OR v_lim > (v_f ->> 'teto_limite_brl')::numeric THEN" "THEN"
 sabota "S15 risco forçado não conferido" check_risco_forcado "IF (v_f ->> 'risco_forcado') IS NOT NULL AND v_risco" "IF false AND v_risco"
-sabota "S16 deterioração no registro" check_superada_no_registro "     OR (v_s ->> 'n_titulos_vencidos_15d')::integer > COALESCE((v_f ->> 'n_titulos_vencidos_15d')::integer, -1) THEN
-    RAISE EXCEPTION 'credito_registrar_avaliacao: ficha_superada" "     THEN
-    RAISE EXCEPTION 'credito_registrar_avaliacao: ficha_superada"
+sabota "S16 deterioração no registro" check_superada_no_registro "     OR (v_fr ->> 'n_titulos_vencidos_15d')::integer > COALESCE((v_f ->> 'n_titulos_vencidos_15d')::integer, -1) THEN" "     THEN"
+sabota "S16b ficha enviada não conferida" check_ficha_adulterada "  IF EXISTS (SELECT 1 FROM unnest(ARRAY['piso_estado'" "  IF false AND EXISTS (SELECT 1 FROM unnest(ARRAY['piso_estado'"
+sabota "S16c writer aceita grupo vigente" check_vigente_writer "IF EXISTS (SELECT 1 FROM public.credito_limite l WHERE l.grupo_user_id = p_raiz) THEN" "IF false THEN"
 sabota "S17 backoff não persiste" check_falha "proxima_tentativa_em = now() + LEAST(" "proxima_tentativa_em = now() - LEAST("
 sabota "S18 vigente entra no laço semanal" check_vigente "   WHERE NOT EXISTS (SELECT 1 FROM public.credito_limite l WHERE l.grupo_user_id = c.raiz)
      AND (a.raiz" "   WHERE (a.raiz"
 sabota "S19 aprovação sem corte de 14 d" check_vencida "IF v_p.ficha_calculada_em < now() - interval '14 days' THEN" "IF v_p.ficha_calculada_em < now() - interval '140 days' THEN"
-sabota "S20 aprovação sem deterioração 15 d" check_deteriorou_15d "     OR (v_s ->> 'n_titulos_vencidos_15d')::integer > COALESCE((v_p.ficha ->> 'n_titulos_vencidos_15d')::integer, -1) THEN" "     THEN"
-sabota "S21 aprovação sem deterioração de piso" check_deteriorou_piso "IF ((v_p.ficha ->> 'piso_estado') = 'livre' AND (v_s ->> 'piso_estado') <> 'livre')" "IF (false)"
+sabota "S20 aprovação sem deterioração 15 d" check_deteriorou_15d "     OR (v_fr ->> 'n_titulos_vencidos_15d')::integer > (v_p.ficha ->> 'n_titulos_vencidos_15d')::integer THEN" "     OR false THEN"
+sabota "S21 aprovação sem o teto de hoje" check_teto_caiu "  IF v_p.limite_sugerido_brl > COALESCE((v_fr ->> 'teto_limite_brl')::numeric, 0)" "  IF false AND v_p.limite_sugerido_brl > COALESCE((v_fr ->> 'teto_limite_brl')::numeric, 0)"
 sabota "S22 aprovação sem titularidade" check_titularidade "IS DISTINCT FROM v_p.grupo_user_id::text) THEN" "IS DISTINCT FROM v_p.grupo_user_id::text AND false) THEN"
 sabota "S23 lote fora da ordem de raiz" check_lote "ORDER BY p.grupo_user_id NULLS LAST, i.id LOOP" "ORDER BY p.grupo_user_id DESC NULLS LAST, i.id LOOP"
 sabota "S24 lote sem dedup" check_lote "FOR r IN SELECT DISTINCT i.id, p.grupo_user_id" "FOR r IN SELECT i.id, p.grupo_user_id"

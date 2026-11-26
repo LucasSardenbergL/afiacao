@@ -62,10 +62,17 @@ export function useAprovarLote() {
   return useMutation({
     mutationFn: async (ids: string[]): Promise<ResultadoLote[]> => {
       const todos: ResultadoLote[] = [];
+      // Um bloco que falha NÃO descarta os já aprovados (Codex diff P2-9): os ids dele saem como
+      // "não confirmado" — a resposta pode ter se perdido depois do commit; a fila recarregada é a verdade.
       for (const bloco of emBlocos(ids)) {
-        const { data, error } = await supabase.rpc("credito_aprovar_propostas_lote", { p_ids: bloco });
-        if (error) throw error;
-        todos.push(...lerResultadoLote(data));
+        try {
+          const { data, error } = await supabase.rpc("credito_aprovar_propostas_lote", { p_ids: bloco });
+          if (error) throw error;
+          todos.push(...lerResultadoLote(data));
+        } catch (e) {
+          const msg = mensagemDeErro(e) ?? "falha de rede";
+          todos.push(...bloco.map((id) => ({ id, ok: false, erro: `não confirmado (${msg}) — recarregue a fila` })));
+        }
       }
       return todos;
     },
