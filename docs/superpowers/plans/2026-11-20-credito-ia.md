@@ -332,3 +332,11 @@
 10. **Deadline absoluto (P2).** `maxRetries: 0`, `AbortSignal` com o que resta do orçamento, margem para gravar; falha ⇒ `proxima_tentativa_em` com backoff persistido. Progresso medido por raízes elegíveis × concluídas × em retry.
 11. **Anti-injection provado (P2).** Entrada da IA montada por **lista fechada** de campos (nunca `to_jsonb(linha)` — `v_ciclo_cliente_resumo` expõe `nome_cliente`); teste Deno com nome/observação sentinela no insumo exigindo ausência no payload. Volta: exatamente 1 chamada à tool esperada (`extrairToolUseUnico`); a tela mostra, ao lado de cada motivo, o valor REAL do campo citado.
 12. **Lote curto e ordenado (P2).** IDs deduplicados, ordenados por raiz, ≤ 50 por chamada (o front manda em blocos e reconcilia por ID); prova PG17 com 2 sessões em lotes invertidos e repetição após perda da resposta.
+
+## PR 4 — o que a implementação fixou (2026-11-25; substitui o que conflitar acima)
+
+- **Fonte da compra média e do "novo" = CR, não `sales_orders`.** Títulos não cancelados, categoria `1.01.*` (receita de venda; `1.03`/`1.04` fora), por data de **emissão**, nas 3 empresas. Motivos: a `colacor_sc` não tem `sales_orders`, e o `customer_user_id` do pedido pode ser o do vendedor. Título sem `data_emissao` (37 em prod) ⇒ faturamento `NULL` ⇒ `historico_inconclusivo`. "Novo" = 0 título não cancelado em qualquer empresa **e** as 3 sincronizadas em ≤ 48 h.
+- **Tetos e risco forçado nascem na ficha (SQL).** `teto_limite_brl`, `teto_prazo_dias`, `risco_forcado`; a edge só aplica o mínimo e o writer `credito_registrar_avaliacao` reconfere cada invariante (teto, degrau de R$ 100, degraus de prazo, limite 0 ⇔ prazo 0, risco forçado, ficha ≤ 30 min, assinatura, versão-base, deterioração).
+- **Laço semanal só para grupo SEM limite vigente.** Os vigentes são a varredura da sombra do PR 5 (item 8 da revisão); sem isso a fila do Lucas receberia a carteira inteira toda semana.
+- **Situação cadastral irregular (Radar 03/04/08, lote publicado) ⇒ risco alto forçado** (trava 5 do desenho base).
+- **Honrado = baixa ≤ vencimento + 5 d** (mesma tolerância para `pct_valor_atrasado`).
