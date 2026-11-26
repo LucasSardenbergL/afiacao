@@ -3,7 +3,8 @@
 -- Spec: docs/superpowers/specs/2026-11-20-credito-ia-design.md §5.5/§5.7/§9.10/§10.
 -- Plano: docs/superpowers/plans/2026-11-25-credito-ia-pr6-fila.md (Codex desenho incorporado).
 --
--- DEPENDE DO PR 5 (20261125200000_credito_gate_v2_sombra.sql): a aba Sombra lê credito_sombra_decisao.
+-- DEPENDE DO PR 5 (#4192: 20261125195900 índices + 20261125200000_credito_gate_v2_sombra.sql): a aba
+-- Sombra lê credito_sombra_pv_atual/credito_sombra_decisao. Importado tem prazo NULL → nunca 🟢 na sombra.
 -- A postcondição aborta se o PR 5 não estiver aplicado.
 --
 -- Só objetos NOVOS + 1 troca de ACL: a autorização da fila passa a ter UM caminho

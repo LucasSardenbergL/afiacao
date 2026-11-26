@@ -4,7 +4,7 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
 
 ## O que entrou
 
-> **Depende do PR 5** (`20261125200000_credito_gate_v2_sombra.sql`): a aba Sombra, a recomendação de sombra e a prontidão leem o ledger dele (`credito_sombra_decisao`/`_lote`/`_tentativa`); a postcondição aborta se ele não estiver aplicado. Ordem de apply: PR 5 → 6a.
+> **Depende do PR 5** (#4192 — `20261125195900` índices + `20261125200000_credito_gate_v2_sombra.sql`): a aba Sombra, a recomendação de sombra e a prontidão leem o ledger dele (`credito_sombra_decisao`/`_lote`/`_tentativa`); a postcondição aborta se ele não estiver aplicado. Ordem de apply: PR 5 → 6a.
 
 - **Migration** `20261125230000_credito_fila_enforcement_dormente.sql` — só objetos novos + 1 troca de ACL:
   - `credito_enforcement` (1 linha por empresa, as 3 **desligadas**) + `credito_enforcement_log`; único escritor `credito_definir_enforcement` (allowlist do PR 2 = o Lucas). Ligar exige `credito_enforcement_prontidao(empresa).pronto`; desligar nunca depende dela e cancela as solicitações abertas.
