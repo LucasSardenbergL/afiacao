@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { centavoAcima, centavos, emCentavos, somaPorLinha, somarQuantidade, totalDaLinha } from '../centavos';
+import { centavoAbaixo, centavoAcima, centavos, emCentavos, somaPorLinha, somarQuantidade, totalDaLinha } from '../centavos';
 
 describe('centavos — mesma regra do centavos() da edge (half-up na 2ª casa)', () => {
   it.each([
@@ -102,5 +102,16 @@ describe('decimal exato — sem N casas fixas (Codex #4164, rodada 3)', () => {
     expect(centavos(1e-7)).toBe(0);
     expect(centavos(1.5e3)).toBe(150000);
     expect(centavos(-2.675)).toBe(-268);
+  });
+});
+
+describe('centavoAbaixo — teto de aumento nunca passa (Codex #4164, r4)', () => {
+  it('0,105 → 0,10; 11,2148 → 11,21; valor ao centavo fica igual', () => {
+    expect(centavoAbaixo(0.105)).toBe(0.1);
+    expect(centavoAbaixo(11.2148)).toBe(11.21);
+    expect(centavoAbaixo(0.1 + 0.2)).toBe(0.3);
+  });
+  it('não finito → NaN', () => {
+    expect(centavoAbaixo(Number.NaN)).toBeNaN();
   });
 });

@@ -158,4 +158,8 @@ describe('termoBuscaFeed — o termo que a RPC do valor recebe', () => {
     expect(padraoBuscaFeed('  %  ')).toBeNull();
     expect(termoBuscaFeed('')).toBeNull();
   });
+  it('linha da OS no produto EXATO: 3 × 10,075 = 30,23 (o float dava 30,22) — PR 2.4', () => {
+    const o = mapAfiacaoDetail({ id: 'o4', user_id: 'u1', status: 'x', subtotal: 0, total: 30.23, created_at: 'd', notes: null, items: [{ category: 'X', quantity: 3, unitPrice: 10.075 }] } as never);
+    expect(o.items[0].valor_total).toBe(30.23);
+  });
 });

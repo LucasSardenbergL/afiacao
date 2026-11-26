@@ -88,6 +88,17 @@ export function centavoAcima(x: number): number {
 }
 
 /**
+ * Centavo ABAIXO (chão): o maior centavo que não passa de `x`. Para a REFERÊNCIA da Régua, que é um TETO
+ * de aumento ("+5%"): R$ 0,105 vira 0,10 — o half-up daria 0,11 (+10%), acima do anunciado (Codex #4164,
+ * rodada 4). Não finito → NaN.
+ */
+export function centavoAbaixo(x: number): number {
+  const c = centavos(x);
+  if (Number.isNaN(c)) return Number.NaN;
+  return (c / 100 > x + 1e-9 ? c - 1 : c) / 100;
+}
+
+/**
  * Soma de quantidades sem resíduo binário: `1,2 + 1,9` dá 3,0999999999999996 em ponto flutuante, que vai
  * cru no JSON e faz o `round(numeric, 2)` do gate de crédito divergir 1 centavo da tela (Codex no #4164).
  * 6 casas cobrem qualquer quantidade do Omie (que usa até 4).

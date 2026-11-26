@@ -89,5 +89,14 @@ describe('ReguaPrecoSinal', () => {
     // a referência do popover é o MESMO preço — nunca o 11,21 abaixo do piso (Codex #4164, rodada 3)
     expect(screen.queryByText(/11,21/)).toBeNull();
   });
+  it('referência é TETO de aumento: 0,105 anuncia e aplica 0,10, nunca 0,11 (Codex #4164, r4)', () => {
+    const onAplicar = vi.fn();
+    const r: ReguaPrecoResult = { ...base, sinal: 'auto_ref', confianca: 'media', precoReferencia: 0.105, suggestedGapPct: 0.05 };
+    render(<ReguaPrecoSinal result={r} precoAtual={0.1} contexto={ctx} onAplicar={onAplicar} />);
+    abrir();
+    const botao = screen.getByText(/Aplicar referência/);
+    expect(botao.textContent).toMatch(/0,10/);
+    fireEvent.click(botao);
+    expect(onAplicar).toHaveBeenCalledWith(0.1);
+  });
 });
-

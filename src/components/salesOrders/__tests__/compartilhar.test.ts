@@ -110,5 +110,12 @@ describe('montarCompartilhamento — a régua do cupom na mensagem de WhatsApp',
       { description: 'LIXA', quantity: 1.5, unitPrice: 2.01, lineTotal: 3.02 },
     ]);
   });
+
+  it('valor_total 0 é "cálculo pendente" do rascunho: a linha sai pela conta exata (R$ 100,00), nunca R$ 0,00 (Codex #4164, r4)', () => {
+    const itens = [{ descricao: 'BASE', quantidade: 2, valor_unitario: 50, valor_total: 0 }] as unknown as SalesOrder['items'];
+    expect(montarCompartilhamento({ items: itens, total: 100 }, { estado: 'nao-se-aplica' }).items).toStrictEqual([
+      { description: 'BASE', quantity: 2, unitPrice: 50, lineTotal: 100 },
+    ]);
+  });
 });
 

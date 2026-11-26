@@ -56,5 +56,14 @@ describe('useCart — centavos', () => {
     expect(item.quantity).toBe(3.1);
     expect(result.current.obenSubtotal).toBe(3.26);
   });
+  it('edição manual torna a linha NEGOCIADA: sai o precoNascimento, a reprecificação nunca mais a toca (Codex #4164, r4)', () => {
+    const { result } = montar(() => 10);
+    act(() => { result.current.addProductToCart(produto('a', 1, 10), 100); });
+    expect((result.current.cart[0] as ProductCartItem).precoNascimento).toBe(10);
+    act(() => { result.current.updateProductPrice(0, 9); });
+    act(() => { result.current.updateProductPrice(0, 10); });
+    const item = result.current.cart[0] as ProductCartItem;
+    expect(item.unit_price).toBe(10);
+    expect(item.precoNascimento).toBeUndefined();
+  });
 });
-

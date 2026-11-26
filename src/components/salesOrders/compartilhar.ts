@@ -14,6 +14,7 @@
 //
 // FRONTEIRA: não importa `@/utils/whatsappShare` (módulo telefonia-whatsapp-rota). Devolve os valores
 // prontos; quem chama (useSalesOrders) os entrega ao `shareOrderViaWhatsApp`.
+import { totalDaLinha } from '@/lib/centavos';
 import { resolverDescontoCupom, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
 import type { SalesOrder } from './types';
@@ -46,6 +47,21 @@ function avisoDaMensagem(avisoDaRegua: string | null, leitura: LeituraDescontosI
   return { titulo: TITULO_AVISO, descricao: `${causa} — a mensagem saiu sem as linhas de desconto.${tenteDeNovo}` };
 }
 
+/**
+ * Linha SEM desconto (PR 2.4). Valor gravado POSITIVO manda — é o que o total do pedido soma (recalcular
+ * q × v dava R$ 3,01 num orçamento gravado a R$ 3,02; Codex #4164, r3). Zero gravado é "cálculo pendente"
+ * no rascunho, não preço: cai na conta exata por linha (R$ 100,00, não R$ 0,00 — Codex #4164, r4).
+ * Sem preço sabido → sem lineTotal ("—"/"A orçar" como sempre).
+ */
+function linhaSemDesconto(item: { quantidade: number | null; valor_unitario: number | null; valor_total?: number | null }): { lineTotal?: number } {
+  const gravado = item.valor_total;
+  if (typeof gravado === 'number' && Number.isFinite(gravado) && gravado > 0) return { lineTotal: gravado };
+  const q = item.quantidade;
+  const v = item.valor_unitario;
+  if (typeof q !== 'number' || !Number.isFinite(q) || typeof v !== 'number' || !Number.isFinite(v)) return {};
+  return { lineTotal: totalDaLinha(q, v) };
+}
+
 export function montarCompartilhamento(
   order: { items: SalesOrder['items'] | null | undefined; total: number | null | undefined },
   descontos: LeituraDescontosItens,
@@ -57,11 +73,9 @@ export function montarCompartilhamento(
     description: item.descricao,
     quantity: item.quantidade,
     unitPrice: item.valor_unitario,
-    // PR 2.4 (Codex #4164, rodada 3): sem desconto, a linha é o `valor_total` GRAVADO (o que o total do
-    // pedido soma) — recalcular q × v dava R$ 3,01 na linha de um orçamento gravado a R$ 3,02.
     ...(descontoPorItem
       ? { lineTotal: receitaLiquidaItem(item.valor_unitario, item.quantidade, descontoPorItem[i]) }
-      : typeof item.valor_total === 'number' && Number.isFinite(item.valor_total) ? { lineTotal: item.valor_total } : {}),
+      : linhaSemDesconto(item)),
   }));
   if (decisao.quebra) {
     const { subtotalBruto, descontoTotal, itensApurados } = decisao;

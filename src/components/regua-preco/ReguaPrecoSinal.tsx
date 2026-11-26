@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { centavoAcima, emCentavos } from '@/lib/centavos';
+import { centavoAbaixo, centavoAcima } from '@/lib/centavos';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import type { ReguaPrecoResult } from '@/lib/regua-preco/types';
 
@@ -36,10 +36,10 @@ export function ReguaPrecoSinal({
   // aplicá-lo jogaria o piso no campo de preço, revelando o custo em 1 clique.
   const pisoOculto = ehPiso && (readonly || result.pisoMC == null);
   // PR 2.4: o valor que o botão ANUNCIA é o que ele APLICA, já ao centavo. Piso vai pelo TETO (11,2148 →
-  // 11,22): o half-up daria 11,21, abaixo do piso. Referência vai pelo half-up de sempre.
+  // 11,22): o half-up daria 11,21, abaixo do piso. Referência é TETO de aumento: vai pelo chão (0,105 → 0,10).
   const precoAplicavel = result.precoReferencia == null
     ? null
-    : ehPiso ? centavoAcima(result.precoReferencia) : emCentavos(result.precoReferencia);
+    : ehPiso ? centavoAcima(result.precoReferencia) : centavoAbaixo(result.precoReferencia);
   const pct = result.suggestedGapPct != null ? Math.round(result.suggestedGapPct * 100) : 0;
 
   useEffect(() => {

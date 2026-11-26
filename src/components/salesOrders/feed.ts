@@ -18,6 +18,13 @@ import {
   type SalesOrderRow,
 } from './types';
 import { totalLinhaOuAusente, precoUtilizavel } from '@/lib/format';
+import { totalDaLinha } from '@/lib/centavos';
+
+/** Total da linha ao centavo no produto exato; preço ausente segue ausente (nunca R$ 0,00). */
+function linhaExataOuAusente(quantidade: number, preco: number | null): number | null {
+  const bruto = totalLinhaOuAusente(quantidade, preco);
+  return bruto === null || preco === null ? null : totalDaLinha(quantidade, preco);
+}
 
 // Normaliza pra busca: minúsculas + sem diacríticos ("afiacao" acha "Afiação").
 const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -365,7 +372,9 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
       // tela. O item alimenta `SalesOrderItem`, que passou a admitir `null`, e o DetailSheet
       // já sabe mostrar "—". Preço 0 aqui costuma ser "a orçar", que é ausência, não brinde.
       valor_unitario: precoUtilizavel(i.unitPrice),
-      valor_total: totalLinhaOuAusente(i.quantity ?? 1, precoUtilizavel(i.unitPrice)),
+      // Linha no produto EXATO, como a OS foi gravada (PR 2.4): o float de q × v dava R$ 30,22 numa OS
+      // de R$ 30,23 (3 × 10,075 — Codex #4164, rodada 4).
+      valor_total: linhaExataOuAusente(i.quantity ?? 1, precoUtilizavel(i.unitPrice)),
     })),
     subtotal: row.subtotal || row.total || 0,
     total: row.total || 0,

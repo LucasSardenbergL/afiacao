@@ -319,7 +319,13 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     setCart(prev =>
       prev.map((c, i) =>
         // Centavos (PR 2.4): edição manual e "aplicar" da Régua chegam aqui com N casas.
-        i === index && c.type === 'product' ? ({ ...c, unit_price: emCentavos(price) } as ProductCartItem) : c,
+        // A edição TIRA o precoNascimento: a linha passa a ser NEGOCIADA e a reprecificação da fronteira
+        // nunca mais a toca. Antes bastava `unit_price !== precoNascimento`, mas com o nascimento ao
+        // centavo uma edição de volta a 10,00 (nascido de 10,004) parecia intocada e a troca de tier
+        // sobrescrevia o preço negociado (Codex #4164, rodada 4).
+        i === index && c.type === 'product'
+          ? ({ ...c, unit_price: emCentavos(price), precoNascimento: undefined } as ProductCartItem)
+          : c,
       ),
     );
     return true;
