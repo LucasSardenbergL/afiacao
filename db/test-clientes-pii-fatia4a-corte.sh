@@ -372,6 +372,9 @@ CREATE POLICY customer_contacts_update_staff ON public.customer_contacts FOR UPD
 CREATE POLICY customer_contacts_delete_master ON public.customer_contacts FOR DELETE
   USING ((SELECT has_role(auth.uid(), 'master'::app_role)));
 GRANT ALL ON public.customer_contacts TO anon, authenticated;
+UPDATE public.customer_contacts SET is_primary = false WHERE is_primary IS NULL;
+ALTER TABLE public.customer_contacts ALTER COLUMN is_primary SET DEFAULT false, ALTER COLUMN is_primary SET NOT NULL;
+CREATE UNIQUE INDEX idx_customer_contacts_one_primary ON public.customer_contacts (customer_user_id) WHERE is_primary = true;
 SQL
 # estado de PROD das 3 superfícies (para restaurar entre sabotagens)
 prod_acl() {
@@ -381,7 +384,12 @@ GRANT SELECT ON public.customer_metrics_mv TO authenticated;
 GRANT ALL ON public.customer_contacts TO anon, authenticated;
 SQL
 }
+SO4=a7000000-0000-0000-0000-0000000000a7  # titular = a farmer F (papel staff), snapshot do comprador C3
+SO5=a8000000-0000-0000-0000-0000000000a8  # titular = EX2 (só a flag is_employee, sem papel)
 P -q <<SQL
+INSERT INTO public.sales_orders(id,customer_user_id,customer_document,customer_address,customer_phone) VALUES
+ ('$SO4','$F','snap-doc-c3b','snap-end-c3b','snap-fone-c3b'),
+ ('$SO5','$EX2','snap-doc-c3c','snap-end-c3c','snap-fone-c3c');
 INSERT INTO private.customer_metrics_mv VALUES
  ('$C1','Um Ltda','98765432000111',now() - interval '10 days',10,3,300,100,200,30,0.3,false,now()),
  ('$C3','Tres Ltda','12345678000199',now() - interval '40 days',40,1,90,90,120,20,2.0,false,now());
@@ -418,6 +426,10 @@ eq "L3 antes: back-office lê customer_metrics_mv.document de qualquer cliente (
    "$(como $B "SELECT document FROM public.customer_metrics_mv WHERE customer_user_id='$C3';")" "12345678000199"
 eq "L4 antes: farmer lê o telefone do contato de cliente FORA da carteira direto da tabela (furo)" \
    "$(como $F "SELECT phone FROM public.customer_contacts WHERE customer_user_id='$C3';")" "cc-fone-c3"
+P -q -c "DELETE FROM public.contato_acesso_operacional;"
+eq "L6 lacuna declarada (4b): a RPC trata pedido com titular=staff como leitura PRÓPRIA — entrega sem ledger" \
+   "$(como $F "SELECT pedido_telefone FROM public.contato_cliente_operacional('pedido', '{$SO4}'::uuid[], 'detalhe_pedido');")|$(P -tA -q -c "SELECT count(*) FROM public.contato_acesso_operacional WHERE staff_user_id='$F';")" \
+   "snap-fone-c3b|0"
 eq "L5 antes: o cliente lê o próprio snapshot cru (o caminho que a 4a-1 substitui)" "$(snap_cru $C1 $SO2)" "snap-end-c1|snap-fone-c1|snap-doc-c1"
 
 P -q -f "$M4A"
@@ -430,6 +442,10 @@ suite_s() {
   eq "S2b cliente vê só os seus (1 pedido)" "$(n_snap $C1)" "1"
   eq "S3 staff não é cliente: a view não lhe entrega pedido algum (staff vai pela RPC com ledger)" "$(n_snap $B)" "0"
   eq "S3b nem o master" "$(n_snap $M)" "0"
+  eq "S3d vendedor TITULAR do pedido por fallback (papel staff) NÃO lê o snapshot do comprador" "$(n_snap $F)" "0"
+  eq "S3e titular só com a flag is_employee (sem papel) também não" "$(n_snap $EX2)" "0"
+  eq "S3f L0: os 2 pedidos com titular staff existem (S3d/S3e não são de graça)" \
+     "$(P -tA -q -c "SELECT count(*) FROM public.sales_orders WHERE id IN ('$SO4','$SO5') AND customer_user_id IN ('$F','$EX2');")" "2"
   eq "S3c JWT sem sub: 0 linhas" "$(como "" "SELECT count(*) FROM public.v_pedido_snapshot_proprio;")" "0"
   eq "S4 anon sem SELECT na view" \
      "$(veredito "$(nega anon "" insufficient_privilege "SELECT 1 FROM public.v_pedido_snapshot_proprio")")" "barrado"
@@ -518,7 +534,14 @@ suite_t() {
      "$NC|$C3|fone-editado/e@x.test"
   eq "T8c desligar o primário dos outros (UPDATE … WHERE customer_user_id) segue funcionando" \
      "$(como $F "UPDATE public.customer_contacts SET is_primary=false WHERE customer_user_id='$C3';")$(P -tA -q -c "SELECT count(*) FROM public.customer_contacts WHERE customer_user_id='$C3' AND is_primary IS NOT false;")" "0"
-  P -q -c "UPDATE public.customer_contacts SET is_primary=NULL WHERE customer_user_id='$C3' AND id<>'$NC';"  # devolve o seed
+  eq "T10 staff NÃO reatribui o dono do contato (mover p/ a carteira o exibiria) — 42501" \
+     "$(veredito "$(nega authenticated $F insufficient_privilege "UPDATE public.customer_contacts SET customer_user_id='$C1' WHERE customer_user_id='$C3'")")" "barrado"
+  eq "T10b ... nem o criador" \
+     "$(veredito "$(nega authenticated $F insufficient_privilege "UPDATE public.customer_contacts SET created_by='$F' WHERE id='$NC'")")" "barrado"
+  eq "T10c ... e o contato de fora segue fora da view da farmer" "$(cc_view $F $C3)" "(vazio)"
+  eq "T10d a edição como o front novo (sem dono/criador no payload) segue gravando" \
+     "$(como $F "UPDATE public.customer_contacts SET phone='fone-editado', nome='Caio', cargo=NULL, email='e@x.test', is_decision_maker=false, is_primary=true, whatsapp_only=false, birthday=NULL, notas=NULL, source='manual' WHERE id='$NC' RETURNING id;")" "$NC"
+  P -q -c "UPDATE public.customer_contacts SET is_primary=false WHERE customer_user_id='$C3';"  # devolve o seed
   eq "T8d a forma ANTIGA do front (RETURNING *) quebra — por isso o .select() mudou" \
      "$(veredito "$(nega authenticated $F insufficient_privilege "UPDATE public.customer_contacts SET nome='Caio' WHERE id='$NC' RETURNING *")")" "barrado"
   eq "T8e master apaga como o front (DELETE … WHERE id) e some" \
@@ -572,13 +595,27 @@ exige_vermelho "K3 contatos sem o REVOKE de tabela → T6" "$(veredito "$(nega a
 sabota "$M4B" 's/  id, customer_user_id, is_decision_maker,/  id, customer_user_id, phone, is_decision_maker,/'
 exige_vermelho "K4 grant de contatos com o telefone → T6d (oráculo)" "$(veredito "$(nega authenticated $F insufficient_privilege "SELECT id FROM public.customer_contacts WHERE phone = 'cc-fone-c3'")")" "barrado" "vazou"; restaura
 
+sabota "$M4B" 's/  phone, nome, cargo, email, is_decision_maker, is_primary, whatsapp_only, birthday, notas, source, updated_at\n/  customer_user_id, phone, nome, cargo, email, is_decision_maker, is_primary, whatsapp_only, birthday, notas, source, updated_at\n/'
+exige_vermelho "K19 UPDATE de contatos com o dono → T10 (reatribuição contorna a carteira)" "$(veredito "$(nega authenticated $F insufficient_privilege "UPDATE public.customer_contacts SET customer_user_id='$C1' WHERE customer_user_id='$C3'")")" "barrado" "vazou"; restaura
+P -q -c "UPDATE public.customer_contacts SET customer_user_id='$C3' WHERE nome='Beto';"  # o mutante GRAVOU
+
+sabota "$M4B" 's/REVOKE UPDATE ON public\.customer_contacts FROM PUBLIC, anon, authenticated;\n//'
+exige_vermelho "K20 sem o REVOKE de UPDATE de tabela → T10" "$(veredito "$(nega authenticated $F insufficient_privilege "UPDATE public.customer_contacts SET created_by='$F' WHERE customer_user_id='$C3'")")" "barrado" "vazou"; restaura
+P -q -c "UPDATE public.customer_contacts SET created_by=NULL WHERE customer_user_id='$C3';"  # o mutante GRAVOU
+
 sabota "$M4B" 's/  id, customer_user_id, is_decision_maker,/  id, is_decision_maker,/'
 exige_vermelho "K5 grant de contatos sem o dono → T8c (desligar primário por cliente quebra)" \
   "$(veredito "$(nega authenticated $F insufficient_privilege "UPDATE public.customer_contacts SET is_primary=false WHERE customer_user_id='$C3'")")" "vazou" "barrado"; restaura
-P -q -c "UPDATE public.customer_contacts SET is_primary=NULL WHERE customer_user_id='$C3';"
+P -q -c "UPDATE public.customer_contacts SET is_primary=false WHERE customer_user_id='$C3';"
 
-sabota "$M4A" 's/   AND so\.customer_user_id = \(SELECT auth\.uid\(\)\);/;/'
+sabota "$M4A" 's/   AND so\.customer_user_id = \(SELECT auth\.uid\(\)\)\n//'
 exige_vermelho "K6 view sem a fronteira de linha → S2b (cliente veria pedido alheio)" "$(n_snap $C1)" "1" "3"; restaura
+
+sabota "$M4A" 's/   AND NOT EXISTS \(SELECT 1 FROM public\.user_roles r\n.*?\n.*?\)\)\n//s'
+exige_vermelho "K17 view sem excluir titular com PAPEL staff → S3d (vendedor lê o comprador)" "$(n_snap $F)" "0" "1"; restaura
+
+sabota "$M4A" 's/   AND NOT EXISTS \(SELECT 1 FROM public\.profiles p\n.*?is_employee IS TRUE\)//s'
+exige_vermelho "K18 view sem excluir titular com a FLAG is_employee → S3e" "$(n_snap $EX2)" "0" "1"; restaura
 
 sabota "$M4A" 's/REVOKE ALL ON public\.v_pedido_snapshot_proprio FROM PUBLIC, anon, authenticated, service_role;/REVOKE ALL ON public.v_pedido_snapshot_proprio FROM PUBLIC, anon, service_role;/'
 exige_vermelho "K7 view sem o REVOKE de authenticated (nasce ALL) → S5" "$(veredito "$(nega authenticated $C1 insufficient_privilege "UPDATE public.v_pedido_snapshot_proprio SET customer_phone='x' WHERE id='$SO2'")")" "barrado" "vazou"; restaura
@@ -604,6 +641,9 @@ sabota_post "$M4A" 's/  customer_user_id, razao_social, ultima_compra_data,/  cu
 sabota_post "$M4A" 's/WITH \(security_invoker = off, security_barrier = true\) AS\nSELECT so\./WITH (security_invoker = on, security_barrier = true) AS\nSELECT so./' 'A1 FALHOU' "K15 4a-1 com a view invoker=on"
 P -q -c "ALTER VIEW public.v_pedido_snapshot_proprio SET (security_invoker = off);"; restaura
 sabota_post "$M4A" 's/REVOKE ALL ON public\.v_pedido_snapshot_proprio FROM PUBLIC, anon, authenticated, service_role;/REVOKE ALL ON public.v_pedido_snapshot_proprio FROM PUBLIC, anon, service_role;/' 'A4 FALHOU' "K16 4a-1 com escrita pela view"; restaura
+sabota_post "$M4B" 's/REVOKE UPDATE ON public\.customer_contacts FROM PUBLIC, anon, authenticated;\n//' 'B6 FALHOU' "K21 4a-2 deixando reatribuir o dono do contato"; restaura
+sabota_post "$M4B" 's/GRANT UPDATE \(\n  phone, nome,/GRANT UPDATE (\n  nome,/' 'B3 FALHOU' "K22 4a-2 tirando o UPDATE do telefone (a edição quebraria)"; restaura
+sabota_post "$M4A" 's/   AND NOT EXISTS \(SELECT 1 FROM public\.profiles p\n.*?is_employee IS TRUE\)//s' 'A8 FALHOU' "K23 4a-1 sem excluir titular staff"; restaura
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
 suite_s

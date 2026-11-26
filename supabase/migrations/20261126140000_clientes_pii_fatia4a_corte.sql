@@ -9,8 +9,11 @@
 --      · v_pedido_snapshot_proprio (20261126130000) — o cliente, só os próprios pedidos.
 -- 2. customer_contacts: REVOKE SELECT de TABELA + GRANT SELECT só das colunas SEM contato (id, dono,
 --    flags, carimbos). Leitura de contato só pela v_cliente_contatos (mascarada por carteira, fatia 2).
---    UPDATE/INSERT/DELETE seguem no nível de tabela (as policies de escrita não mudam); o `.select()`
---    pós-escrita do front passa a pedir só `id, customer_user_id`.
+--    INSERT/DELETE seguem no nível de tabela (as policies de escrita não mudam); o `.select()` pós-escrita
+--    do front passa a pedir só `id, customer_user_id`.
+--    UPDATE passa a ser de COLUNA, sem `customer_user_id`/`created_by`/`id` (Codex, fatia 4a): a view
+--    decide pelo dono ATUAL da linha, então reatribuir um contato de fora da carteira para um cliente
+--    dela o exibiria inteiro. O dono do contato fica imutável na edição; o front tira os dois do update.
 --
 -- PRÉ-REQUISITOS (não aplicar antes):
 --   1. 20261126130000 aplicada (a fonte do cliente existe);
@@ -26,6 +29,10 @@ REVOKE SELECT (customer_document, customer_address, customer_phone) ON public.sa
 REVOKE SELECT ON public.customer_contacts FROM PUBLIC, anon, authenticated;
 GRANT SELECT (
   id, customer_user_id, is_decision_maker, is_primary, whatsapp_only, source, created_by, created_at, updated_at
+) ON public.customer_contacts TO authenticated;
+REVOKE UPDATE ON public.customer_contacts FROM PUBLIC, anon, authenticated;
+GRANT UPDATE (
+  phone, nome, cargo, email, is_decision_maker, is_primary, whatsapp_only, birthday, notas, source, updated_at
 ) ON public.customer_contacts TO authenticated;
 
 DO $post$
@@ -68,12 +75,27 @@ BEGIN
       v_sem_grant := array_append(v_sem_grant, 'SELECT customer_contacts.' || c);
     END IF;
   END LOOP;
-  IF NOT has_table_privilege('authenticated', 'public.customer_contacts', 'INSERT, UPDATE, DELETE') THEN
-    v_sem_grant := array_append(v_sem_grant, 'escrita customer_contacts');
+  -- verbo a verbo: has_table_privilege com lista responde "algum deles" (PG17)
+  IF NOT has_table_privilege('authenticated', 'public.customer_contacts', 'INSERT') THEN
+    v_sem_grant := array_append(v_sem_grant, 'INSERT customer_contacts');
   END IF;
+  IF NOT has_table_privilege('authenticated', 'public.customer_contacts', 'DELETE') THEN
+    v_sem_grant := array_append(v_sem_grant, 'DELETE customer_contacts');
+  END IF;
+  FOREACH c IN ARRAY ARRAY['phone', 'nome', 'cargo', 'email', 'is_decision_maker', 'is_primary', 'whatsapp_only',
+                           'birthday', 'notas', 'source', 'updated_at'] LOOP
+    IF NOT has_column_privilege('authenticated', 'public.customer_contacts', c, 'UPDATE') THEN
+      v_sem_grant := array_append(v_sem_grant, 'UPDATE customer_contacts.' || c);
+    END IF;
+  END LOOP;
   IF v_sem_grant IS NOT NULL THEN
     RAISE EXCEPTION 'B3 FALHOU: o corte levou junto o que a tela precisa: %', v_sem_grant;
   END IF;
+  FOREACH c IN ARRAY ARRAY['id', 'customer_user_id', 'created_by'] LOOP
+    IF has_column_privilege('authenticated', 'public.customer_contacts', c, 'UPDATE') THEN
+      RAISE EXCEPTION 'B6 FALHOU: authenticated reatribui customer_contacts.% — mover o contato para a carteira o exibiria inteiro', c;
+    END IF;
+  END LOOP;
   -- as duas fontes que sobram
   IF NOT has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'SELECT')
      OR NOT has_table_privilege('authenticated', 'public.v_cliente_contatos', 'SELECT') THEN

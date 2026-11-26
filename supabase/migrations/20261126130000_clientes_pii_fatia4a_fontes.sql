@@ -5,9 +5,13 @@
 --    (endereço, telefone, documento gravados em sales_orders na hora do pedido). Hoje ele lê as colunas
 --    cruas (`useSalesOrderDetail`, ramo não-staff); a 4a-2 fecha essas colunas a authenticated. Staff
 --    segue pela RPC operacional `contato_cliente_operacional('pedido', …)` (ledger).
---    View-gate (invoker=off + barrier) com a MESMA fronteira de linha da policy
---    `sales_orders_select_customer` (auth.uid() = customer_user_id). Só SELECT: a view é
---    auto-atualizável e, como roda como OWNER, um UPDATE por ela furaria a RLS de escrita.
+--    View-gate (invoker=off + barrier) com a fronteira de linha da policy `sales_orders_select_customer`
+--    (auth.uid() = customer_user_id), MENOS o leitor que é ou foi staff: o pedido e o orçamento gravam
+--    `customerUserId || user.id`, então sem vínculo local o TITULAR vira o VENDEDOR enquanto o snapshot é
+--    do COMPRADOR (Codex, fatia 4a: 19 pedidos de 3 staff em prod, o último em 2026-11-21). Mesmo filtro do
+--    precedente `selfservice_meus_pedidos` (flag is_employee) + papel staff atual. Igualdade EXATA do uuid
+--    (cliente com 2 cadastros vê cada um pelo seu login, como na RLS; expandir pela raiz seria permissão nova).
+--    Só SELECT: a view é auto-atualizável e, como roda como OWNER, um UPDATE por ela furaria a RLS de escrita.
 -- 2. public.customer_metrics_mv deixa de entregar `document` a authenticated (grant de COLUNA; Codex P0
 --    da fatia 3: qualquer employee lia o documento de toda a base). Nenhum leitor do front pede a coluna
 --    (mapa de 2026-11-26); service_role (ai-ops-agent, `select("*")`) segue com a view inteira.
@@ -20,7 +24,12 @@ WITH (security_invoker = off, security_barrier = true) AS
 SELECT so.id, so.customer_user_id, so.customer_address, so.customer_phone, so.customer_document
   FROM public.sales_orders so
  WHERE (SELECT auth.uid()) IS NOT NULL
-   AND so.customer_user_id = (SELECT auth.uid());
+   AND so.customer_user_id = (SELECT auth.uid())
+   AND NOT EXISTS (SELECT 1 FROM public.user_roles r
+                    WHERE r.user_id = so.customer_user_id
+                      AND r.role IN ('employee'::public.app_role, 'master'::public.app_role))
+   AND NOT EXISTS (SELECT 1 FROM public.profiles p
+                    WHERE p.user_id = so.customer_user_id AND p.is_employee IS TRUE);
 
 REVOKE ALL ON public.v_pedido_snapshot_proprio FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.v_pedido_snapshot_proprio TO authenticated;
@@ -50,7 +59,8 @@ BEGIN
   IF NOT has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'SELECT') THEN
     RAISE EXCEPTION 'A3 FALHOU: authenticated sem SELECT em v_pedido_snapshot_proprio — o cliente perderia o snapshot';
   END IF;
-  IF has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'INSERT, UPDATE, DELETE') THEN
+  -- lista de privilégios = "algum deles" (PG17): aqui é a semântica certa — nenhuma escrita pode passar
+  IF has_table_privilege('authenticated', 'public.v_pedido_snapshot_proprio', 'INSERT, UPDATE, DELETE, TRUNCATE') THEN
     RAISE EXCEPTION 'A4 FALHOU: authenticated escreve por v_pedido_snapshot_proprio (view de OWNER furaria a RLS de escrita)';
   END IF;
   -- métrica: documento fechado, demais colunas abertas, service_role intacto
@@ -70,6 +80,9 @@ BEGIN
   END IF;
   IF NOT has_table_privilege('service_role', 'public.customer_metrics_mv', 'SELECT') THEN
     RAISE EXCEPTION 'A7 FALHOU: service_role perdeu customer_metrics_mv (ai-ops-agent le select *)';
+  END IF;
+  IF pg_get_viewdef('public.v_pedido_snapshot_proprio'::regclass) !~ 'is_employee' THEN
+    RAISE EXCEPTION 'A8 FALHOU: v_pedido_snapshot_proprio sem excluir titular staff — o vendedor leria o snapshot do comprador';
   END IF;
   RAISE NOTICE 'fatia 4a-1 ok: v_pedido_snapshot_proprio (self, so SELECT) + customer_metrics_mv sem document';
 END

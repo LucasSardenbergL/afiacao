@@ -71,9 +71,11 @@ export function useSaveContact() {
       };
 
       if (input.id) {
-         
+        // O dono do contato e quem o criou são imutáveis na edição (grant de coluna de UPDATE, 20261126140000):
+        // reatribuir um contato para um cliente da carteira o exibiria inteiro pela view.
+        const { customer_user_id: _dono, created_by: _criador, ...edicao } = payload;
         const { data, error } = await supabase.from('customer_contacts')
-          .update(payload).eq('id', input.id).select('id, customer_user_id').single();
+          .update(edicao).eq('id', input.id).select('id, customer_user_id').single();
         if (error) throw error;
         return data;
       }
