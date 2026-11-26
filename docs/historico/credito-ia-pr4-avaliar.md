@@ -24,7 +24,13 @@ PR [#4197](https://github.com/LucasSardenbergL/afiacao/pull/4197) (merge `9efe21
 | Edge | Lovable MCP, pacote `aaebd65515ec` (envio 10:33:01Z) | 11/11 sha256 conferidos pelo agente, `No files were edited.`; sonda (recibo **#1452**) **DEPLOY CONFIRMADO** `v1.0-ficha-claude-travas-writer-unico` |
 | Sensor de edição | `lovable-sensor-edicao.ts` 31 min após o envio | **SEM_EDICAO** (0 commits `gpt-engineer-app`) |
 | Cron `*/15` | `cron.job_run_details` + `credito_avaliacao` | ticks 10:45Z e 11:00Z `succeeded`; às 11:04Z: **24 grupos avaliados, 23 propostas `pendente`, 1 erro** (`stop_reason=max_tokens`, em backoff de 15 min — falha fechada, sem proposta) de 517 na fila ⇒ 1ª leva completa em ~11 h a 12 grupos/tick |
-| Publish | founder | pendente na data deste registro |
+| Publish | founder | feito 2026-11-26; `credito/limites` presente no bundle servido (`/assets/index-*.js` de `steu.lovable.app`) |
+| Fix `max_tokens` ([#4211](https://github.com/LucasSardenbergL/afiacao/pull/4211)) | redeploy Lovable MCP (envio 15:48:28Z), pacote `1da42191fea1` | 11/11 sha256; sonda (recibo **#1475**) **DEPLOY CONFIRMADO** `v1.1-max-tokens-4096`. Às 15:53Z: 242/517 avaliados, 237 pendentes, 5 erros — todos `max_tokens` de ANTES do redeploy (retentam na v1.1) |
+
+**Sensor `EDICAO_DETECTADA` no redeploy, sem revert (decisão):** a resposta do MCP trouxe `edit_id`/`commit_sha`
+e o sensor sai 1 por esse sinal, mas o único commit do bot (`2d4dbfc34`) é o `types.ts` **regenerado** (a tabela
+`credito_reducao_verificacao` da migration `20261126150000` de outra sessão, já em prod) — o próprio sensor o lista
+como "tolerado · 0 fora dos gerados tolerados". Reverter deixaria o `types.ts` defasado da prod.
 
 ## Lições
 
