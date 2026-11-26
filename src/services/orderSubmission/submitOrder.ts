@@ -28,6 +28,7 @@ import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
 import type { BloqueioAtpPedido } from './atp';
 import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } from './prazoDecisao';
 import { assinaturaServicosAfiacao, avisoOsAfiacaoDesatualizada } from './checkout-envelope';
+import { falhasDaOrdemProducao, falhasDeTransporteOp } from './ordemProducao';
 // O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
 import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 
@@ -549,8 +550,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                 produtoAcabadoCount: produtoAcabadoItems.length,
               });
             } else {
+              // Para o aviso de transporte (sem quantidade: a conferência é de quem cuida da produção).
+              const itensEnviadosOp = produtoAcabadoItems.map(c => c.product.descricao || c.product.codigo);
               try {
-                await supabase.functions.invoke('omie-vendas-sync', {
+                // 8.4: o invoke NÃO lança — antes `error` e o desfecho eram ignorados e a OP recusada pelo
+                // Omie saía como "criada". A edge v1.48 devolve o desfecho por item (./ordemProducao.ts lê também a resposta da v1.47).
+                const { data: opData, error: opError } = await supabase.functions.invoke('omie-vendas-sync', {
                   body: {
                     action: 'criar_ordem_producao', account: 'colacor',
                     sales_order_id: salesOrderId,
@@ -567,14 +572,21 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                     })),
                   },
                 });
-                logger.info('Production orders created', {
+                // Erro de transporte: a edge pode ter criado parte das OPs — aviso por produto, erro cru só no log.
+                const erroTransporteOp = opError
+                  ? (await mensagemDoErroEdge(opError)) || opError.message || 'Falha ao criar a ordem de produção'
+                  : null;
+                const falhasOp = opError ? falhasDeTransporteOp(itensEnviadosOp) : falhasDaOrdemProducao(opData);
+                for (const m of falhasOp) errors.push({ step: 'create_production_order', message: m });
+                logger[falhasOp.length ? 'warn' : 'info']('Production orders', {
                   stage: 'op_creation',
                   account: 'colacor',
                   salesOrderId,
                   count: produtoAcabadoItems.length,
+                  falhas: falhasOp.length,
+                  erro: erroTransporteOp,
                 });
               } catch (opErr: unknown) {
-                const opMessage = opErr instanceof Error ? opErr.message : 'Falha ao criar OP';
                 logger.critical('Failed to create production orders for produto acabado', {
                   stage: 'op_creation',
                   account: 'colacor',
@@ -583,7 +595,9 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                   itemCount: produtoAcabadoItems.length,
                   error: opErr,
                 });
-                errors.push({ step: 'create_production_order', message: opMessage });
+                for (const m of falhasDeTransporteOp(itensEnviadosOp)) {
+                  errors.push({ step: 'create_production_order', message: m });
+                }
               }
             }
           }

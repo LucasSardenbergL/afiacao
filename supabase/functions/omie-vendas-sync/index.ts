@@ -39,6 +39,7 @@ import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { infoAdicionalItem, infoAdicionalItemAninhada, previsaoEntregaOmie, previsaoOrdemProducao } from "./o-que-vai-ao-omie.ts";
+import { agruparItensOp, type DesfechoOp, lerRespostaOp, motivoDaFalhaOp, resumoOps, rotuloOp } from "./ordem-producao.ts";
 import {
   type CabecalhoLido,
   cabecalhoDaEdicao,
@@ -4544,48 +4545,68 @@ Deno.serve(async (req) => {
         const { sales_order_id: opSalesId, items: opItems } = params;
         if (!opSalesId || !opItems?.length) throw new Error("Dados insuficientes para criar ordem de produção");
 
-        const opItemsTyped: OpItemInput[] = opItems;
-        const createdOPs: CreatedOP[] = [];
         // Data prometida: a do item, senão a do PEDIDO LOCAL (front antigo não manda no item).
         // Leitura que falha não fabrica prazo — degrada para hoje na OP e prazo nulo, como antes.
         const { data: opSoRow, error: opSoErr } = await supabaseAdmin
           .from("sales_orders").select("ready_by_date").eq("id", opSalesId).maybeSingle();
         if (opSoErr) console.warn(`[Omie Vendas][${account}] OP sem prazo do pedido (leitura falhou): ${opSoErr.message}`);
         const prazoDoPedido = (opSoRow as { ready_by_date?: unknown } | null)?.ready_by_date;
-        for (const opItem of opItemsTyped) {
-          // Create production order in Omie
+        // Mesmo produto em duas linhas → UMA OP com a soma (o cCodIntOP é por produto). ./ordem-producao.ts
+        const opProdutos = agruparItensOp(opItems as OpItemInput[], prazoDoPedido);
+        const createdOPs: CreatedOP[] = [];
+        // `quantidade` = a da OP agregada (soma das linhas) — a conferência no Omie é por esse total (3ª rodada do Codex).
+        const desfechosOp: (DesfechoOp & { descricao: string | null; quantidade?: number })[] = [];
+        for (const opItem of opProdutos) {
+          const descricaoOp = opItem.descricao || opItem.codigo || null;
+          // Determinística por (sales_order, produto) → o Omie dedup o re-fire da OP.
+          // Últimos 12 chars do UUID (não o inteiro): mantém a chave curta — o limite do
+          // cCodIntOP no Omie não é confirmado e a chave precisa caber com folga (~16+N chars).
+          const chaveOp = opItem.omie_codigo_produto ? `OP_${opSalesId.slice(-12)}_${opItem.omie_codigo_produto}` : null;
           const opPayload = {
-            // Determinística por (sales_order, produto) → o Omie dedup o re-fire da OP.
-            // Últimos 12 chars do UUID (não o inteiro): mantém a chave curta — o limite do
-            // cCodIntOP no Omie não é confirmado e a chave precisa caber com folga (~16+N chars).
-            cCodIntOP: `OP_${opSalesId.slice(-12)}_${opItem.omie_codigo_produto}`,
+            cCodIntOP: chaveOp,
             nCodProd: opItem.omie_codigo_produto,
             nQtde: opItem.quantidade,
-            // Previsão da PRODUÇÃO = a data prometida ao cliente (já gravada em production_orders.ready_by_date
-            // logo abaixo); sem ela, hoje. ./o-que-vai-ao-omie.ts.
-            dDtPrevisao: previsaoOrdemProducao(opItem.ready_by_date || prazoDoPedido, hojeSP()),
+            // Previsão da PRODUÇÃO = a data prometida ao cliente (já resolvida com o prazo do pedido no
+            // agrupamento e gravada em production_orders.ready_by_date abaixo); sem ela, hoje. ./o-que-vai-ao-omie.ts.
+            dDtPrevisao: previsaoOrdemProducao(opItem.ready_by_date, hojeSP()),
             cObservacao: `Gerado automaticamente via App - Pedido ${opSalesId.substring(0, 8)}`,
           };
 
+          if (opItem.invalido) {
+            // Nem foi ao Omie: sem linha local executável (uma linha `pending` com a soma parcial ofereceria
+            // "Iniciar Produção" da quantidade errada — 2ª rodada do Codex). O vendedor vê a falha por produto.
+            console.error(`[Omie Vendas][${account}] OP não enviada (${opItem.invalido}):`, descricaoOp);
+            desfechosOp.push({ status: "falhou", tipo: "invalido", motivo: opItem.invalido, chave: null, descricao: descricaoOp });
+            continue;
+          }
+
           let omieOrdemId: number | null = null;
           let omieOrdemNumero: string | null = null;
+          let motivoFalha: string | null = null;
           try {
-            const opResult = (await callOmieVendasApi(
+            const opResult = await callOmieVendasApi(
               "manufatura/ordemproducao/",
               "IncluirOrdemProducao",
               opPayload,
               account
-            )) as { nCodOP?: number; cNumOP?: string } | null;
-            omieOrdemId = opResult?.nCodOP || null;
-            omieOrdemNumero = opResult?.cNumOP || String(omieOrdemId);
-            console.log(`[Omie Vendas][${account}] OP criada: ${omieOrdemNumero}`);
+            );
+            const lida = lerRespostaOp(opResult);
+            if (lida) {
+              omieOrdemId = lida.id;
+              omieOrdemNumero = lida.numero;
+              console.log(`[Omie Vendas][${account}] OP criada: ${rotuloOp(lida.id, lida.numero)}`);
+            } else {
+              motivoFalha = "o Omie respondeu sem o id da OP";
+            }
           } catch (opErr) {
-            const msg = opErr instanceof Error ? opErr.message : String(opErr);
-            console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, msg);
+            // Recusa OU resultado indeterminado (timeout depois de gravar): o front manda conferir no Omie.
+            console.error(`[Omie Vendas][${account}] IncluirOrdemProducao falhou (erro completo):`, opErr);
+            motivoFalha = motivoDaFalhaOp(opErr);
           }
+          if (motivoFalha) console.error(`[Omie Vendas][${account}] Erro ao criar OP:`, motivoFalha);
 
-          // Save to local DB
-          const { data: insertedOP } = await supabaseAdmin.from("production_orders").insert({
+          // Linha local, mesmo sem OP confirmada no Omie: a produção vê o item (comportamento de antes).
+          const { data: insertedOP, error: insErr } = await supabaseAdmin.from("production_orders").insert({
             sales_order_id: opSalesId,
             product_id: opItem.product_id || null,
             product_codigo: opItem.codigo || null,
@@ -4596,15 +4617,40 @@ Deno.serve(async (req) => {
             omie_ordem_producao_id: omieOrdemId,
             omie_ordem_numero: omieOrdemNumero,
             assigned_to: opItem.assigned_to || null,
-            ready_by_date: opItem.ready_by_date || (typeof prazoDoPedido === "string" ? prazoDoPedido : null),
+            ready_by_date: opItem.ready_by_date || null,
             account,
             created_by: userId,
           }).select('id').single();
 
-          createdOPs.push({ id: insertedOP?.id, omie_ordem_id: omieOrdemId, omie_ordem_numero: omieOrdemNumero, descricao: opItem.descricao });
+          if (motivoFalha) {
+            desfechosOp.push({
+              status: "falhou", tipo: "indeterminado", motivo: motivoFalha, chave: chaveOp, descricao: descricaoOp,
+              quantidade: opItem.quantidade,
+            });
+          } else if (insErr) {
+            // A OP EXISTE no Omie, mas o app não a guardou: diz qual é, para ninguém criar outra à mão.
+            desfechosOp.push({
+              status: "falhou",
+              tipo: "sem_registro_local",
+              motivo: `${rotuloOp(omieOrdemId as number, omieOrdemNumero)} existe no Omie, mas o app não confirmou o registro local (${insErr.message})`,
+              chave: chaveOp,
+              descricao: descricaoOp,
+            });
+          } else {
+            desfechosOp.push({
+              status: "criada", omie_ordem_id: omieOrdemId as number, omie_ordem_numero: omieOrdemNumero,
+              descricao: descricaoOp,
+            });
+          }
+          createdOPs.push({
+            id: (insertedOP as { id?: string } | null)?.id, omie_ordem_id: omieOrdemId,
+            omie_ordem_numero: omieOrdemNumero, descricao: opItem.descricao,
+          });
         }
 
-        result = { success: true, production_orders: createdOPs };
+        // success só sem falha (antes: true incondicional). O desfecho por item vai ao front.
+        const resumoOp = resumoOps(desfechosOp);
+        result = { ...resumoOp, production_orders: createdOPs, desfecho: desfechosOp };
         break;
       }
 
