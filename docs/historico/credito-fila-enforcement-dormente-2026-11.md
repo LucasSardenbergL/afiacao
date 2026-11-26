@@ -18,6 +18,20 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
 - **Prova PG17** `db/test-credito-fila.sh`: 190 asserts (inclui 16 falsificações com controle verde), em `C` e `pt_BR.UTF-8`, aplicadas sobre as migrations REAIS do PR 5 (`20261125195900` + `20261125200000`).
 - **Codex** em duas rodadas (desenho e diff, gpt-6.2-astra high): o diff achou 1 P0 (a conta DECLARADA escolhia o flag) e 7 P1 (retry do mesmo 🟡 tornava o item indecidível; r2 registrada deixava r1 aprovável; a sombra do PR 5 mora em outra tabela; o front fabricava fila vazia/flag desligado; "IA aprovar com prazo menor" autorizava o prazo integral; orçamento da IA só por invocação; cron 401 sem `verify_jwt=false`). Todos corrigidos e provados (F14–F16).
 
+## Estado em prod (2026-11-26)
+
+- **Migration aplicada:** `db:aplicar` a partir da main `0d391c0fe`, com ensaio verde (POS OK) → recibo **#1445** (`aplicada`, sha256 `ad8c8316d19f…`). PR #4191 mergeado em `14c92cd04`.
+- **2ª testemunha psql-ro:**
+  - **flag DESLIGADO** em oben, colacor e colacor_sc (versão 0);
+  - as 4 tabelas com RLS, as 2 guardas e 0 grants de escrita fora do dono;
+  - `credito_fila_v` com `security_invoker=on`;
+  - `credito_gate_v2_efetivo` só para service_role; `credito_definir_enforcement` e `credito_decidir_fila` só para authenticated; `credito_autorizar_solicitacao` (PR 2) sem grant;
+  - crons `credito-fila-alertar` (`*/15`) e `credito-fila-recomendar` (`*/10`) ativos como `postgres`;
+  - prontidão `false` nas 3 empresas.
+- **Edge `credito-fila-recomendar`: NÃO deployada ainda.** O pacote `4a0053be1bc2` está pronto, com a pré-condição de banco satisfeita, mas o conector Lovable pediu reautenticação. Até subir, o cron bate num endpoint inexistente a cada 10 min. É inofensivo: nada escreve e não há item na fila. Depois do deploy, rodar `bun run sonda:sql credito-fila-recomendar` e `bun run pendencias:deploy`.
+- **Follow-up:** o `claude_ro` não lê `credito_fila_v`. O laço de ACL da view revogou o SELECT dele, que as tabelas mantêm. Não afeta o produto (o gestor lê pela RLS), só o diagnóstico pelo psql-ro, que hoje precisa ler as tabelas-base.
+- **Publish (founder):** só depois da edge **Active**. A tela `/credito/fila` e o item "Fila de crédito" no menu Financeiro só aparecem após o Publish.
+
 ## Lições
 
 - **`_push_enviar` volta em silêncio** sem `CRON_SECRET` ou sem destinatário — gravar "alerta enviado" depois dele é mentira. Meça o canal ANTES (segredo, assinatura) e registre `sem_canal`; e `enfileirado` no pg_net ainda não é entrega.
