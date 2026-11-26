@@ -48,7 +48,7 @@ gp()   { printf '{\\"id\\":\\"p\\",\\"latest_commit_sha\\":\\"%s\\"}' "$1"; }
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project; } > "$TMP/stream-timeout_pos_deploy.jsonl"
 
 # ── origin com o vigia sob teste + lovable-publish.sh falso (PUBLICAR até o "deploy") ───────────
-git init -q "$TMP/origin"; mkdir -p "$TMP/origin/scripts"
+git init -q -b main "$TMP/origin"; mkdir -p "$TMP/origin/scripts"
 cp "$VIGIA" "$TMP/origin/scripts/lovable-vigia.sh"
 cat > "$TMP/origin/scripts/lovable-publish.sh" <<'EOF'
 #!/usr/bin/env bash
