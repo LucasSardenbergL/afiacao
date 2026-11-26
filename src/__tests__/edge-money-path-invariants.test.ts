@@ -704,7 +704,9 @@ describe('guardrail money-path: alterar_pedido não lê `null` do Omie como muta
   };
 
   // As 4 mutações + a leitura de confirmação: todas deixam o Omie em estado que o app não gravou.
-  const APOS_MUTAR = ['ExcluirItemPedido', 'IncluirItemPedido', 'AlterarPedidoVenda', 'TotalizarPedido'];
+  // Ordem da v1.49: o cabeçalho (AlterarPedidoVenda) vai ANTES do delete+add — se o Omie recusar o
+  // cabeçalho/frete reenviado, os itens ficam intactos (docs/historico/edicao-pedido-envio-omie.md).
+  const APOS_MUTAR = ['AlterarPedidoVenda', 'ExcluirItemPedido', 'IncluirItemPedido', 'TotalizarPedido'];
 
   it('sentinela: a extração achou o bloco e EXATAMENTE as chamadas conhecidas ao Omie', () => {
     expect(bloco, 'bloco da action alterar_pedido não encontrado').not.toBe('');

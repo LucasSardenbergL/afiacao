@@ -16,7 +16,7 @@ import { codigoObenDoBuscarCliente } from '@/hooks/unifiedOrder/codigo-oben-busc
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
-import { precoPartida } from '@/lib/pricing/precoPartida';
+import { precoDeNascimento } from '@/lib/pricing/precoDeNascimento';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
@@ -303,22 +303,14 @@ export function useUnifiedOrder() {
 
   // Pricing helpers (defined here so useCart can depend on them)
   const getProductPrice = useCallback((product: Product): number => {
-    const account = (product.account || 'oben') as ProductAccount;
-    const contaKey = account === 'colacor' ? 'colacor' : 'oben'; // wizard só vende oben/colacor
-    const prices = contaKey === 'oben' ? customerPricesOben : customerPricesColacor;
-    const datas = contaKey === 'oben' ? customerPriceDatesOben : customerPriceDatesColacor;
-    const omiePrice = prices[product.omie_codigo_produto];
-    const tier = tierPorConta?.[contaKey] ?? null;
-    const mult = tier ? (multConfig?.[contaKey]?.[tier] ?? null) : null;
-    // Precedência de nascimento (spec §4): último praticado ≤180d > tabela×mult(tier) > tabela.
-    return precoPartida({
-      tabela: product.valor_unitario,
-      ultimoPraticado: omiePrice && omiePrice > 0 ? omiePrice : null,
-      ultimoPraticadoEm: datas[product.omie_codigo_produto] ?? null,
-      hoje: new Date(),
-      tier,
-      mult,
-    });
+    // Mesma decisão que a edição de pedido usa (src/lib/pricing/precoDeNascimento.ts). `null` = sem
+    // praticado e sem tabela positiva: devolve a tabela como sempre (o carrinho trata ≤ 0).
+    return precoDeNascimento(product, {
+      precos: { oben: customerPricesOben, colacor: customerPricesColacor },
+      datas: { oben: customerPriceDatesOben, colacor: customerPriceDatesColacor },
+      tierPorConta,
+      multConfig,
+    }, new Date()) ?? product.valor_unitario;
   }, [
     customerPricesOben, customerPricesColacor,
     customerPriceDatesOben, customerPriceDatesColacor,

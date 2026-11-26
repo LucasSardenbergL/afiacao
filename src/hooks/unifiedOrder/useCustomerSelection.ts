@@ -19,7 +19,8 @@ import {
   type ContaAutoCadastro,
   type DesfechoAutoCadastro,
 } from './ensure-helpers';
-import { montarPrecosLocaisPorConta, type PrecosLocaisPorConta } from './precos-por-conta';
+import type { PrecosLocaisPorConta } from './precos-por-conta';
+import { resolverPrecosLocaisPorConta, type LinhaPrecoPraticado } from './precos-praticados';
 import type {
   OmieCustomer,
   AddressData,
@@ -416,37 +417,10 @@ export function useCustomerSelection({
    *  (oben/colacor). O product_id (uuid de omie_products) já é por-conta;
    *  trazemos `account` p/ NÃO achatar omie_codigo_produto (colide entre as
    *  contas Omie) num Record único — separação em montarPrecosLocaisPorConta. */
-  const resolveLocalPricesByOmieCode = useCallback(async (
-    localPriceRows: Array<{ product_id: string; unit_price: number; ultimo_praticado_em?: string | null }> | null,
-  ): Promise<PrecosLocaisPorConta> => {
-    const vazio: PrecosLocaisPorConta = { oben: {}, colacor: {}, datasOben: {}, datasColacor: {} };
-    if (!localPriceRows || localPriceRows.length === 0) return vazio;
-    const localPricesByProduct: Record<string, number> = {};
-    const datasByProduct: Record<string, string | null> = {};
-    for (const row of localPriceRows) {
-      // get_ultimos vem DISTINCT ON (product_id) ORDER BY data DESC → a 1ª linha por
-      // produto é a mais recente; capturamos a data DELA junto com o preço.
-      if (!localPricesByProduct[row.product_id]) {
-        localPricesByProduct[row.product_id] = row.unit_price;
-        datasByProduct[row.product_id] = row.ultimo_praticado_em ?? null;
-      }
-    }
-    const productIds = Object.keys(localPricesByProduct);
-    if (productIds.length === 0) return vazio;
-    const { data: productMappings, error } = await supabase
-      .from('omie_products').select('id, omie_codigo_produto, account').in('id', productIds);
-    // Falha do mapeamento → degrada honesto (cada conta cai p/ o preço de tabela
-    // `valor_unitario`, nunca R$0), mas deixa RASTRO: sem ele o preço-cliente
-    // sumiria silencioso mesmo com a RPC tendo retornado preços (Codex P2).
-    if (error) {
-      logger.warn('resolveLocalPricesByOmieCode: mapeamento omie_products falhou (degrada p/ preço de tabela)', {
-        stage: 'resolve_local_prices_omie_map',
-        productIdsCount: productIds.length,
-        error,
-      });
-    }
-    return montarPrecosLocaisPorConta(localPricesByProduct, productMappings ?? [], datasByProduct);
-  }, []);
+  const resolveLocalPricesByOmieCode = useCallback(
+    (rows: LinhaPrecoPraticado[] | null): Promise<PrecosLocaisPorConta> => resolverPrecosLocaisPorConta(rows),
+    [],
+  );
 
   // Purchase history (local + Omie) agora vem do useQuery acima
   // (key: ['customer-purchase-history', customerUserId, codigoOben, codigoColacor])

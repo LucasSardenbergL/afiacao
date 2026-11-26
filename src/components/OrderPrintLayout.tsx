@@ -1,5 +1,3 @@
-import { format, addDays } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import { escapeHtml } from '@/lib/escape-html';
 import { formatPrecoOuAusente } from '@/lib/format';
 
@@ -47,33 +45,22 @@ export interface PrintOrderData {
   avisoDesconto?: string;
 }
 
-/** Extract day offsets from parcela code or description.
- *  Handles codes like "028/042", "A28", "S37" and descriptions like "28/42 DDL", "30/60/90 dias".
+/**
+ * Linha de "Vencimentos" do cupom — ÚNICA para as duas vias (`openPrintOrder` e `buildSingleOrderHtml`).
+ *
+ * Antes as duas vias inventavam o calendário: data = dia da IMPRESSÃO + os números achados no código da
+ * parcela, e o total dividido igualmente. Reimprimir no dia seguinte mudava todos os vencimentos; o
+ * código `S41` da Oben (28/42/56 dias) saía como "41 dias"; e o PV pode ter parcelas de valores
+ * diferentes negociadas no Omie (revisão 2026-11-25 + Codex 2026-11-26). O app não guarda as parcelas
+ * reais do PV — elas nascem no faturamento. Ausente ≠ inventado: o cupom diz que estão a definir, e a
+ * condição comercial (`condPagamento`) continua impressa como "Prazo". À vista ou sem condição → nada.
  */
-function parseParcelaDays(codeOrDesc?: string): number[] {
-  if (!codeOrDesc) return [];
-  const clean = codeOrDesc.trim();
-  if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
-  // Extract all numeric groups (1-3 digits) — handles codes like "S37", "A28", "028/042", "28/42 DDL"
-  const matches = clean.match(/(\d{1,3})/g);
-  if (!matches) return [];
-  return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
-}
-
-function buildInstallmentDates(parcelaCode?: string, condPagamento?: string, total?: number): string {
-  // Try description first (more reliable), then code
-  let days = parseParcelaDays(condPagamento);
-  if (days.length === 0) days = parseParcelaDays(parcelaCode);
-  if (days.length === 0) return '';
-  const today = new Date();
-  const parcValue = total && days.length > 0 ? total / days.length : 0;
-  const lines = days.map((d, i) => {
-    const dueDate = addDays(today, d);
-    const dateStr = format(dueDate, 'dd/MM/yyyy', { locale: ptBR });
-    const valStr = parcValue > 0 ? ` – ${fmt(parcValue)}` : '';
-    return `${i + 1}ª parcela: ${dateStr}${valStr}`;
-  });
-  return lines.join(' | ');
+export function textoVencimentosDoCupom(data: Pick<PrintOrderData, 'parcelaCode' | 'condPagamento'>): string {
+  const cond = (data.condPagamento ?? '').trim();
+  const codigo = (data.parcelaCode ?? '').trim();
+  if (!cond && !codigo) return '';
+  if (codigo === '000' || cond === '000' || /vista/i.test(cond)) return '';
+  return 'A definir no faturamento — as datas e os valores de cada parcela saem na nota fiscal e nos boletos.';
 }
 
 function buildObsText(data: PrintOrderData): string {
@@ -137,7 +124,7 @@ export function totaisComDescontoHtml(data: PrintOrderData): string {
 
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
-  const installmentText = buildInstallmentDates(data.parcelaCode, data.condPagamento, data.total);
+  const installmentText = textoVencimentosDoCupom(data);
   const itemsRows = data.items.map((item, i) => {
     const descLines = [escapeHtml(item.descricao)];
     if (item.tintCorId && item.tintNomeCor) {
