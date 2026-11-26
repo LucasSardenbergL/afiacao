@@ -48,9 +48,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO sand
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO sandbox_exec_teste;
 SQL
 
-PASS=0; FAIL=0
-eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
-
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 1 — PRÉ-REQUISITOS (o que a migração lê mas não cria; helpers de role verbatim de prod)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -170,7 +167,8 @@ PY
 espelho "'1daabbc57fe299393c83f66720a53975'" "'0daabbc57fe299393c83f66720a53975'"
 if P -q -1 -f "$SAB/m.sql" > "$SAB/g.log" 2>&1; then bad "G guarda não pegou drift"
 else tem "G guarda aborta com corpo de prod divergente" "$(cat "$SAB/g.log")" "GUARDA credito-ia-avaliar"; fi
-[ "$(Pq -c "SELECT to_regclass('public.credito_avaliacao') IS NULL")" = t ] && ok "G nada ficou da tentativa abortada" || bad "G sobrou objeto da tentativa abortada"
+if [ "$(Pq -c "SELECT to_regclass('public.credito_avaliacao') IS NULL")" = t ]; then ok "G nada ficou da tentativa abortada"
+else bad "G sobrou objeto da tentativa abortada"; fi
 
 if P -q -1 -f "$MIG4" > "$SAB/a.log" 2>&1; then ok "A0 migration aplica (guarda + objetos + pós-condição)"
 else bad "A0 migration falhou: $(head -c 600 "$SAB/a.log")"; exit 1; fi
