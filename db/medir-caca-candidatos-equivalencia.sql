@@ -2,6 +2,10 @@
 --   bun run db:aplicar db/medir-caca-candidatos-equivalencia.sql --ensaio   (SEMPRE --ensaio)
 -- Por persona (farmer, master): md5 linha a linha, ordenado, da view ATUAL × o corpo NOVO inline.
 -- Mesmo md5 e mesma contagem = mesma saída. Roda antes do apply (view antiga viva).
+-- A ANTIGA lê com enable_nestloop=off: sem isso ela não termina em 300 s (é o defeito); o plano
+-- não muda o resultado. A NOVA lê com o planejador PADRÃO (é como vai rodar). Mesma transação →
+-- mesmo now() e mesmos dados. ATENÇÃO: medir com count(*) engana — o planejador remove os LEFT
+-- JOINs não usados (justamente os caros); a prova tem de projetar todas as colunas.
 CREATE TEMP VIEW caca_cand_novo AS
  WITH cli AS (
          SELECT p.user_id,
@@ -156,15 +160,22 @@ DO $m$
 DECLARE
   u  uuid;
   n1 bigint; d1 text; n2 bigint; d2 text;
+  t0 timestamptz; ms1 numeric;
 BEGIN
   FOREACH u IN ARRAY ARRAY['700657a1-d75d-4c72-99b1-0a0f2065fa29', '414a9727-ad1d-4998-914e-9c6ccf26cf50']::uuid[] LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', u, 'role', 'authenticated')::text, true);
     PERFORM set_config('request.jwt.claim.sub', u::text, true);
+    PERFORM set_config('enable_nestloop', 'off', true);
+    t0 := clock_timestamp();
     SELECT count(*), md5(string_agg(z::text, '|' ORDER BY z.documento, z.empresa_alvo)) INTO n1, d1
       FROM (SELECT documento, empresa_alvo, cidade_uf, ramo, ticket_faixa, familias, compra_em_outra_empresa, ultima_compra_grupo_dias, nome, telefone, cliente_user_id, contato_visivel FROM public.v_caca_candidatos) z;
+    ms1 := round(extract(epoch FROM clock_timestamp() - t0) * 1000);
+    PERFORM set_config('enable_nestloop', 'on', true);
+    t0 := clock_timestamp();
     SELECT count(*), md5(string_agg(z::text, '|' ORDER BY z.documento, z.empresa_alvo)) INTO n2, d2
       FROM (SELECT documento, empresa_alvo, cidade_uf, ramo, ticket_faixa, familias, compra_em_outra_empresa, ultima_compra_grupo_dias, nome, telefone, cliente_user_id, contato_visivel FROM pg_temp.caca_cand_novo) z;
-    RAISE NOTICE 'MED persona=% antiga n=% md5=% | nova n=% md5=% | igual=%', u, n1, d1, n2, d2, (n1 = n2 AND d1 = d2);
+    RAISE NOTICE 'MED persona=% antiga(nestloop off) n=% md5=% ms=% | nova n=% md5=% ms=% | igual=%',
+      u, n1, d1, ms1, n2, d2, round(extract(epoch FROM clock_timestamp() - t0) * 1000), (n1 = n2 AND d1 = d2);
     IF NOT (n1 = n2 AND d1 = d2) THEN
       RAISE EXCEPTION 'EQUIVALENCIA QUEBRADA persona=%', u;
     END IF;
