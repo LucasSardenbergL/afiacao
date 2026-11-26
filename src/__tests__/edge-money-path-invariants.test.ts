@@ -5378,10 +5378,14 @@ describe('omie-vendas-sync — gate v2 efetivo (6b)', () => {
       expect(i, `${antes} sumiu do criar_pedido`).toBeGreaterThan(-1);
       expect(i, `o v2 roda antes de ${antes}`).toBeLessThan(v2);
     }
+    // O que importa é o THROW, não só a chamada (Codex diff P2: mover o throw para depois do claim
+    // passava verde): a recusa tem de sair antes do claim e do IncluirPedido.
+    const parada = criar.indexOf('if (!creditoV2.segue) throw new Error(creditoV2.mensagem);');
+    expect(parada, 'a parada do v2 sumiu do criar_pedido').toBeGreaterThan(v2);
     for (const depois of ['"sales_order_reivindicar_envio"', 'await criarPedidoVenda(']) {
       const i = criar.indexOf(depois);
       expect(i, `${depois} sumiu do criar_pedido`).toBeGreaterThan(-1);
-      expect(v2, `o v2 roda depois de ${depois} — chegaria tarde`).toBeLessThan(i);
+      expect(parada, `a parada do v2 vem depois de ${depois} — chegaria tarde`).toBeLessThan(i);
     }
     expect(criar).toMatch(/revisao: revisaoCriacao\?\.revisao \?\? null/);
     expect(criar, 'o v2 que segura tem de LANÇAR (blocked novo é lido como sucesso por bundle antigo)')
@@ -5395,10 +5399,12 @@ describe('omie-vendas-sync — gate v2 efetivo (6b)', () => {
     const piso = alterar.indexOf('await gateCredito(');
     expect(piso).toBeGreaterThan(-1);
     expect(piso, 'o v2 roda antes do piso').toBeLessThan(v2);
+    const parada = alterar.indexOf('if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);');
+    expect(parada, 'a parada do v2 sumiu do alterar_pedido').toBeGreaterThan(v2);
     for (const depois of ['"ExcluirItemPedido"', '"IncluirItemPedido"', '"AlterarPedidoVenda"']) {
       const i = alterar.indexOf(depois);
       expect(i, `${depois} sumiu do alterar_pedido`).toBeGreaterThan(-1);
-      expect(v2, `o v2 roda depois de ${depois} — o Omie já teria mudado`).toBeLessThan(i);
+      expect(parada, `a parada do v2 vem depois de ${depois} — o Omie já teria mudado`).toBeLessThan(i);
     }
     // Fora do `if (edicaoExigeGate(...)) { ... }`: o bloco do if fecha antes do v2.
     const ifGate = alterar.indexOf('if (edicaoExigeGate(');

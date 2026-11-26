@@ -9,15 +9,15 @@
 //  - `avaliado` + faixa `verde` → SEGUE.
 //  - TODO o resto SEGURA, como ERRO (nunca `blocked` novo: bundle antigo lê `blocked`
 //    desconhecido como sucesso — index.ts, mesmo motivo do `credito_indisponivel`):
-//      · amarelo → aguardando autorização na fila /credito/fila;
-//      · vermelho → recusado pela regra v2;
+//      · amarelo COM solicitação → aguardando autorização na fila /credito/fila;
+//      · amarelo SEM solicitação (pendência de grupo/títulos) → pendência, falar com o financeiro;
+//      · vermelho → recusado (mensagem genérica: o motivo pode ser piso, não limite);
+//      · `avaliado` só conta com ligado:true; verde exige decisao_id e reserva_id;
 //      · pedido_inexistente / conta_divergente / revisao_inexistente / revisao_superada → seguro
 //        e revalido (nunca despacho conteúdo velho; `pedido_inexistente` vem ANTES do flag na RPC);
 //      · erro de transporte, 22023 ou resposta sem forma → indisponível. Sem veredito a edge não
 //        sabe o flag; uma resposta perdida pode esconder uma avaliação já gravada (Codex Q1, P0).
 //        É o ÚNICO desvio do caminho de hoje com o flag desligado: a RPC fora do ar segura o envio.
-
-import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 /** Subconjunto do SupabaseClient usado aqui (duplo de teste). */
 export interface ClienteGateV2 {
@@ -36,7 +36,9 @@ export const MENSAGEM_V2_INDISPONIVEL =
 export const MENSAGEM_V2_AMARELO =
   "Pedido não enviado: aguardando autorização de crédito na fila (/credito/fila). Reenvie depois da autorização.";
 export const MENSAGEM_V2_VERMELHO =
-  "Pedido não enviado: crédito recusado pela regra do limite do grupo.";
+  "Pedido não enviado: crédito recusado. Fale com o financeiro antes de reenviar.";
+export const MENSAGEM_V2_PENDENCIA =
+  "Pedido não enviado: o crédito do cliente tem uma pendência de cadastro (grupo ou títulos). Fale com o financeiro antes de reenviar.";
 export const MENSAGEM_V2_REVALIDAR =
   "Pedido não enviado: a revisão de crédito deste pedido mudou. Recarregue o pedido e envie de novo.";
 
@@ -62,10 +64,10 @@ export async function gateV2Efetivo(
     });
     if (r.error) throw new Error(r.error.message);
     data = r.data;
-  } catch (e) {
-    const msg = (mensagemDeErro(e) ?? "sem resposta").slice(0, 300);
-    console.warn(`[gate-v2][${company}] indisponível (${contexto}): ${msg} — SEGURADO`);
-    return { segue: false, resultado: "indisponivel", mensagem: `${MENSAGEM_V2_INDISPONIVEL} (${msg})` };
+  } catch {
+    // Texto bruto da RPC NUNCA vai ao cliente nem ao log (Codex diff P1): pode carregar dado de crédito.
+    console.warn(`[gate-v2][${company}] indisponível (${contexto}) — SEGURADO`);
+    return { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL };
   }
 
   const o = (data && typeof data === "object" && !Array.isArray(data)) ? data as Record<string, unknown> : null;
@@ -73,16 +75,25 @@ export async function gateV2Efetivo(
 
   if (resultado === "desligado" && o?.ligado === false) return { segue: true, resultado: "desligado" };
 
-  if (resultado === "avaliado") {
-    const faixa = o?.faixa;
-    if (faixa === "verde") return { segue: true, resultado: "verde" };
+  // Avaliado só vale com ligado:true (o núcleo só roda com o flag ligado). Contraditório → sem forma.
+  if (resultado === "avaliado" && o?.ligado === true) {
+    const faixa = o.faixa;
+    const texto = (v: unknown) => typeof v === "string" && v.length > 0;
+    // Verde só segue com a decisão E a reserva gravadas pelo núcleo (Codex diff P1): verde sem os
+    // ids não prova reserva nenhuma → sem forma, segura.
+    if (faixa === "verde" && texto(o.decisao_id) && texto(o.reserva_id)) return { segue: true, resultado: "verde" };
     if (faixa === "amarelo") {
-      const sol = typeof o?.solicitacao_id === "string" ? ` · solicitação ${o.solicitacao_id}` : "";
-      console.warn(`[gate-v2][${company}] amarelo (${contexto}) — SEGURADO na fila${sol}`);
-      return { segue: false, resultado: "amarelo", mensagem: `${MENSAGEM_V2_AMARELO}${sol}` };
+      if (texto(o.solicitacao_id)) {
+        console.warn(`[gate-v2][${company}] amarelo (${contexto}) — SEGURADO na fila · solicitação ${o.solicitacao_id}`);
+        return { segue: false, resultado: "amarelo", mensagem: `${MENSAGEM_V2_AMARELO} · solicitação ${o.solicitacao_id}` };
+      }
+      // Amarelo SEM solicitação (sem_grupo, grupo_conflito, piso_indeterminado, grupo_mudou): ninguém
+      // pode autorizar na fila — mandar aguardar seria prometer o que não existe (Codex diff P1).
+      console.warn(`[gate-v2][${company}] amarelo sem solicitação (${contexto}) — SEGURADO por pendência`);
+      return { segue: false, resultado: "pendencia", mensagem: MENSAGEM_V2_PENDENCIA };
     }
     if (faixa === "vermelho") {
-      console.warn(`[gate-v2][${company}] vermelho (${contexto}) — RECUSADO (${String(o?.motivo ?? "?")})`);
+      console.warn(`[gate-v2][${company}] vermelho (${contexto}) — RECUSADO`);
       return { segue: false, resultado: "vermelho", mensagem: MENSAGEM_V2_VERMELHO };
     }
   }
@@ -92,7 +103,9 @@ export async function gateV2Efetivo(
     return { segue: false, resultado, mensagem: `${MENSAGEM_V2_REVALIDAR} (${resultado})` };
   }
 
-  // Forma desconhecida (inclui `desligado` sem ligado:false e `avaliado` sem faixa): sem veredito.
-  console.warn(`[gate-v2][${company}] resposta sem forma (${contexto}): ${JSON.stringify(data).slice(0, 200)} — SEGURADO`);
-  return { segue: false, resultado: "indisponivel", mensagem: `${MENSAGEM_V2_INDISPONIVEL} (resposta sem forma)` };
+  // Forma desconhecida (inclui `desligado` sem ligado:false, `avaliado` contraditório ou incompleto):
+  // sem veredito. No log só os NOMES dos campos, nunca os valores (podem ser dado de crédito).
+  const campos = o ? Object.keys(o).sort().join(",") : (Array.isArray(data) ? "array" : typeof data);
+  console.warn(`[gate-v2][${company}] resposta sem forma (${contexto}): campos=[${campos}] — SEGURADO`);
+  return { segue: false, resultado: "indisponivel", mensagem: MENSAGEM_V2_INDISPONIVEL };
 }
