@@ -3722,9 +3722,9 @@ Deno.serve(async (req) => {
           // transitório é ambíguo quanto ao efeito).
           throw new Error(
             `Falha ao atualizar cabeçalho do pedido no Omie: ${msg}. ` +
-              `Os itens do pedido no Omie NÃO foram alterados; a condição de pagamento/observações podem ` +
-              `ou não ter sido atualizadas e o registro local NÃO foi gravado. Confira o pedido no Omie ` +
-              `e recarregue antes de salvar de novo.`,
+              `O pedido no Omie pode ter ficado PARCIALMENTE alterado (os itens NÃO foram tocados; a ` +
+              `condição de pagamento/observações podem ou não ter sido atualizadas) e o registro local ` +
+              `NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
           );
         }
 

@@ -256,6 +256,10 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 1, prova: '`WHERE id = ANY(p_order_ids)` e o caller passa `[id]`' }],
 
   // ── Teto MEDIDO nos dados: pior caso sobre os parâmetros reais ──────────────────────────
+  // Mesma RPC/parâmetro (UM cliente) que o Novo Pedido, agora lida também pela edição de pedido.
+  ['get_ultimos_precos_cliente @ src/hooks/unifiedOrder/precos-praticados.ts',
+    { tipo: 'medido', teto: 407, medidoEm: '2026-11-26', revisarAte: '2027-11-26',
+      prova: 'a mesma consulta da entrada de useCustomerSelection abaixo (count DISTINCT product_id por customer_user_id, filtros da função) — máx 374 em 2026-11-26' }],
   ['get_ultimos_precos_cliente @ src/hooks/unifiedOrder/useCustomerSelection.ts',
     { tipo: 'medido', teto: 407, medidoEm: '2026-08-20', revisarAte: '2027-08-20',
       prova: 'SELECT customer_user_id, count(DISTINCT product_id) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id (mesmos filtros da função: deleted_at IS NULL, status NOT IN (cancelado,orcamento), unit_price>0) GROUP BY 1 ORDER BY 2 DESC — máx 407' }],
