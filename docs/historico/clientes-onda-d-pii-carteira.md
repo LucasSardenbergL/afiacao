@@ -122,7 +122,17 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   exposta a anon/authenticated); nenhuma policy lê essas colunas; as novas `credito_ficha` e
   `credito_fila_propostas` (`20261126090000`, pendente) são SECDEF. Validado por fora: anon e authenticated
   sem SELECT de tabela e sem as 4 colunas, com identidade e escrita; `service_role` intacto. API real (anon):
-  `select=email` → 42501 no grant. Falta a prova como usuário logado (smoke do founder).
+  `select=email` → 42501 no grant.
+- **Teste logado em prod pós-3b (master, navegador do app, build `9efe21ae`), zero 4xx da fatia:**
+  - `/admin/customers` (lista via `listar_clientes_base`);
+  - ficha 360 (identidade de `profiles` + contato de `v_perfil_contato`/`v_endereco_contato`);
+  - `governance/users`, `governance/permissions`, `governance/settings` e `admin/sip-credentials` (`v_perfil_equipe`);
+  - seleção de cliente no novo pedido (vínculo resolvido pelo mapa Omie; a RPC `cliente_por_documento` não
+    foi exercitada pela tela — coberta pelo catálogo e pelo harness).
+  - Varredura do build servido: nenhuma leitura de `profiles` pede contato ou `*`; as 8 edges que leem contato
+    usam `service_role`; nenhum trigger de `profiles` consulta a tabela.
+  - Não coberto: persona farmer logada (o ensaio com `SET ROLE` é impossível no envelope, que roda em SECURITY
+    DEFINER). Único 4xx visto: `credito_fila_v` → 403, alheio à fatia (não depende de `profiles`).
 - **Fatia 4 (não entra aqui):** `customer_metrics_mv.document`; `sales_orders.customer_document/address/phone`;
   policies de `customer_contacts` e `addresses`; `cliente_grupo_membros.documento` e
   `v_grupo_contas_receber_por_doc`; endereço em `v_grupo_contatos`; edges `omie-cliente` (busca de staff e
