@@ -108,11 +108,6 @@ const G5 = /(?<!\?)\.data\s*(?:(?:\?\?|\|\|)\s*(?:\[\]|\{\}|0\b|null\b)|as\s[^;\
 // piso: só encolhe se um deles for reescrito, e o gate reprova qualquer crescimento.
 const G5_BASELINE: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/carteira-rebuild/index.ts', 1],
-  // mcp (4) — JÁ-CORRETO: bundle AUTO-GERADO (Vite plugin do @lovable.dev/mcp-js) de
-  // src/lib/mcp/tools/search-customers.ts (#4175), que entrou na main no commit d08439537. Os 4
-  // `x.data ?? []` (porNome, porContato, ident, contato) vêm DEPOIS de `if (erro) return` /
-  // `if (erro2) return`, que checam o `.error` das duas leituras de cada Promise.all.
-  ['supabase/functions/mcp/index.ts', 4],
   ['supabase/functions/omie-financeiro/index.ts', 2],
   ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
   ['supabase/functions/visit-score-recalc-client/index.ts', 2],
