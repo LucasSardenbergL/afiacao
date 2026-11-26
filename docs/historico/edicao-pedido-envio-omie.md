@@ -51,7 +51,14 @@
   `separacao` de um PV que voltou a 10 no Omie é recusado (precisão > recall).
 - Falsificação: 14 + 9 + 4 + 2 sabotagens, todas vermelhas com controle verde; uma camada redundante (corrida do
   preço) foi removida porque sabotá-la ficava verde.
-- Fora (Codex r4, exige versão no claim = migration): edição local salva ANTES do claim de uma conversão
-  aberta em outra aba com os itens velhos → PV com o total antigo. Caso de concorrência entre editores.
+- ~~Fora (Codex r4)~~ **Fechado na edge v1.53 + migration 20261126190127:** edição local salva ANTES do
+  claim de uma conversão aberta em outra aba com os itens velhos → PV com o total antigo. O claim passou a
+  ser CONFERIDO (`sales_order_reivindicar_envio_conferido`): só carimba se a projeção
+  [código, qtd, valor] dos itens da LINHA for igual à dos itens que vão ao Omie; senão
+  `blocked: "itens_divergentes"`. Não depende do front (nenhum bundle manda versão). Denominador: 27/27
+  pedidos do app com PV têm a linha igual ao `det` enviado. Prova PG17 `db/test-claim-envio-conferido.sh`
+  (34 asserts, 2 sessões reais nas duas ordens da corrida, `LC_ALL=C` e `pt_BR.UTF-8`); falsificação
+  3 (SQL) + 4 (edge/tela), todas vermelhas com controle verde. Limite medido (C4): salvar NÃO commitado ×
+  envio com os itens novos recusa sem esperar o lock — sem caminho real (o checkout commita a linha antes).
 - Fora: concorrência entre dois editores / alteração no Omie entre abrir e salvar; vencimentos reais de
   `fin_contas_receber` no cupom (RLS de financeiro + vazio-por-RLS indistinguível de não faturado).
