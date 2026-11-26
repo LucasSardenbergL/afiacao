@@ -592,6 +592,38 @@ eq "E11.6 security_invoker segue ligado" "$(Pq -c "SELECT 'security_invoker=on' 
 eq "E11.7 anon segue sem ler; claude_ro segue lendo" "$(Pq -c "SELECT has_table_privilege('anon','public.credito_fila_v','SELECT') || '/' || has_table_privilege('claude_ro','public.credito_fila_v','SELECT')")" "false/true"
 eq "E11.8 vendedor_user_id vem NULL (nunca o valor da coluna fechada)" "$(Pq -c "SELECT count(*) FILTER (WHERE vendedor_user_id IS NOT NULL) FROM public.credito_fila_v")" "0"
 
+# ── E12: incidente 2026-11-26 ~11h40 — na prod a public.pode_ver_carteira_completa NÃO é executável pelo
+#    authenticated desde 20260718180000 (só a private.). As policies *_select_gestor da família crédito
+#    chamam a public → a view security_invoker dá 42501 (403) para o master. Reproduz o ACL e prova o fix.
+Pq -c "CREATE OR REPLACE FUNCTION private.pode_ver_carteira_completa(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$f\$ SELECT has_role(_uid, 'master'::app_role) OR (has_role(_uid, 'employee'::app_role) AND get_commercial_role(_uid) IN ('gerencial'::commercial_role,'estrategico'::commercial_role,'super_admin'::commercial_role)); \$f\$;" \
+   -c "REVOKE ALL ON FUNCTION private.pode_ver_carteira_completa(uuid) FROM PUBLIC, anon;" \
+   -c "GRANT EXECUTE ON FUNCTION private.pode_ver_carteira_completa(uuid) TO authenticated, service_role;" \
+   -c "REVOKE EXECUTE ON FUNCTION public.pode_ver_carteira_completa(uuid) FROM authenticated, anon, PUBLIC;" \
+   -c "ALTER POLICY venda_excecao_insert_gestor ON public.venda_excecao_credito WITH CHECK ((SELECT private.cap_credito_escrever((SELECT auth.uid()))) AND aprovado_por = (SELECT auth.uid()));" >/dev/null
+# ↑ a policy de INSERT da prod já é esta (medida no psql-ro 2026-11-26); o harness não aplica a migration que a trocou.
+eq "E12.1 reproduz o 403: public sem EXECUTE → a view nega o master (42501)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v WHERE origem = 'efetivo' AND status = 'aberta'")" "42501"
+eq "E12.2 reproduz também numa tabela de base (credito_enforcement)" "$(como "$L" "SELECT count(*) FROM public.credito_enforcement")" "42501"
+MIG4="$REPO_ROOT/supabase/migrations/20261126130000_credito_policies_carteira_private.sql"
+python3 - "$MIG4" "$SAB/m4.sql" <<'PY4'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+n = t.replace("    v_n := v_n + 1;\n", "    v_n := v_n + 1;\n    EXIT;\n", 1)   # sabotagem: reaponta só a 1ª policy
+assert n != t, "sabotagem não alterou o texto"
+open(sys.argv[2], "w", encoding="utf-8").write(n)
+PY4
+if P -1 -q -f "$SAB/m4.sql" > "$SAB/pos4.log" 2>&1; then bad "F19 reapontando 1 só policy a migration APLICOU (postcondição sem dente)"
+elif grep -q 'POS FALHOU: policy ainda chama a public.pode_ver_carteira_completa' "$SAB/pos4.log"; then ok "F19 reapontar só 1 policy → postcondição abortou listando as que sobraram"
+else bad "F19 falhou por OUTRO motivo: $(head -c 300 "$SAB/pos4.log")"; fi
+eq "E12.3 a sabotagem fez ROLLBACK (segue negando)" "$(como "$L" "SELECT count(*) FROM public.credito_enforcement")" "42501"
+P -1 -q -f "$MIG4" 2>"$SAB/apl5.log" || { echo "MIG4 falhou:"; head -c 1500 "$SAB/apl5.log"; }
+P -1 -q -f "$MIG4" 2>>"$SAB/apl5.log" || { echo "MIG4 (2ª) falhou:"; tail -c 800 "$SAB/apl5.log"; }   # 2×: idempotente
+eq "E12.4 POS OK da 20261126130000 (2×)" "$(grep -c 'POS OK: policies de crédito leem a carteira pela private' "$SAB/apl5.log")" "2"
+eq "E12.5 a 2ª rodada não achou nada para reapontar" "$(grep -c 'policies reapontadas para private.pode_ver_carteira_completa: 0' "$SAB/apl5.log")" "1"
+eq "E12.6 master lê a view (query exata do contador)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v WHERE origem = 'efetivo' AND status = 'aberta'")" "OK"
+eq "E12.7 master lê as 3 empresas do flag" "$(Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$L\",\"role\":\"authenticated\"}', false);" -c "SET ROLE authenticated;" -c "SELECT count(*) FROM public.credito_enforcement;" | tail -1)" "3"
+eq "E12.8 RLS segue FECHADA: vendedor não-gestor lê 0 empresas" "$(Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$V\",\"role\":\"authenticated\"}', false);" -c "SET ROLE authenticated;" -c "SELECT count(*) FROM public.credito_enforcement;" | tail -1)" "0"
+eq "E12.9 nenhuma policy de crédito chama mais a public" "$(Pq -c "SELECT count(*) FROM pg_policy WHERE pg_get_expr(polqual, polrelid) ~ '(^|[^._a-z])pode_ver_carteira_completa\('")" "0"
+
 echo "RESULTADO: $PASS ok / $FAIL fail"
 if [ "$FAIL" -ne 0 ]; then echo "❌ HARNESS VERMELHO"; exit 1; fi
 echo "✅ HARNESS VERDE — prova PG17 do PR 6a (locale ${LC_ALL})"
