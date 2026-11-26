@@ -21,8 +21,9 @@ $m$;
 --
 -- 1. contato_cliente_operacional (L6): sai o ramo "próprio" (`a.cid = v_uid`). O chamador é SEMPRE staff
 --    (gate de entrada), então o "próprio" só valia quando o titular do pedido era o PRÓPRIO vendedor —
---    o fallback `customerUserId || user.id` do front grava isso (19 pedidos em prod). Agora esse acesso
---    passa pela mesma régua (gestão OU carteira/cobertura) e, fora dela, vai para o ledger.
+--    o fallback `customerUserId || user.id` do front grava isso (19 pedidos em prod). E titular STAFF
+--    (papel ou flag) não conta como carteira (Codex P1): fora da gestão, vai sempre para o ledger
+--    (prod: 1 staff numa carteira, 12 pedidos — a dona dela lia o snapshot do comprador sem registro).
 --    Corpo = o da PRODUÇÃO (pg_get_functiondef 2026-11-26), com só essa linha trocada. REPLACE preserva o ACL.
 -- 2. anon perde tudo em addresses, customer_contacts, cliente_grupos, cliente_grupo_membros e
 --    v_grupo_contas_receber_por_doc (ACL herdada do default privileges; hoje só a RLS segurava).
@@ -115,10 +116,19 @@ BEGIN
   ), vis AS MATERIALIZED (
     SELECT x.c FROM private.clientes_contato_visiveis(v_uid) x(c) WHERE x.c IS NOT NULL AND NOT v_gestao
   ), classif AS MATERIALIZED (
-    -- NULL-safe (Codex P1): exceção é TRUE a menos que gestão/conjunto PROVEM o contrário
+    -- NULL-safe (Codex P1): exceção é TRUE a menos que gestão/conjunto PROVEM o contrário.
+    -- Titular STAFF (papel ou flag) nunca dispensa o ledger de quem não é gestão (4b-1, Codex P1): o
+    -- fallback do front grava o vendedor como titular e o snapshot é do comprador, então a carteira do
+    -- titular não diz nada sobre de quem é o contato (prod: 12 pedidos com titular staff numa carteira).
     SELECT a.oid, a.cid, a.pdoc, a.pend, a.ptel,
-           NOT COALESCE(v_gestao OR EXISTS (SELECT 1 FROM vis WHERE vis.c = a.cid), false) AS exc
-      FROM alvo a
+           NOT COALESCE(v_gestao OR (EXISTS (SELECT 1 FROM vis WHERE vis.c = a.cid) AND NOT a.titular_staff), false) AS exc
+      FROM (SELECT a0.*,
+                   (EXISTS (SELECT 1 FROM public.user_roles ur
+                             WHERE ur.user_id = a0.cid
+                               AND ur.role IN ('employee'::public.app_role, 'master'::public.app_role))
+                    OR EXISTS (SELECT 1 FROM public.profiles pf WHERE pf.user_id = a0.cid AND pf.is_employee IS TRUE)
+                   ) AS titular_staff
+              FROM alvo a0) a
      WHERE a.cid IS NOT NULL
   ), teto AS MATERIALIZED (
     -- novo_pedido: clientes distintos fora da carteira já lidos hoje + o desta chamada
@@ -219,7 +229,7 @@ REVOKE ALL ON public.v_perfil_equipe FROM PUBLIC, anon;
 
 -- ───────────────────────── 5. exceções registradas ─────────────────────────
 COMMENT ON FUNCTION public.resolver_cliente_por_telefone(text) IS
-  'Exceção deliberada da onda D (fatia 4b): oráculo telefone→identidade (nome/empresa, sem contato) para QUALQUER staff — fonte única do reconhecimento de número da telefonia (docs/agent/telefonia.md). Não estender a PII.';
+  'Exceção deliberada da onda D (fatia 4b): oráculo telefone→identidade para QUALQUER staff — devolve o cliente (nome/empresa) e, quando o número é de customer_contacts, o NOME e o CARGO da pessoa de contato; nunca telefone/e-mail/documento/endereço — fonte única do reconhecimento de número da telefonia (docs/agent/telefonia.md). Não estender a PII.';
 COMMENT ON FUNCTION public.cliente_por_documento(text[]) IS
   'Exceção deliberada da onda D (fatia 4b): documento→user_id para staff, de 1 a 4 variantes, para ligar cliente Omie ao perfil local. Devolve só o uuid (identidade é aberta); a PII segue pelas fontes mascaradas.';
 
@@ -236,7 +246,8 @@ BEGIN
   IF position('a.cid = v_uid' IN v_def) > 0 THEN
     RAISE EXCEPTION 'C1 FALHOU: contato_cliente_operacional ainda isenta o titular = chamador (L6)';
   END IF;
-  IF position('NOT COALESCE(v_gestao OR EXISTS (SELECT 1 FROM vis WHERE vis.c = a.cid), false) AS exc' IN v_def) = 0 THEN
+  IF position('NOT COALESCE(v_gestao OR (EXISTS (SELECT 1 FROM vis WHERE vis.c = a.cid) AND NOT a.titular_staff), false) AS exc' IN v_def) = 0
+     OR position('pf.is_employee IS TRUE) ) AS titular_staff' IN regexp_replace(v_def, '\s+', ' ', 'g')) = 0 THEN
     RAISE EXCEPTION 'C1 FALHOU: classificação de exceção não é a esperada';
   END IF;
   IF has_function_privilege('anon', 'public.contato_cliente_operacional(text,uuid[],text)', 'EXECUTE')
@@ -251,9 +262,15 @@ BEGIN
   FOREACH t IN ARRAY ARRAY['public.addresses', 'public.customer_contacts', 'public.cliente_grupos',
                            'public.cliente_grupo_membros', 'public.v_grupo_contas_receber_por_doc',
                            'public.v_grupo_contatos', 'public.v_perfil_equipe'] LOOP
-    FOREACH v IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] LOOP
+    FOREACH v IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'] LOOP
       IF has_table_privilege('anon', t, v) THEN
         v_aberto := array_append(v_aberto, 'anon:' || v || ':' || t);
+      END IF;
+    END LOOP;
+    -- privilégio só de COLUNA escapa do has_table_privilege
+    FOREACH v IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+      IF has_any_column_privilege('anon', t, v) THEN
+        v_aberto := array_append(v_aberto, 'anon:coluna:' || v || ':' || t);
       END IF;
     END LOOP;
   END LOOP;
@@ -279,10 +296,21 @@ BEGIN
       v_sem := array_append(v_sem, v || ' customer_contacts');
     END IF;
   END LOOP;
-  IF NOT has_column_privilege('authenticated', 'public.customer_contacts', 'id', 'SELECT')
-     OR has_column_privilege('authenticated', 'public.customer_contacts', 'phone', 'SELECT') THEN
-    v_sem := array_append(v_sem, 'corte de coluna da 4a em customer_contacts mudou');
+  FOREACH t IN ARRAY ARRAY['public.cliente_grupos', 'public.cliente_grupo_membros'] LOOP
+    FOREACH v IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
+      IF NOT has_table_privilege('authenticated', t, v) THEN
+        v_sem := array_append(v_sem, v || ' ' || t);
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF NOT has_column_privilege('authenticated', 'public.customer_contacts', 'id', 'SELECT') THEN
+    v_sem := array_append(v_sem, 'SELECT customer_contacts.id');
   END IF;
+  FOREACH v IN ARRAY ARRAY['phone', 'email', 'nome', 'cargo', 'birthday', 'notas'] LOOP
+    IF has_column_privilege('authenticated', 'public.customer_contacts', v, 'SELECT') THEN
+      v_sem := array_append(v_sem, 'corte da 4a desfeito: customer_contacts.' || v || ' legível');
+    END IF;
+  END LOOP;
   IF NOT has_table_privilege('service_role', 'public.addresses', 'SELECT')
      OR NOT has_table_privilege('service_role', 'public.customer_contacts', 'SELECT') THEN
     v_sem := array_append(v_sem, 'service_role perdeu leitura (edges)');
@@ -293,7 +321,7 @@ BEGIN
 
   -- C4: v_grupo_contatos lê a fonte mascarada e segue invoker
   v_def := pg_get_viewdef('public.v_grupo_contatos'::regclass, true);
-  IF position('v_endereco_contato' IN v_def) = 0 OR v_def ~ '\maddresses\M' THEN
+  IF position('LEFT JOIN v_endereco_contato a ON' IN v_def) = 0 OR v_def ~ '\maddresses\M' THEN
     RAISE EXCEPTION 'C4 FALHOU: v_grupo_contatos ainda lê addresses crua';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = 'public.v_grupo_contatos'::regclass
@@ -303,7 +331,7 @@ BEGIN
 
   -- C5: v_perfil_equipe por papel, view-gate intacto
   v_def := pg_get_viewdef('public.v_perfil_equipe'::regclass, true);
-  IF v_def ~ 'COALESCE\(p\.is_employee' THEN
+  IF substring(v_def FROM '(?s)WHERE(.*)$') ~ 'is_employee' THEN
     RAISE EXCEPTION 'C5 FALHOU: v_perfil_equipe ainda aceita a flag is_employee como equipe';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = 'public.v_perfil_equipe'::regclass

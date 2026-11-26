@@ -458,7 +458,16 @@ SQL
 }
 acl_prod_4b
 SO6=a9000000-0000-0000-0000-0000000000a9  # titular = a gestora G (papel staff + gestão), snapshot de C3
-P -q -c "INSERT INTO public.sales_orders(id,customer_user_id,customer_document,customer_address,customer_phone) VALUES ('$SO6','$G','snap-doc-g','snap-end-g','snap-fone-g');"
+SO7=aa000000-0000-0000-0000-0000000000aa  # titular = E2 (papel staff) DENTRO da carteira da F, snapshot de comprador
+P -q <<SQL
+INSERT INTO public.sales_orders(id,customer_user_id,customer_document,customer_address,customer_phone) VALUES
+ ('$SO6','$G','snap-doc-g','snap-end-g','snap-fone-g'),
+ ('$SO7','$E2','snap-doc-e2','snap-end-e2','snap-fone-e2');
+-- Codex P1: um staff dentro de uma carteira (prod: 1 staff, 12 pedidos)
+INSERT INTO public.carteira_assignments(customer_user_id,owner_user_id,eligible) VALUES ('$E2','$F',true);
+-- Codex P2: membro do grupo SEM endereço (CR, da carteira da F) — o LEFT JOIN não pode descartá-lo
+INSERT INTO public.cliente_grupo_membros VALUES ('$GR','11222333000144');
+SQL
 
 # ── leituras ──
 n_ledger() { P -tA -q -c "SELECT count(*) FROM public.contato_acesso_operacional WHERE staff_user_id='$1' AND objeto_id='$2';"; }
@@ -486,8 +495,9 @@ done
 P -q -c "DELETE FROM public.contato_acesso_operacional;"
 # shellcheck disable=SC2153  # BASE_* nascem por printf -v no laço acima
 echo "linha de base 4b-1: gc(F)=$BASE_GC_F gc(G)=$BASE_GC_G os(F)=$BASE_OS_F"
-[ "${BASE_GC_F##*:}" = "2" ] || bad "L0 fixture: a farmer não vê os 2 membros do grupo (veio $BASE_GC_F) — G2 seria de graça"
+[ "${BASE_GC_F##*:}" = "3" ] || bad "L0 fixture: a farmer não vê os 3 membros do grupo (veio $BASE_GC_F) — U4/U5 seriam de graça"
 eq "L10 antes: L6 — farmer lê o snapshot do pedido em que ELA é a titular, sem ledger" "$(l6 "$F" "$SO4")" "snap-fone-c3b|false|0"
+eq "L15 antes: titular staff DENTRO da carteira dispensa o ledger do snapshot do comprador" "$(l6 "$F" "$SO7")" "snap-fone-e2|false|0"
 eq "L11 antes: anon apaga de customer_contacts sem barreira de privilégio (só a RLS segura)" \
    "$(anon_nega "DELETE FROM public.customer_contacts WHERE false")" "vazou"
 eq "L12 antes: anon passa do privilégio em addresses" "$(anon_nega "SELECT 1 FROM public.addresses WHERE false")" "vazou"
@@ -505,6 +515,10 @@ suite_u() {
   eq "U1b titular = gestora: gestão segue sem exceção e sem ledger" "$(l6 "$G" "$SO6")" "snap-fone-g|false|0"
   eq "U1c pedido de cliente da carteira segue sem exceção" "$(l6 "$F" "$SO2")" "snap-fone-c1|false|0"
   eq "U1d pedido alheio fora da carteira segue exceção com ledger" "$(l6 "$F" "$SO1")" "snap-fone-c3|true|1"
+  eq "U1e titular staff DENTRO da carteira da farmer: vai para o ledger (Codex P1)" "$(l6 "$F" "$SO7")" "snap-fone-e2|true|1"
+  eq "U1f mesmo pedido pela gestora: sem exceção" "$(l6 "$G" "$SO7")" "snap-fone-e2|false|0"
+  eq "U8 customer não passa do gate da RPC" "$(veredito "$(nega authenticated "$C1" insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', '{$SO2}'::uuid[], 'detalhe_pedido')")")" "barrado"
+  eq "U8b ex-funcionário (flag sem papel) não passa do gate" "$(veredito "$(nega authenticated "$EX2" insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', '{$SO5}'::uuid[], 'detalhe_pedido')")")" "barrado"
   P -q -c "DELETE FROM public.contato_acesso_operacional;"
   for _q in F G M B; do
     local b_os="BASE_OS_$_q" b_pc="BASE_PC1_$_q"
@@ -524,6 +538,7 @@ suite_u() {
   eq "U4b farmer: membro DENTRO da carteira segue com a rua" "$(gend "$F" "$C1")" "rua-c1 1|Curitiba|PR"
   eq "U4c gestora vê a rua dos dois" "$(gend "$G" "$C3")" "rua-c3 3|Joinville|SC"
   eq "U4d master vê a rua dos dois" "$(gend "$M" "$C3")" "rua-c3 3|Joinville|SC"
+  eq "U4f membro SEM endereço segue na lista (LEFT JOIN)" "$(gend "$F" "$CR")" "(null)|(null)|(null)"
   eq "U4e back-office (sem carteira) não vê rua de ninguém" "$(gend "$B" "$C1")|$(gend "$B" "$C3")" "(null)|Curitiba|PR|(null)|Joinville|SC"
   for _q in F G M B; do
     local b_gc="BASE_GC_$_q"
@@ -566,7 +581,7 @@ sabota_post() {
 }
 restaura() { acl_prod_4b; P -q -f "$M4B1"; }
 
-sabota 's/NOT COALESCE\(v_gestao OR EXISTS/NOT COALESCE(a.cid = v_uid OR v_gestao OR EXISTS/'
+sabota 's/NOT COALESCE\(v_gestao OR \(EXISTS/NOT COALESCE(a.cid = v_uid OR v_gestao OR (EXISTS/'
 exige_vermelho "K1 RPC com o ramo próprio de volta → U1" "$(l6 "$F" "$SO4")" "snap-fone-c3b|true|1" "snap-fone-c3b|false|0"; restaura
 
 sabota 's/REVOKE ALL ON public\.customer_contacts FROM PUBLIC, anon;\n//'
@@ -587,8 +602,18 @@ exige_vermelho "K6 grupo lendo addresses crua → U4" "$(gend "$F" "$C3")" "(nul
 sabota 's/WHERE ctx\.staff AND p\.user_id IS NOT NULL AND \(p\.user_id IN/WHERE ctx.staff AND p.user_id IS NOT NULL AND (COALESCE(p.is_employee, false) OR p.user_id IN/'
 exige_vermelho "K7 equipe aceitando a flag → U6" "$(equipe "$F" | tr ',' '\n' | grep -c "^$EX2:" || true)" "0" "1"; restaura
 
+sabota 's/ AND NOT a\.titular_staff\)/)/'
+exige_vermelho "K16 titular staff contando como carteira → U1e" "$(l6 "$F" "$SO7")" "snap-fone-e2|true|1" "snap-fone-e2|false|0"; restaura
+
+sabota 's/LEFT JOIN public\.v_endereco_contato a ON/JOIN public.v_endereco_contato a ON/'
+exige_vermelho "K17 grupo com JOIN interno no endereço → U4f (membro sem endereço some)" "$(gend "$F" "$CR")" "(null)|(null)|(null)" ""; restaura
+
+sabota "s/RAISE EXCEPTION 'contato_cliente_operacional: sem permissao' USING ERRCODE = '42501';/NULL;/"
+exige_vermelho "K18 RPC sem o gate de staff → U8" "$(veredito "$(nega authenticated "$C1" insufficient_privilege "SELECT * FROM public.contato_cliente_operacional('pedido', '{$SO2}'::uuid[], 'detalhe_pedido')")")" "barrado" "vazou"; restaura
+P -q -c "DELETE FROM public.contato_acesso_operacional;"
+
 # postcondições: cada uma aborta a migration sabotada com a SUA marca
-sabota_post 's/NOT COALESCE\(v_gestao OR EXISTS/NOT COALESCE(a.cid = v_uid OR v_gestao OR EXISTS/' 'C1 FALHOU' "K8 4b-1 com o ramo próprio"; restaura
+sabota_post 's/NOT COALESCE\(v_gestao OR \(EXISTS/NOT COALESCE(a.cid = v_uid OR v_gestao OR (EXISTS/' 'C1 FALHOU' "K8 4b-1 com o ramo próprio"; restaura
 sabota_post 's/REVOKE ALL ON FUNCTION public\.contato_cliente_operacional\(text, uuid\[\], text\) FROM PUBLIC, anon;/GRANT EXECUTE ON FUNCTION public.contato_cliente_operacional(text, uuid[], text) TO anon;/' 'C1 FALHOU' "K9 4b-1 abrindo a RPC para anon"; restaura
 sabota_post 's/REVOKE ALL ON public\.cliente_grupos FROM PUBLIC, anon;\n//' 'C2 FALHOU' "K10 4b-1 sem o REVOKE em cliente_grupos"; restaura
 sabota_post 's/REVOKE ALL ON public\.addresses FROM PUBLIC, anon;/REVOKE ALL ON public.addresses FROM PUBLIC, anon, authenticated;/' 'C3 FALHOU' "K11 4b-1 levando authenticated junto em addresses"; restaura
@@ -598,6 +623,12 @@ sabota_post 's/LEFT JOIN public\.v_endereco_contato a ON/LEFT JOIN public.addres
 sabota_post 's/WITH \(security_invoker = off, security_barrier = true\) AS\n WITH ctx AS/WITH (security_invoker = on, security_barrier = true) AS\n WITH ctx AS/' 'C5 FALHOU' "K14 4b-1 com a equipe invoker=on"
 P -q -c "ALTER VIEW public.v_perfil_equipe SET (security_invoker = off);"; restaura
 sabota_post 's/WHERE ctx\.staff AND p\.user_id IS NOT NULL AND \(p\.user_id IN/WHERE ctx.staff AND p.user_id IS NOT NULL AND (COALESCE(p.is_employee, false) OR p.user_id IN/' 'C5 FALHOU' "K15 4b-1 com a equipe aceitando a flag"; restaura
+
+sabota_post 's/ AND NOT a\.titular_staff\)/)/' 'C1 FALHOU' "K19 4b-1 com titular staff contando como carteira"; restaura
+sabota_post 's/AND \(p\.user_id IN \( SELECT r\.user_id/AND (p.is_employee IS TRUE OR p.user_id IN ( SELECT r.user_id/' 'C5 FALHOU' "K20 4b-1 com a flag em outra grafia (IS TRUE)"; restaura
+sabota_post 's/REVOKE ALL ON public\.cliente_grupos FROM PUBLIC, anon;/REVOKE ALL ON public.cliente_grupos FROM PUBLIC, anon;\nREVOKE INSERT ON public.cliente_grupos FROM authenticated;/' 'C3 FALHOU' "K21 4b-1 tirando a criação de grupo"; restaura
+sabota_post 's/REVOKE ALL ON public\.addresses FROM PUBLIC, anon;/REVOKE ALL ON public.addresses FROM PUBLIC, anon;\nGRANT SELECT (street) ON public.addresses TO anon;/' 'C2 FALHOU' "K22 4b-1 com anon lendo coluna de addresses"
+P -q -c "REVOKE SELECT (street) ON public.addresses FROM anon;"; restaura
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
 suite_u
