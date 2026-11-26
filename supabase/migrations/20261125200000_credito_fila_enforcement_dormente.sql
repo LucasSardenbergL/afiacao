@@ -807,7 +807,7 @@ BEGIN
     SELECT net.http_post(url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/credito-fila-recomendar',
       headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret',
         (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET')),
-      body := '{"max":20}'::jsonb, timeout_milliseconds := 120000);
+      body := '{"max":5}'::jsonb, timeout_milliseconds := 150000);
   $job$);
 END
 $cron$;

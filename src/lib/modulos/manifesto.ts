@@ -239,6 +239,18 @@ export const MODULOS: ModuloApp[] = [
     risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
   },
   {
+    // Crédito-IA (PR 6a fila; o PR 4 acrescenta /credito/limites na mesma entrada — combinado).
+    id: "credito",
+    nome: "Crédito (limite do grupo por IA)",
+    kind: "negocio",
+    rotaPrefixos: ["/credito"],
+    gates: ["RequireStaff"],
+    status: "ativo",
+    codigo: ["src/lib/credito/**", "src/pages/CreditoFila.tsx"],
+    testes: ["src/lib/credito/fila.test.ts"],
+    risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
+  },
+  {
     id: "vendas",
     nome: "Vendas",
     kind: "negocio",

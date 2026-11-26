@@ -131,6 +131,7 @@ const FinanceiroEndividamento = lazyRota(() => import("./pages/FinanceiroEndivid
 const FinanceiroAntecipacao = lazyRota(() => import("./pages/FinanceiroAntecipacao"));
 const Recebimento = lazyRota(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazyRota(() => import("./pages/RecebimentoConferencia"));
+const CreditoFila = lazyRota(() => import("./pages/CreditoFila"));
 const ProductionOrders = lazyRota(() => import("./pages/ProductionOrders"));
 const ProducaoBomExcecoes = lazyRota(() => import("./pages/ProducaoBomExcecoes"));
 const ProducaoApontamento = lazyRota(() => import("./pages/ProducaoApontamento"));
@@ -269,6 +270,8 @@ const arvoreDeRotas = (
 
       {/* ─── Staff-only (fail-closed: todo o resto) ─── */}
       <Route element={<RequireStaff />}>
+        {/* crédito-IA PR 6a: leitura gestor/master pela RLS; decisão só do aprovador de crédito */}
+        <Route path="credito/fila" element={<CreditoFila />} />
         <Route path="admin" element={<Admin />} />
         <Route path="admin/approvals" element={<AdminApprovals />} />
         <Route path="admin/departments" element={<AdminDepartments />} />
