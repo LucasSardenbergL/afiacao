@@ -119,6 +119,17 @@ CREATE TABLE public.credito_sombra_decisao (
   grupo_user_id uuid, valor_brl numeric NOT NULL, prazo_dias integer, faixa text NOT NULL, motivo text NOT NULL,
   exposicao_titulos_brl numeric, exposicao_reservas_brl numeric, limite_brl numeric, prazo_max_dias integer,
   limite_versao integer, piso jsonb NOT NULL, carga_inicial boolean NOT NULL, avaliado_em timestamptz NOT NULL DEFAULT now());
+-- view do PR 5 (texto verbatim de 0473551fb): última decisão por PV, sem PV com versão corrente ilegível
+ALTER TABLE public.credito_sombra_tentativa ADD COLUMN sales_order_id uuid;
+CREATE VIEW public.credito_sombra_pv_atual WITH (security_invoker = on) AS
+SELECT x.* FROM (
+  SELECT DISTINCT ON (d.sales_order_id, d.company) d.*
+    FROM public.credito_sombra_decisao d
+   ORDER BY d.sales_order_id, d.company, d.avaliado_em DESC, d.id) x
+ WHERE NOT EXISTS (SELECT 1 FROM public.credito_sombra_tentativa t
+                    WHERE t.sales_order_id = x.sales_order_id AND t.company = x.company
+                      AND t.resultado <> 'erro' AND t.criada_em > x.avaliado_em);
+GRANT SELECT ON public.credito_sombra_pv_atual TO authenticated, service_role;
 -- pg_cron: schedule upsert por nome (como o real)
 CREATE OR REPLACE FUNCTION cron.schedule(p_nome text, p_sched text, p_cmd text) RETURNS bigint LANGUAGE plpgsql AS $f$
 DECLARE v bigint;
@@ -208,7 +219,7 @@ BEGIN
   DELETE FROM public.credito_autorizacao; DELETE FROM public.credito_solicitacao;
   DELETE FROM public.credito_reserva; DELETE FROM public.credito_decisao_pedido;
   DELETE FROM public.credito_operacao_revisao; DELETE FROM public.fin_contas_receber;
-  DELETE FROM public.credito_sombra_decisao; DELETE FROM public.sales_orders WHERE id NOT IN
+  DELETE FROM public.credito_sombra_decisao; DELETE FROM public.credito_sombra_tentativa; DELETE FROM public.sales_orders WHERE id NOT IN
     ('$SOA','$SOB','$SOC','$SOS') AND id::text NOT LIKE 'b0000000-0000-0000-0000-0000000001%';
   UPDATE public.sales_orders SET status = 'enviado', deleted_at = NULL;
   DELETE FROM public.credito_enforcement_log; DELETE FROM public.t_push; DELETE FROM public.push_subscriptions;
@@ -413,6 +424,8 @@ asserts() {
   eq "E7.5 pedido cancelado: sai" "$(comoval "$G" "SELECT count(*) FROM public.credito_fila_v WHERE origem='sombra'")" "0"
   Pq -c "SELECT public.t_forca(\$q\$UPDATE public.sales_orders SET status = 'enviado' WHERE id = '$SOS'\$q\$);" >/dev/null
   eq "E7.6 origem do pedido: Omie (sem created_by)" "$(comoval "$G" "SELECT origem_pedido FROM public.credito_fila_v WHERE origem='sombra'")" "omie"
+  Pq -c "INSERT INTO public.credito_sombra_tentativa(company, resultado, sales_order_id, criada_em) VALUES ('oben', 'revisao_ausente', '$SOS', clock_timestamp());" >/dev/null
+  eq "E7.7 versão corrente ilegível (tentativa após a decisão) → sai da fila" "$(comoval "$G" "SELECT count(*) FROM public.credito_fila_v WHERE origem='sombra'")" "0"
 
   echo "E8 decidir: só o item atual, só com o flag ligado"
   limpa; liga; limite_c
@@ -507,8 +520,8 @@ sabota "F6 alerta sem dedupe (3 camadas) → 2º tick empurra de novo" \
 sabota "F7 alerta inclui congelada (flag desligado)" \
   "t.replace(\"f.origem = 'efetivo' AND f.status = 'aberta' AND f.criado_em\", \"f.origem = 'efetivo' AND f.status IN ('aberta','congelada') AND f.criado_em\")" \
   "liga; limite_c; canal; r=\$(rev \"\$SOB\" 101 A28 50); gate \"\$SOB\" \"\$r\" >/dev/null; envelhece_sol \"\$SOB\" '3 hours'; Pq -c \"SELECT public.t_forca(\\\$q\\\$UPDATE public.credito_enforcement SET ligado = false WHERE company='oben'\\\$q\\\$);\" >/dev/null; alerta" "0"
-sabota "F8 sombra filtra amarelo ANTES da última → amarelo velho ressuscita" \
-  "t.replace(\"   WHERE d.avaliado_em > now() - interval '14 days'\", \"   WHERE d.faixa = 'amarelo' AND d.avaliado_em > now() - interval '14 days'\")" \
+sabota "F8 sombra lê o ledger cru filtrando amarelo (sem a última por PV) → amarelo velho ressuscita" \
+  "t.replace(\"  SELECT d.* FROM public.credito_sombra_pv_atual d\\n   WHERE d.avaliado_em\", \"  SELECT d.* FROM public.credito_sombra_decisao d\\n   WHERE d.faixa = 'amarelo' AND d.avaliado_em\")" \
   "limite_c; sombra \"\$SOS\" 101 omie:a 5000; sleep 0.01; sombra \"\$SOS\" 101 omie:b 100; comoval \"\$G\" \"SELECT count(*) FROM public.credito_fila_v WHERE origem='sombra'\"" "0"
 sabota "F9 resposta de claim velho aceita" \
   "t.replace(\"IF NOT FOUND OR v_ant.status <> 'em_andamento' OR v_ant.claim_id IS DISTINCT FROM p_claim_id THEN\", \"IF NOT FOUND OR v_ant.status <> 'em_andamento' THEN\")" \

@@ -436,12 +436,11 @@ $$;
 CREATE OR REPLACE VIEW public.credito_fila_v
 WITH (security_invoker = on) AS
 WITH sombra AS (
-  -- 1º a ÚLTIMA avaliação de sombra por pedido×empresa (qualquer faixa); só depois o filtro:
-  -- amarelo de ontem não ressuscita se hoje deu verde, vermelho ou pendência cadastral.
-  SELECT DISTINCT ON (d.sales_order_id, d.company) d.*
-    FROM public.credito_sombra_decisao d
+  -- A ÚLTIMA avaliação de sombra por pedido×empresa (qualquer faixa), pela view do PR 5 — que também
+  -- tira o PV cuja versão corrente ficou ilegível. Só depois o filtro: amarelo de ontem não ressuscita
+  -- se hoje deu verde, vermelho, pendência cadastral ou versão nova sem avaliação.
+  SELECT d.* FROM public.credito_sombra_pv_atual d
    WHERE d.avaliado_em > now() - interval '14 days'
-   ORDER BY d.sales_order_id, d.company, d.avaliado_em DESC, d.id DESC
 ),
 efetivo AS (
   -- UMA regra de vigência para view, contador, alerta, IA e ação (Codex diff P1): a solicitação é
@@ -908,6 +907,7 @@ BEGIN
   END LOOP;
 
   IF to_regclass('public.credito_sombra_decisao') IS NULL OR to_regclass('public.credito_sombra_lote') IS NULL
+     OR to_regclass('public.credito_sombra_pv_atual') IS NULL
      OR to_regclass('public.credito_sombra_tentativa') IS NULL THEN
     RAISE EXCEPTION 'POS FALHOU: PR 5 (ledger da sombra) não aplicado — aplique 20261125200000 antes';
   END IF;
