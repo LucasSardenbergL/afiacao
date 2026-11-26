@@ -39,6 +39,7 @@ export const ROUTE_CRUMBS: RouteCrumb[] = [
 
   // Crédito
   { path: "/credito/limites", crumb: "Limites de crédito" },
+  { path: "/credito/fila", crumb: "Fila de crédito" },
 
   // Estoque
   { path: "/admin/estoque/recebimento", crumb: "Recebimento" },
