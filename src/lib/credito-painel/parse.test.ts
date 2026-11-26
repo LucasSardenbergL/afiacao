@@ -81,6 +81,25 @@ describe('lerPainelCredito', () => {
     expect(s.v2XPiso.map((v) => v.pisoBloqueado)).toEqual([null, false]);
   });
 
+  it('concordância IA × regra: % sem comparável fica null e linha sem risco é descartada', () => {
+    const raw = { ...base, concordancia: { ...base.concordancia, disponivel: true, in_sample: true, aviso: 'descritivo',
+      janela: { vencimento_de: '2026-08-28', vencimento_ate: '2026-11-10', tolerancia_dias: 5 },
+      grupos_com_proposta: 1, grupos_com_desfecho: 0, titulos_sem_desfecho: 0,
+      concordancia_piso: { comparaveis: 0, concordam: 0, fora_da_comparacao: 1, concordancia_pct: null },
+      por_risco: [{ risco: 'alto', grupos: 1, titulos: 4, valor: 1000, atraso_pct: 50, atraso_grave_pct: 30 }, { grupos: 9 }],
+      ia_x_piso: [{ ia_restringe: true, piso_hoje: null, grupos: 1, atraso_pct: null }],
+      prospectivo: { titulos_maduros: 0, por_ia: [] } } };
+    const c = lerPainelCredito(raw as unknown as Json).concordancia.concordancia;
+    if (!c.disponivel) throw new Error('concordância deveria estar disponível');
+    expect(c.concordanciaPiso.pct).toBeNull();
+    expect(c.concordanciaPiso.fora).toBe(1);
+    expect(c.porRisco).toHaveLength(1);
+    expect(c.porRisco[0].atrasoPct).toBe(50);
+    expect(c.iaXPiso[0]).toMatchObject({ iaRestringe: true, pisoHoje: null, atrasoPct: null });
+    expect(c.prospectivo.titulosMaduros).toBe(0);
+    expect(c.janela.toleranciaDias).toBe(5);
+  });
+
   it('fila disponível lê os números', () => {
     const raw = { ...base, fila: { disponivel: true, abertas: 2, aberta_mais_antiga: '2026-11-25T10:00:00Z', decididas_periodo: 5 } };
     expect(lerPainelCredito(raw as unknown as Json).fila).toEqual({
