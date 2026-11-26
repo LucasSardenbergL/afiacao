@@ -290,7 +290,9 @@ describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário'
     // leitura por papel é provada sob SET ROLE authenticated em db/test-credito-limite-reserva.sh).
     // 7ª: 20261121180000_credito_prazo_revisao.sql (laço *_select_gestor ×2 — provada sob SET ROLE
     // authenticated em db/test-credito-prazo-revisao.sh, P4.27–P4.29).
-    expect(dinamicas).toBe(7);
+    // 8ª: 20261125230000_credito_fila_enforcement_dormente.sql (laço *_select_gestor ×4 — provada
+    // sob SET ROLE authenticated em db/test-credito-fila.sh, E4.7 e a leitura da fila por gestor).
+    expect(dinamicas).toBe(8);
   });
 });
 

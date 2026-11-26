@@ -22,7 +22,7 @@ import { HelpDrawer } from '@/components/help/HelpDrawer';
 import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
-import { useContagemFilaCredito } from '@/lib/credito/useFilaCredito';
+import { useContagemFilaCredito } from '@/components/shell/useContagemFilaCredito';
 import { useTintAlertas } from '@/hooks/useTintAlertas';
 import { useOportunidadesAtivasCount } from '@/hooks/useReposicaoSessao';
 import { ShortcutsRegistryProvider } from '@/components/shell/ShortcutsRegistry';

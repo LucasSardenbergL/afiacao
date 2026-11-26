@@ -39,25 +39,6 @@ export function useFilaCredito() {
   });
 }
 
-/** Contador do menu: solicitações EFETIVAS abertas. Erro → undefined (badge some, não vira 0). */
-export function useContagemFilaCredito(enabled: boolean) {
-  return useQuery({
-    queryKey: ['credito', 'fila', 'contagem'],
-    enabled,
-    queryFn: async (): Promise<number> => {
-      const { count, error } = await db
-        .from('credito_fila_v')
-        .select('item_id', { count: 'exact', head: true })
-        .eq('origem', 'efetivo')
-        .eq('status', 'aberta');
-      if (error) throw error;
-      if (typeof count !== 'number') throw new Error('contagem da fila não veio');
-      return count;
-    },
-    refetchInterval: 60_000,
-  });
-}
-
 export function useFlagsEnforcement() {
   return useQuery({
     queryKey: ['credito', 'enforcement'],
