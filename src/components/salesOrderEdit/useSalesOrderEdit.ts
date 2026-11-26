@@ -11,14 +11,15 @@ import type { Product } from '@/hooks/useUnifiedOrder';
 import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
 import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
-  BLOCKED_STATUSES,
-  motivoEdicaoBloqueada,
+  bloqueioDaEdicao,
   type OrderItem,
   type SalesOrder,
   type FormasPagamentoResponse,
   type OmieProduct,
 } from './types';
-import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
+import {
+  invalidPricedOrderItemIndices, invalidOrderPriceMessage, invalidQuantityOrderItemIndices, subtotalDaEdicao,
+} from './priceGuard';
 import { totalLinhaOuAusente } from '@/lib/format';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import {
@@ -66,7 +67,7 @@ export function useSalesOrderEdit() {
     try {
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('id, customer_user_id, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at')
+        .select('id, customer_user_id, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, hash_payload')
         .eq('id', id)
         .single();
       if (error) throw error;
@@ -90,6 +91,7 @@ export function useSalesOrderEdit() {
         omie_pedido_id: row.omie_pedido_id,
         omie_numero_pedido: row.omie_numero_pedido,
         omie_payload: payload,
+        origem_omie: typeof row.hash_payload === 'string' && row.hash_payload.startsWith('omie_'),
         created_at: row.created_at,
       };
       setOrder(o);
@@ -173,10 +175,13 @@ export function useSalesOrderEdit() {
     }
   };
 
-  const updateItem = (index: number, field: 'quantidade' | 'valor_unitario', value: number) => {
+  const updateItem = (index: number, field: 'quantidade' | 'valor_unitario', value: number | null) => {
     setItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
-      const updated = { ...item, [field]: value };
+      // Quantidade não aceita null no shape: ilegível vira NaN, que o guard de quantidade recusa.
+      const updated: OrderItem = field === 'quantidade'
+        ? { ...item, quantidade: value ?? Number.NaN }
+        : { ...item, valor_unitario: value };
       // Fase 3: editar o PREÇO de um item tint na mão invalida a prova da fonte
       // do picker — o item vira fonte 'manual' EXPLÍCITA (não "sem metadados",
       // que é reservado ao legado pré-Fase-3). O gate valida 'manual' pelo piso
@@ -295,7 +300,8 @@ export function useSalesOrderEdit() {
   // `s + null` e 0 em JavaScript — o item sem preco somaria silenciosamente nada e o
   // subtotal ficaria MENOR que a verdade sem sinal nenhum. Aqui a linha sem total fica
   // explicitamente de fora; quem barra o salvar e o guard de preco, logo abaixo.
-  const subtotal = items.reduce((s, i) => s + (i.valor_total ?? 0), 0);
+  const subtotal = useMemo(() => subtotalDaEdicao(items), [items]);
+  const invalidQuantityItemIndices = useMemo(() => invalidQuantityOrderItemIndices(items), [items]);
   // Índices dos itens com preço inválido (≤ 0 / NaN) — MESMA fonte para o bloqueio no
   // save e para o destaque na UI (aria-invalid + botão travado).
   const invalidPriceItemIndices = useMemo(() => invalidPricedOrderItemIndices(items), [items]);
@@ -318,8 +324,9 @@ export function useSalesOrderEdit() {
   const handleSave = async () => {
     if (!order) return;
     // Fail-closed no caminho que grava: o botão some quando bloqueado, mas a trava é aqui.
-    if (BLOCKED_STATUSES.includes(order.status)) {
-      toast.error(motivoEdicaoBloqueada(order.status));
+    const bloqueio = bloqueioDaEdicao(order);
+    if (bloqueio) {
+      toast.error(bloqueio);
       return;
     }
     if (items.length === 0) {
@@ -331,6 +338,17 @@ export function useSalesOrderEdit() {
     // Omie, nos dois caminhos (com e sem omie_pedido_id) — fail-closed imperativo, não só UI.
     if (invalidPriceItemIndices.length > 0) {
       toast.error(invalidOrderPriceMessage(invalidPriceItemIndices.map((i) => items[i])));
+      return;
+    }
+    if (invalidQuantityItemIndices.length > 0) {
+      const nomes = invalidQuantityItemIndices.map((i) => items[i].descricao || items[i].codigo || 'item sem nome').join(', ');
+      toast.error(`Defina uma quantidade maior que zero antes de salvar. Itens: ${nomes}.`);
+      return;
+    }
+    // Total indeterminado não se grava (ausente ≠ zero): com os guards acima é inalcançável, mas
+    // o caminho local grava `subtotal`/`total` direto — a trava fica junto da gravação.
+    if (subtotal === null) {
+      toast.error('Não consegui calcular o total do pedido. Confira preço e quantidade dos itens.');
       return;
     }
     // Guard money-path da condição de pagamento: o seletor travado é feedback; a proteção
@@ -498,7 +516,8 @@ export function useSalesOrderEdit() {
     }
   };
 
-  const isBlocked = order ? BLOCKED_STATUSES.includes(order.status) : false;
+  const motivoBloqueio = order ? bloqueioDaEdicao(order) : null;
+  const isBlocked = motivoBloqueio !== null;
 
   return {
     order,
@@ -533,5 +552,7 @@ export function useSalesOrderEdit() {
     invalidPriceItemIndices,
     handleSave,
     isBlocked,
+    motivoBloqueio,
+    invalidQuantityItemIndices,
   };
 }
