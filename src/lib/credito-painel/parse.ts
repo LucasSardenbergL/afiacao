@@ -27,7 +27,7 @@ const mapaNum = (v: unknown): Record<string, number | null> =>
   Object.fromEntries(Object.entries(obj(v) ?? {}).map(([k, x]) => [k, num(x)]));
 
 export type Indisponivel = { disponivel: false; motivo: string };
-export type Bloco<T> = ({ disponivel: true } & T) | Indisponivel;
+type Bloco<T> = ({ disponivel: true } & T) | Indisponivel;
 
 /** `disponivel` ausente ou não-booleano é tratado como indisponível (fail-closed na leitura). */
 function bloco<T>(v: unknown, ler: (o: Obj) => T): Bloco<T> {
@@ -38,7 +38,7 @@ function bloco<T>(v: unknown, ler: (o: Obj) => T): Bloco<T> {
   return { disponivel: true, ...ler(o) };
 }
 
-export type GrupoExposicao = {
+type GrupoExposicao = {
   grupoUserId: string;
   nome: string | null;
   empresas: string[];
@@ -58,7 +58,7 @@ export type GrupoExposicao = {
   usoPct: number | null;
 };
 
-export type NaoConsolidado = {
+type NaoConsolidado = {
   motivo: string;
   pares: number | null;
   titulos: number | null;
@@ -66,9 +66,9 @@ export type NaoConsolidado = {
   titulosIndeterminados: number | null;
 };
 
-export type FaixaMotivo = { faixa: string; motivo: string; decisoes: number | null };
+type FaixaMotivo = { faixa: string; motivo: string; decisoes: number | null };
 
-export type LiberadoAtrasado = {
+type LiberadoAtrasado = {
   salesOrderId: string;
   company: string;
   omieNumeroPedido: string | null;
@@ -79,7 +79,7 @@ export type LiberadoAtrasado = {
   diasAtraso: number | null;
 };
 
-export type BloqueioRecente = {
+type BloqueioRecente = {
   createdAt: string | null;
   company: string;
   omieCodigoCliente: number | null;
