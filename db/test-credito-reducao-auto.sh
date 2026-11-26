@@ -705,7 +705,7 @@ sabota "S8 E2 exposição indeterminada vira corte" check_e2_exposicao_null "   
       v_avisos"
 sabota "S9 E2 sem least (sobe até a exposição)" check_nunca_aumenta "      IF v_corte < v_lim THEN" "      IF v_corte <> v_lim THEN"
 sabota "S10 E3 cadastro irregular não pesa" check_e3 "  IF v_f ->> 'situacao_cadastral' = 'irregular' AND" "  IF false AND"
-sabota "S11 identidade não conferida antes de cortar" check_grupo_mudou "  IF v_mudou OR v_f IS NULL THEN" "  IF v_f IS NULL THEN"
+sabota "S11 assinatura do grupo não conferida antes de cortar" check_grupo_mudou "    FROM (SELECT (public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura" "    FROM (SELECT (false"
 sabota "S12 writer sem a checagem de aumento" check_writer "    IF v_p.limite_sugerido_brl > v_l.limite_brl OR v_p.prazo_max_dias > v_l.prazo_max_dias" "    IF false AND v_p.limite_sugerido_brl > v_l.limite_brl OR false AND v_p.prazo_max_dias > v_l.prazo_max_dias"
 sabota "S13 writer sem piora estrita" check_writer "    IF NOT (v_p.limite_sugerido_brl < v_l.limite_brl OR v_p.prazo_max_dias < v_l.prazo_max_dias" "    IF false AND NOT (v_p.limite_sugerido_brl < v_l.limite_brl OR v_p.prazo_max_dias < v_l.prazo_max_dias"
 sabota "S14 writer sem a versão" check_writer "     OR p_versao_esperada IS DISTINCT FROM v_p.limite_versao_base THEN" "     OR false THEN"
@@ -718,8 +718,8 @@ sabota "S19 laço sem o vigente revisável (sem caminho de volta)" check_recuper
 sabota "S20 registrar sem o ramo revisável" check_recuperacao "  IF FOUND AND NOT (private.credito_vigente_revisavel(p_raiz)" "  IF FOUND AND NOT (false"
 sabota "S21 registrar sem conferir a versão-base" check_registro_base "                    AND (v_f ->> 'limite_versao_base')::integer IS NOT DISTINCT FROM v_vig.versao) THEN" "                    ) THEN"
 sabota "S22 revisável ignora composição mudada" check_grupo_mudou "            OR l.grupo_assinatura IS DISTINCT FROM public.credito_grupo_assinatura(p_raiz)));" "            OR false));"
-sabota "S23 lote sem sub-bloco por raiz" check_ocupado "    EXCEPTION WHEN OTHERS THEN
-      -- resultado POR raiz" "    EXCEPTION WHEN division_by_zero THEN
+sabota "S23 lote sem sub-bloco por raiz" check_ocupado "    WHEN OTHERS THEN
+      -- resultado POR raiz" "    WHEN division_by_zero THEN
       -- resultado POR raiz"
 sabota "S24 lote fora da ordem de verificação" check_lote "            ORDER BY v.verificada_em NULLS FIRST, l.grupo_user_id" "            ORDER BY l.grupo_user_id"
 sabota "S25 lote sem lock_timeout (espera o grupo ocupado)" check_ocupado "  PERFORM set_config('lock_timeout', '2s', true);" "  PERFORM set_config('lock_timeout', '0', true);"
