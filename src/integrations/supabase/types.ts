@@ -25788,6 +25788,16 @@ export type Database = {
         }
         Relationships: []
       }
+      v_pedido_snapshot_proprio: {
+        Row: {
+          customer_address: string | null
+          customer_document: string | null
+          customer_phone: string | null
+          customer_user_id: string | null
+          id: string | null
+        }
+        Relationships: []
+      }
       v_perfil_contato: {
         Row: {
           cnpj: string | null

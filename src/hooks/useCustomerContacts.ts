@@ -41,7 +41,9 @@ interface SaveInput {
 export function useSaveContact() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: SaveInput): Promise<CustomerContact> => {
+    // Onda D fatia 4a: a releitura pós-escrita pede só a chave — o contato (telefone, e-mail, nota)
+    // fecha a authenticated na tabela (20261126140000) e a lista relê pela `v_cliente_contatos`.
+    mutationFn: async (input: SaveInput): Promise<Pick<CustomerContact, 'id' | 'customer_user_id'>> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Não autenticado');
 
@@ -71,16 +73,16 @@ export function useSaveContact() {
       if (input.id) {
          
         const { data, error } = await supabase.from('customer_contacts')
-          .update(payload).eq('id', input.id).select().single();
+          .update(payload).eq('id', input.id).select('id, customer_user_id').single();
         if (error) throw error;
-        return data as CustomerContact;
+        return data;
       }
 
        
       const { data, error } = await supabase.from('customer_contacts')
-        .insert(payload).select().single();
+        .insert(payload).select('id, customer_user_id').single();
       if (error) throw error;
-      return data as CustomerContact;
+      return data;
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['customer-contacts', data.customer_user_id] });
