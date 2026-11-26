@@ -22,7 +22,8 @@
 --    + reservas ativas EFETIVAS. Reserva só é medida depois que o gate efetivo gravou a 1ª decisão
 --    (PR 6); antes disso é `null` ("não medida"), não 0.
 --  • Liberado que atrasou = pedido criado NO APP que chegou ao Omie (logo passou pelo gate: piso,
---    exceção ou 🟢 do gate v2) cujo título derivado (`fin_contas_receber.numero_pedido` = PV) venceu
+--    exceção ou 🟢 do gate v2; gêmeo importado cancelado no Omie = não liberou) cujo título derivado
+--    (`fin_contas_receber.numero_pedido` = PV, comparados sem zeros à esquerda) venceu
 --    há > 15 dias (data civil SP, spec §5.8) e NÃO foi baixado: status ≠ RECEBIDO/CANCELADO e
 --    (PAGTO PARCIAL ou sem baixa inferida em `v_titulo_baixas` tipo CR). Colacor SC não tem pedido no
 --    app → a medição é PARCIAL por desenho (marcado no jsonb).
@@ -271,7 +272,11 @@ BEGIN
      WHERE so.created_by IS NOT NULL          -- criado no app (importado do Omie não passou pelo gate)
        AND so.omie_numero_pedido IS NOT NULL  -- chegou ao Omie = foi liberado
        AND so.deleted_at IS NULL
+       AND ltrim(so.omie_numero_pedido, '0') <> ''
        AND so.status <> 'cancelado'
+       -- o pedido do app fica `enviado`; quem segue o Omie é o GÊMEO importado — cancelado lá = não liberou
+       AND NOT EXISTS (SELECT 1 FROM public.sales_orders g
+                        WHERE g.id = so.gemeo_importado_id AND g.status = 'cancelado')
        AND so.created_at >= v_desde_ts
   ),
   tit AS (
@@ -285,7 +290,8 @@ BEGIN
                                     AND b.omie_codigo_lancamento = f.omie_codigo_lancamento
                                     AND b.data_baixa_final IS NOT NULL))) AS atrasou
       FROM lib l
-      JOIN public.fin_contas_receber f ON f.company = l.company AND f.numero_pedido = l.pv
+      -- o app grava o PV com zeros à esquerda ('000000000010520'); o título e o gêmeo, sem ('10520')
+      JOIN public.fin_contas_receber f ON f.company = l.company AND ltrim(f.numero_pedido, '0') = ltrim(l.pv, '0')
      WHERE f.status_titulo IS DISTINCT FROM 'CANCELADO'
   ),
   por_pedido AS (

@@ -91,7 +91,8 @@ GRANT EXECUTE ON FUNCTION private.cap_credito_escrever(uuid) TO authenticated, s
 -- colunas = as de prod que o painel lê (information_schema, psql-ro 2026-11-25)
 CREATE TABLE public.sales_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text, created_by uuid, omie_numero_pedido text,
-  total numeric, status text, deleted_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
+  total numeric, status text, deleted_at timestamptz, gemeo_importado_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.fin_contas_receber (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company text NOT NULL, omie_codigo_cliente bigint, saldo numeric, status_titulo text, data_vencimento date,
@@ -124,7 +125,7 @@ M="$REPO_ROOT/supabase/migrations"
 for m in 20260702233000_trava_credito_fase2 20260703140000_trava_credito_gate_excecao_por_par \
          20261121120000_trava_credito_piso_grupo 20261121160000_credito_limite_reserva_decisao \
          20261121200000_credito_piso_pagto_parcial 20261124170000_credito_gate_fronteira_60_inclusiva; do
-  P -q -f "$M/$m.sql"
+  P -q -1 -f "$M/$m.sql"
 done
 MIG="$M/20261125120000_credito_painel_leitura.sql"
 echo "antecedentes aplicados"
@@ -180,17 +181,23 @@ INSERT INTO public.fin_contas_receber (company, omie_codigo_cliente, saldo, stat
   ('oben', 101, 2000, 'ATRASADO', (SELECT d FROM h) - 20, 11, '5001', 'Cliente C'),   -- SO1: atrasou
   ('oben', 101, 700,  'ATRASADO', (SELECT d FROM h) - 20, 12, '5002', 'Cliente C'),   -- SO2: tem baixa inferida
   ('oben', 101, 400,  'A VENCER', (SELECT d FROM h) + 20, 14, '5004', 'Cliente C'),   -- SO4: não maturou
-  ('oben', 101, 800,  'ATRASADO', (SELECT d FROM h) - 30, 13, '5003', 'Cliente C');   -- SO3: importado (fora)
+  ('oben', 101, 800,  'ATRASADO', (SELECT d FROM h) - 30, 13, '5003', 'Cliente C'),   -- SO3: importado (fora)
+  ('oben', 101, 900,  'ATRASADO', (SELECT d FROM h) - 30, 16, '5006', 'Cliente C');   -- SO6: gêmeo cancelado
 INSERT INTO public.v_titulo_baixas (company, omie_codigo_lancamento, tipo, data_baixa_final, origem_baixa) VALUES
   ('oben', 12, 'CR', (SELECT d FROM h) - 18, 'titulo'),
   -- isca: baixa de CP com o MESMO código do título do SO1 não pode contar como baixa de CR
   ('oben', 11, 'CP', (SELECT d FROM h) - 18, 'titulo');
-INSERT INTO public.sales_orders (account, created_by, omie_numero_pedido, total, status, created_at) VALUES
-  ('oben', '$L', '5001', 2000, 'faturado', now() - interval '25 days'),
-  ('oben', '$L', '5002', 700,  'faturado', now() - interval '25 days'),
-  ('oben', NULL, '5003', 800,  'faturado', now() - interval '25 days'),
-  ('oben', '$L', '5004', 400,  'faturado', now() - interval '10 days'),
-  ('oben', '$L', NULL,   100,  'orcamento', now() - interval '1 day');
+-- o app grava o PV com zeros à esquerda (prod: '000000000010520'); o título, sem
+INSERT INTO public.sales_orders (id, account, created_by, omie_numero_pedido, total, status, created_at) VALUES
+  ('90000000-0000-0000-0000-000000000006', 'oben', NULL, '5006', 900, 'cancelado', now() - interval '25 days');
+INSERT INTO public.sales_orders (account, created_by, omie_numero_pedido, total, status, created_at, gemeo_importado_id) VALUES
+  ('oben', '$L', '000000005001', 2000, 'enviado', now() - interval '25 days', NULL),
+  ('oben', '$L', '000000005002', 700,  'enviado', now() - interval '25 days', NULL),
+  ('oben', NULL, '5003', 800,  'faturado', now() - interval '25 days', NULL),
+  ('oben', '$L', '000000005004', 400,  'enviado', now() - interval '10 days', NULL),
+  -- SO6: gêmeo cancelado no Omie → não foi liberado (título atrasado dele não conta)
+  ('oben', '$L', '000000005006', 900,  'enviado', now() - interval '25 days', '90000000-0000-0000-0000-000000000006'),
+  ('oben', '$L', NULL,   100,  'orcamento', now() - interval '1 day', NULL);
 INSERT INTO public.venda_bloqueio_credito_log (company, omie_codigo_cliente, acao, vencido, titulos)
   VALUES ('oben', 101, 'bloqueado', 1000, 1);
 SQL
@@ -224,8 +231,8 @@ asserts() {
 
   echo "── exposição do grupo (3 empresas somadas) ──"
   local g="(SELECT g FROM jsonb_array_elements(r->'exposicao'->'grupos') g WHERE g->>'grupo_user_id'='$C')"
-  eq "aberto conhecido C (1000+500+2000+700+400+800)" "$(J "$g->>'aberto_conhecido'")" "5400"
-  eq "títulos abertos C (RECEBIDO fora)" "$(J "$g->>'titulos'")" "7"
+  eq "aberto conhecido C (1000+500+2000+700+400+800+900)" "$(J "$g->>'aberto_conhecido'")" "6300"
+  eq "títulos abertos C (RECEBIDO fora)" "$(J "$g->>'titulos'")" "8"
   eq "1 título indeterminado (saldo NULL)" "$(J "$g->>'titulos_indeterminados'")" "1"
   eq "vencido > 60 d C" "$(J "$g->>'vencido_60_conhecido'")" "1000"
   eq "maior atraso = 70 d" "$(J "$g->>'dias_maior_atraso'")" "70"
@@ -237,11 +244,11 @@ asserts() {
 
   echo "── bloqueios ──"
   eq "bloqueado = 1 evento" "$(J "(SELECT a->>'eventos' FROM jsonb_array_elements(r->'bloqueios'->'por_acao') a WHERE a->>'acao'='bloqueado')")" "1"
-  eq "denominador: pedidos do app oben (orçamento fora)" "$(J "r->'bloqueios'->'pedidos_app_periodo'->>'oben'")" "3"
+  eq "denominador: pedidos do app oben (orçamento fora)" "$(J "r->'bloqueios'->'pedidos_app_periodo'->>'oben'")" "4"
 
   echo "── liberados que atrasaram ──"
   local l="r->'liberados_atrasaram'"
-  eq "liberados (importado e orçamento fora)" "$(J "$l->>'liberados'")" "3"
+  eq "liberados (importado, orçamento e gêmeo cancelado fora)" "$(J "$l->>'liberados'")" "3"
   eq "maturados (SO1, SO2)" "$(J "$l->>'maturados'")" "2"
   eq "atrasados (só SO1: SO2 tem baixa CR)" "$(J "$l->>'atrasados'")" "1"
   eq "taxa = 50.0" "$(J "$l->>'taxa_atraso_pct'")" "50.0"
@@ -276,7 +283,7 @@ SQL
   eq "limites disponível" "$(J "r->'limites'->>'disponivel'")" "true"
   eq "reservas medidas" "$(J "r->'exposicao'->'reservas'->>'disponivel'")" "true"
   eq "reservado C = 600" "$(J "$g->>'reservado'")" "600"
-  eq "uso_pct C = (5400+600)/12000 = 50.0" "$(J "$g->>'uso_pct'")" "50.0"
+  eq "uso_pct C = (6300+600)/12000 = 57.5" "$(J "$g->>'uso_pct'")" "57.5"
   eq "sombra disponível" "$(J "r->'concordancia'->'sombra'->>'disponivel'")" "true"
   eq "concordância segue indisponível (sensor do PR 5)" "$(J "r->'concordancia'->>'disponivel'")" "false"
   eq "gate v2 disponível (só não-verde listado)" "$(J "jsonb_array_length(r->'bloqueios'->'gate_v2'->'por_motivo')")" "0"
@@ -287,7 +294,9 @@ SQL
 # Cada variante: reinstala a função a partir de uma CÓPIA sabotada e exige ≥1 vermelho;
 # o original roda ANTES (controle verde) e DEPOIS (restauração verde).
 # ══════════════════════════════════════════════════════════════════════════════
-instala() { P -q -1 -f "$1" >/dev/null; }
+# DROP antes: `CREATE OR REPLACE` PRESERVA o ACL da instalação anterior, então a sabotagem do fecho de
+# ACL ficaria verde (falsificação pegou, 2026-11-25). Cada variante nasce como na 1ª aplicação em prod.
+instala() { P -q -c "DROP FUNCTION IF EXISTS public.credito_painel_resumo(integer)"; P -q -1 -f "$1" >/dev/null; }
 
 echo "══ CONTROLE (migration original) ══"
 instala "$MIG"
@@ -316,6 +325,8 @@ sabota tipo_errado  "s/b.tipo = 'CR'/b.tipo IN ('CR','CP')/"
 sabota tolerancia_0 's/v_hoje - 15, false) AS maturado/v_hoje + 30, false) AS maturado/'
 sabota reserva_zero 's/CASE WHEN v_tem_efetivo THEN COALESCE(rs.reservado, 0) END AS reservado/COALESCE(rs.reservado, 0) AS reservado/'
 sabota sem_grupo_sc "s/OR x.limite_brl IS NOT NULL), '\[\]'::jsonb)/AND 'colacor_sc' <> ALL (x.empresas)), '[]'::jsonb)/"
+sabota pv_cru       "s/ltrim(f.numero_pedido, '0') = ltrim(l.pv, '0')/f.numero_pedido = l.pv/"
+sabota gemeo_ignora "s/WHERE g.id = so.gemeo_importado_id AND g.status = 'cancelado')/WHERE false)/"
 sabota acl_aberta   's/EXECUTE format(.REVOKE ALL ON FUNCTION public.credito_painel_resumo(integer) FROM %s., r.papel);/NULL;/'
 
 echo "══ RESTAURAÇÃO (original de novo) ══"
