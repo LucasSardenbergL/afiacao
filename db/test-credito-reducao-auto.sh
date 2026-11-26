@@ -231,7 +231,8 @@ SQL
 T1=11111111-0000-0000-0000-000000000001
 T2=11111111-0000-0000-0000-000000000002
 HOJE="((now() AT TIME ZONE 'America/Sao_Paulo')::date)"
-q()  { P -tA -q -c "$1"; }
+# falha do SQL não derruba o laço (set -e): quem julga é o assert, que recebe a marca ERRO_SQL
+q()  { P -tA -q -c "$1" || echo "ERRO_SQL"; }
 JX() { python3 -c "import sys,json; d=json.load(sys.stdin); print($1)"; }
 reset() { q "SELECT public.t_forca(\$q\$
   DELETE FROM public.credito_limite; DELETE FROM public.credito_limite_proposta; DELETE FROM public.credito_avaliacao;
@@ -251,10 +252,10 @@ tit() { local e="$HOJE - $5" s="$8"; [ "$5" = N ] && e=NULL; [ "$8" = N ] && s=N
 baixa() { q "SELECT public.t_forca(\$q\$INSERT INTO public.v_titulo_baixas VALUES ('$1',$2,'CR',$HOJE - $3,'titulo')\$q\$)" >/dev/null; }
 paga() { q "SELECT public.t_forca(\$q\$UPDATE public.fin_contas_receber SET status_titulo = 'RECEBIDO', saldo = 0 WHERE omie_codigo_lancamento = $1\$q\$)" >/dev/null; }
 hist() { local i; for i in 1 2 3 4 5 6; do tit "$1" "$2" $(($3+i)) RECEBIDO 30 10 1000 0; baixa "$1" $(($3+i)) 8; done; }
-lucas() { P -tA -q -c "SELECT set_config('request.jwt.claims', '{\"sub\":\"$L\"}', false);" -c "$1" | tail -1; }
-como() { P -tA -q -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$1\",\"role\":\"authenticated\"}', false);" \
-            -c "SET ROLE authenticated;" -c "SELECT public.t_trym(\$q\$$2\$q\$);" | tail -1; }
-comorole() { P -tA -q -c "SET ROLE $1;" -c "SELECT public.t_trym(\$q\$$2\$q\$);" | tail -1; }
+lucas() { { P -tA -q -c "SELECT set_config('request.jwt.claims', '{\"sub\":\"$L\"}', false);" -c "$1" || echo "ERRO_SQL"; } | tail -1; }
+como() { { P -tA -q -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$1\",\"role\":\"authenticated\"}', false);" \
+            -c "SET ROLE authenticated;" -c "SELECT public.t_trym(\$q\$$2\$q\$);" || echo "ERRO_SQL"; } | tail -1; }
+comorole() { { P -tA -q -c "SET ROLE $1;" -c "SELECT public.t_trym(\$q\$$2\$q\$);" || echo "ERRO_SQL"; } | tail -1; }
 # C com histórico: 6 pagas na oben + 1 em aberto na colacor_sc (R$ 600) ⇒ teto 3.300 / 21 d
 base_c() { reset; hist oben 101 0; tit colacor_sc 202 7 'A VENCER' 5 -25 600 600 1.01.02; }
 # vigente de C aprovado pelo Lucas pelo caminho REAL (claim → registro → aprovação); $1 limite, $2 prazo, $3 risco
@@ -476,7 +477,8 @@ check_ocupado() {
   echo "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('credito_grupo:$C', 0)); SELECT 'A:lock';" >&3
   local i=0; until grep -q '^A:lock' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
   local t0 t1; t0=$(date +%s)
-  q "SELECT private.credito_reducao_lote(25, 20)" >/dev/null
+  # teto de 8 s: sem lock_timeout o lote esperaria A para sempre (A só solta depois) — vira vermelho, não trava
+  q "SET statement_timeout = '8s'; SELECT private.credito_reducao_lote(25, 20)" >/dev/null 2>&1
   t1=$(date +%s)
   echo "COMMIT;" >&3; exec 3>&-; wait "$apsql" || true
   eq "C1 grupo ocupado: o lote não espera (≤ 4 s) e registra 55P03" \
@@ -526,3 +528,91 @@ TODOS=(check_sem_vigente check_sem_mudanca check_regressao_pr4 check_piso check_
 echo "· asserts"
 for c in "${TODOS[@]}"; do "$c"; done
 echo "controle: PASS=$PASS FAIL=$FAIL"
+
+# ══════════════════════════════════════════════════════════════════
+# ZONA 5 — FALSIFICAÇÃO (espelho em $SAB; nunca supabase/migrations/). Controle verde na MESMA
+# invocação: se algum assert falhou acima, não falsifica (sempre-vermelho aprovaria tudo).
+# Cada sabotagem: UMA camada; o check-alvo tem de ficar VERMELHO; restaura reaplicando a MIG5B.
+# ══════════════════════════════════════════════════════════════════
+[ "$FAIL" = 0 ] || { echo "controle vermelho: falsificação não roda"; exit 1; }
+echo "· falsificação"
+SABS=0
+sabota() { # rótulo check velho novo
+  local rot="$1" chk="$2"
+  espelho "$3" "$4"
+  if ! P -q -1 -f "$SAB/m.sql" > "$SAB/s.log" 2>&1; then
+    echo "  ⚠️  $rot: espelho não aplicou — $(head -c 300 "$SAB/s.log")"; FAIL=$((FAIL+1)); return
+  fi
+  local f0=$FAIL p0=$PASS; QUIETO=1; "$chk"; QUIETO=0
+  if [ "$FAIL" -gt "$f0" ]; then echo "  ✅ $rot: $chk ficou VERMELHO"; FAIL=$f0; PASS=$p0; SABS=$((SABS+1))
+  else echo "  ❌ $rot: $chk continuou VERDE (camada redundante ou inalcançada)"; FAIL=$((f0+1)); PASS=$p0; fi
+  restaura
+}
+# restaura como a prod: a PR 4 (corpos de prod, que a guarda da MIG5B aceita) e a MIG5B por cima —
+# a guarda de drift recusa, com razão, reaplicar a 5b sobre um corpo sabotado
+restaura() { P -q -1 -f "$REPO_ROOT/supabase/migrations/20261126090000_credito_ia_avaliar.sql" >/dev/null 2>&1
+             P -q -1 -f "$MIG5B" > "$SAB/r.log" 2>&1 || { echo "  ⚠️  restauração falhou: $(head -c 300 "$SAB/r.log")"; FAIL=$((FAIL+1)); }; }
+sabota_aplica() { # rótulo velho novo — a pós-condição TEM de abortar
+  espelho "$2" "$3"
+  if P -q -1 -f "$SAB/m.sql" > "$SAB/s.log" 2>&1; then echo "  ❌ $1: pós-condição não pegou"; FAIL=$((FAIL+1)); restaura
+  else case "$(cat "$SAB/s.log")" in *"POS FALHOU"*) echo "  ✅ $1: pós-condição abortou"; SABS=$((SABS+1));;
+       *) echo "  ❌ $1: falhou por outro motivo — $(head -c 300 "$SAB/s.log")"; FAIL=$((FAIL+1));; esac; fi
+}
+
+sabota "S1 E1 piso não corta" check_piso "  IF v_f ->> 'piso_estado' = 'comprovado' THEN
+    IF v_lim > 0" "  IF false THEN
+    IF v_lim > 0"
+sabota "S2 E1 corta por piso INDETERMINADO (dado ausente vira corte)" check_piso_indet "  IF v_f ->> 'piso_estado' = 'comprovado' THEN
+    IF v_lim > 0" "  IF v_f ->> 'piso_estado' IN ('comprovado','indeterminado') THEN
+    IF v_lim > 0"
+sabota "S3 E2 sem a base (vencido que o Lucas já viu corta)" check_e2_antigo "     AND f.data_vencimento > v_base - 15;" "     ;"
+sabota "S4 E2 base = ficha da ORIGEM (perde o título após o 1º corte)" check_e2 "  v_base := (v_l.ficha_calculada_em AT TIME ZONE 'America/Sao_Paulo')::date;" "  v_base := (SELECT (p.ficha ->> 'hoje_sp')::date FROM public.credito_limite_proposta p WHERE p.id = v_l.origem_proposta_id);"
+sabota "S5 E2 régua de 16 d (fronteira)" check_e2_fronteira "     AND f.data_vencimento <= v_hoje - 15
+     AND" "     AND f.data_vencimento <= v_hoje - 16
+     AND"
+sabota "S6 E2 sem as reservas efetivas" check_e2_reservas "      v_corte := floor((v_titulos + v_reservas) / 100) * 100;" "      v_corte := floor(v_titulos / 100) * 100;"
+sabota "S7 E2 soma a reserva SOMBRA" check_e2_reservas "       WHERE r.status = 'ativa' AND r.modo = 'efetivo'" "       WHERE r.status = 'ativa'"
+sabota "S8 E2 exposição NULL vira 0" check_e2_exposicao_null "    v_titulos := (v_f ->> 'em_aberto_brl')::numeric;" "    v_titulos := COALESCE((v_f ->> 'em_aberto_brl')::numeric, 0);"
+sabota "S9 E2 sem least (sobe até a exposição)" check_nunca_aumenta "      IF v_corte < v_lim THEN" "      IF v_corte <> v_lim THEN"
+sabota "S10 E3 cadastro irregular não pesa" check_e3 "  IF v_f ->> 'situacao_cadastral' = 'irregular' AND" "  IF false AND"
+sabota "S11 identidade não conferida antes da ficha" check_grupo_mudou "  IF public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura
+     OR EXISTS" "  IF false AND EXISTS"
+sabota "S12 writer sem a checagem de aumento" check_writer "    IF v_p.limite_sugerido_brl > v_l.limite_brl OR v_p.prazo_max_dias > v_l.prazo_max_dias" "    IF false AND v_p.limite_sugerido_brl > v_l.limite_brl OR false AND v_p.prazo_max_dias > v_l.prazo_max_dias"
+sabota "S13 writer sem piora estrita" check_writer "    IF NOT (v_p.limite_sugerido_brl < v_l.limite_brl OR v_p.prazo_max_dias < v_l.prazo_max_dias" "    IF false AND NOT (v_p.limite_sugerido_brl < v_l.limite_brl OR v_p.prazo_max_dias < v_l.prazo_max_dias"
+sabota "S14 writer sem a versão" check_writer "     OR p_versao_esperada IS DISTINCT FROM v_p.limite_versao_base THEN" "     OR false THEN"
+sabota "S15 writer aceita redução de outra transação" check_writer "    IF v_p.decidido_em IS DISTINCT FROM now() THEN" "    IF false THEN"
+sabota "S16 trigger não casa valores com a proposta" check_trigger "     OR v_p.limite_sugerido_brl IS DISTINCT FROM NEW.limite_brl" "     OR false"
+sabota "S17 trigger sem monotonia na redução" check_trigger "    IF NEW.limite_brl > OLD.limite_brl OR NEW.prazo_max_dias > OLD.prazo_max_dias" "    IF false OR false"
+sabota "S18 trigger não preserva ficha_calculada_em" check_trigger "       OR NEW.ficha_calculada_em IS DISTINCT FROM OLD.ficha_calculada_em
+       OR NEW.aprovado_por" "       OR NEW.aprovado_por"
+sabota "S19 laço sem o vigente revisável (sem caminho de volta)" check_recuperacao "           WHEN private.credito_vigente_revisavel(c.raiz) THEN" "           WHEN false THEN"
+sabota "S20 registrar sem o ramo revisável" check_recuperacao "  IF FOUND AND NOT (private.credito_vigente_revisavel(p_raiz)" "  IF FOUND AND NOT (false"
+sabota "S21 registrar sem conferir a versão-base" check_registro_base "                    AND (v_f ->> 'limite_versao_base')::integer IS NOT DISTINCT FROM v_vig.versao) THEN" "                    ) THEN"
+sabota "S22 revisável ignora composição mudada" check_grupo_mudou "            OR l.grupo_assinatura IS DISTINCT FROM public.credito_grupo_assinatura(p_raiz)));" "            OR false));"
+sabota "S23 lote sem sub-bloco por raiz" check_lote_erro "    EXCEPTION WHEN OTHERS THEN
+      -- resultado POR raiz" "    EXCEPTION WHEN division_by_zero THEN
+      -- resultado POR raiz"
+sabota "S24 lote fora da ordem de verificação" check_lote "            ORDER BY v.verificada_em NULLS FIRST, l.grupo_user_id" "            ORDER BY l.grupo_user_id"
+sabota "S25 lote sem lock_timeout (espera o grupo ocupado)" check_ocupado "  PERFORM set_config('lock_timeout', '2s', true);" "  PERFORM set_config('lock_timeout', '0', true);"
+# S26: contra outra REDUÇÃO o FOR UPDATE do vigente já serializa (check_serializa fica verde — redundância
+# declarada); o advisory lock é o que segura o redutor enquanto o GATE (que não trava a linha) decide.
+sabota "S26 redutor sem o lock do grupo (o gate segurando)" check_ocupado "  -- mesma fila da aprovação, do registro e do gate; TUDO o mais é lido depois do lock
+  PERFORM pg_advisory_xact_lock(hashtextextended('credito_grupo:' || p_raiz::text, 0));" "  -- sem lock"
+sabota "S27 aprovação sem o writer (grava direto, sem trigger casar)" check_regressao_pr4 "  v_nova := private.credito_limite_gravar(v_p.id, v_uid, v_versao_atual);" "  v_nova := private.credito_limite_gravar(v_p.id, '$M2', v_versao_atual);"
+sabota_aplica "P1 2º writer de credito_limite" "  -- 5b: o vigente tem UM writer (private.credito_limite_gravar); a versão devolvida é a gravada" "  IF false THEN UPDATE public.credito_limite SET risco = risco WHERE false; END IF;"
+sabota_aplica "P2 cron sem statement_timeout" "'SET statement_timeout = ''60s''; SELECT private.credito_reducao_lote(25, 20);'" "'SELECT private.credito_reducao_lote(25, 20);'"
+sabota_aplica "P3 lote aberto ao service_role" "      ('private.credito_reducao_lote(integer,integer)',              ARRAY[]::text[])," "      ('private.credito_reducao_lote(integer,integer)',              ARRAY['service_role']::text[]),"
+sabota_aplica "P4 trigger desligado" "CREATE TRIGGER credito_limite_lastro BEFORE INSERT OR UPDATE ON public.credito_limite
+  FOR EACH ROW EXECUTE FUNCTION public.credito_limite_lastro();" "CREATE TRIGGER credito_limite_lastro BEFORE INSERT OR UPDATE ON public.credito_limite
+  FOR EACH ROW EXECUTE FUNCTION public.credito_limite_lastro();
+ALTER TABLE public.credito_limite DISABLE TRIGGER credito_limite_lastro;"
+
+# re-prova estrita: a MIG5B real, de novo, depois de todas as sabotagens
+restaura
+QUIETO=1; f0=$FAIL; for c in "${TODOS[@]}"; do "$c"; done; QUIETO=0
+if [ "$FAIL" -gt "$f0" ]; then echo "  ❌ re-prova pós-falsificação vermelha"; else echo "  ✅ re-prova pós-falsificação verde"; fi
+
+echo "sabotagens vermelhas: $SABS"
+echo "RESULTADO: PASS=$PASS FAIL=$FAIL locale=$LC_ALL"
+[ "$FAIL" = 0 ] && echo "PROVA-CREDITO-REDUCAO-AUTO-OK"
+[ "$FAIL" = 0 ]

@@ -122,10 +122,11 @@ piso_t AS (
 ),
 ia AS (
   SELECT DISTINCT ON (p.grupo_user_id)
-         p.grupo_user_id AS raiz, p.status AS status_proposta, p.risco, p.limite_sugerido_brl,
+         p.grupo_user_id AS raiz, p.status AS status_proposta, p.created_at AS criada_em, p.risco, p.limite_sugerido_brl,
          p.saida_ia ->> 'risco' AS risco_bruto, p.ficha ->> 'piso_estado' AS piso_hoje,
          (p.limite_sugerido_brl = 0 OR p.risco IN ('alto','sem_evidencia')) AS ia_restringe
     FROM public.credito_limite_proposta p
+   WHERE p.status <> 'aplicada_auto_reducao'      -- redução automática (5b) não é proposta da IA
    ORDER BY p.grupo_user_id, p.created_at DESC, p.id
 ),
 v2 AS (
@@ -167,11 +168,14 @@ linhas AS (
                  count(*) AS n, sum(s.valor_documento) AS valor
             FROM safra s GROUP BY 1) x
   UNION ALL
+  SELECT 0, 'cobertura', 'sem_desfecho:vencimento_nulo', NULL, count(*), sum(t.valor_documento), NULL, NULL
+    FROM tit t WHERE t.categoria_codigo LIKE '1.01.%' AND t.data_vencimento IS NULL
+  UNION ALL
   SELECT 0, 'cobertura', 'grupos_so_sem_desfecho',
          (SELECT count(*) FROM grupo WHERE n_com_desfecho = 0), NULL, NULL, NULL, NULL
   UNION ALL
   -- 1. regra point-in-time (todos os grupos com desfecho)
-  SELECT 1, 'regra_piso_T', piso_t, count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
+  SELECT 1, 'piso_reconstruido_T', piso_t, count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
     FROM g GROUP BY piso_t
   UNION ALL
   -- 2. IA (pós-trava) — só grupos com proposta
@@ -186,32 +190,48 @@ linhas AS (
          count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
     FROM g WHERE tem_ia GROUP BY 3
   UNION ALL
-  SELECT 2, 'regra_piso_T_sem_proposta', piso_t, count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
+  SELECT 2, 'piso_reconstruido_T_sem_proposta', piso_t, count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
     FROM g WHERE NOT tem_ia GROUP BY piso_t
   UNION ALL
   -- 3. concordância IA × regra (2×2), em T e hoje
-  SELECT 3, 'ia_x_piso_T',
+  SELECT 3, 'proposta_restringe_x_piso_T',
          (CASE WHEN ia_restringe THEN 'ia_restringe' ELSE 'ia_libera' END) || ' · '
            || (CASE WHEN piso_t = 'comprovado' THEN 'piso_T_bloqueia' WHEN piso_t = 'indeterminado' THEN 'piso_T_indet' ELSE 'piso_T_libera' END),
          count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
     FROM g WHERE tem_ia GROUP BY 3
   UNION ALL
-  SELECT 3, 'ia_x_piso_hoje',
+  SELECT 3, 'proposta_restringe_x_piso_hoje',
          (CASE WHEN ia_restringe THEN 'ia_restringe' ELSE 'ia_libera' END) || ' · piso_hoje_' || COALESCE(piso_hoje, 'nulo'),
          count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
     FROM g WHERE tem_ia GROUP BY 3
   UNION ALL
   -- 4. IA × gate v2 (sombra, faixa atual)
-  SELECT 4, 'ia_x_gate_v2',
+  SELECT 4, 'proposta_restringe_x_gate_v2',
          (CASE WHEN ia_restringe THEN 'ia_restringe' ELSE 'ia_libera' END) || ' · v2_' || COALESCE(pior_faixa, 'sem_pv'),
          count(*), sum(n_com_desfecho), sum(valor), sum(valor_atrasado), sum(valor_atrasado_15d)
     FROM g WHERE tem_ia GROUP BY 3
 )
-SELECT secao, chave, grupos, titulos, round(valor, 2) AS valor_brl, round(valor_atrasado, 2) AS atrasado_brl,
+-- 5. PROSPECTIVO (§9.10 de verdade): títulos emitidos DEPOIS da proposta, já com desfecho maduro.
+--    Vazio no começo; amadurece sozinho — re-rodar este arquivo é a medida. Sem vazamento: a ficha da
+--    proposta não podia conhecer estes títulos.
+, prosp AS (
+  SELECT ia.raiz, ia.ia_restringe, ia.risco, s.desfecho, s.valor_documento
+    FROM safra s JOIN ia ON ia.raiz = s.raiz
+   WHERE s.data_emissao > (ia.criada_em AT TIME ZONE 'America/Sao_Paulo')::date
+)
+SELECT 5 AS ord, 'prospectivo' AS secao,
+       (CASE WHEN ia_restringe THEN 'proposta_restringe' ELSE 'proposta_libera' END) || ' · ' || desfecho AS chave,
+       count(DISTINCT raiz) AS grupos, count(*) AS titulos, round(sum(valor_documento), 2) AS valor_brl,
+       NULL::numeric AS atrasado_brl, NULL::numeric AS atraso_por_rs_pct, NULL::numeric AS atraso_15d_por_rs_pct
+  FROM prosp GROUP BY 3
+UNION ALL
+SELECT 5, 'prospectivo', 'titulos_pos_proposta_maduros', NULL, (SELECT count(*) FROM prosp), NULL, NULL, NULL, NULL
+UNION ALL
+SELECT ord, secao, chave, grupos, titulos, round(valor, 2) AS valor_brl, round(valor_atrasado, 2) AS atrasado_brl,
        CASE WHEN valor > 0 AND valor_atrasado IS NOT NULL THEN round(100 * valor_atrasado / valor, 1) END AS atraso_por_rs_pct,
        CASE WHEN valor > 0 AND valor_atrasado_15d IS NOT NULL THEN round(100 * valor_atrasado_15d / valor, 1) END AS atraso_15d_por_rs_pct
   FROM linhas
- ORDER BY ord, secao, chave;
+ ORDER BY 1, 2, 3;
 
 -- Sanidade: a soma do 2×2 IA × piso_T é o nº de grupos com proposta e desfecho (nenhum grupo some).
 SELECT 'BACKTEST_FIM ok' AS marcador;
