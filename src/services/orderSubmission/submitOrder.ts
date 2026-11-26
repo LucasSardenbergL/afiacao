@@ -572,13 +572,11 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                     })),
                   },
                 });
-                // Erro de transporte: a edge pode ter criado parte das OPs — cada produto vira "confira antes de criar".
-                const falhasOp = opError
-                  ? falhasDeTransporteOp(
-                    itensEnviadosOp,
-                    (await mensagemDoErroEdge(opError)) || opError.message || 'Falha ao criar a ordem de produção',
-                  )
-                  : falhasDaOrdemProducao(opData);
+                // Erro de transporte: a edge pode ter criado parte das OPs — aviso por produto, erro cru só no log.
+                const erroTransporteOp = opError
+                  ? (await mensagemDoErroEdge(opError)) || opError.message || 'Falha ao criar a ordem de produção'
+                  : null;
+                const falhasOp = opError ? falhasDeTransporteOp(itensEnviadosOp) : falhasDaOrdemProducao(opData);
                 for (const m of falhasOp) errors.push({ step: 'create_production_order', message: m });
                 logger[falhasOp.length ? 'warn' : 'info']('Production orders', {
                   stage: 'op_creation',
@@ -586,9 +584,9 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                   salesOrderId,
                   count: produtoAcabadoItems.length,
                   falhas: falhasOp.length,
+                  erro: erroTransporteOp,
                 });
               } catch (opErr: unknown) {
-                const opMessage = opErr instanceof Error ? opErr.message : 'Falha ao criar OP';
                 logger.critical('Failed to create production orders for produto acabado', {
                   stage: 'op_creation',
                   account: 'colacor',
@@ -597,7 +595,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
                   itemCount: produtoAcabadoItems.length,
                   error: opErr,
                 });
-                for (const m of falhasDeTransporteOp(itensEnviadosOp, opMessage)) {
+                for (const m of falhasDeTransporteOp(itensEnviadosOp)) {
                   errors.push({ step: 'create_production_order', message: m });
                 }
               }

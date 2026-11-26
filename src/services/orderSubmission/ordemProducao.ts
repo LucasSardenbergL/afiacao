@@ -10,6 +10,9 @@
 //   • `sem_registro_local`: a OP EXISTE no Omie — não crie outra, peça a conferência do vínculo;
 //   • qualquer outra falha (inválida, indeterminada, tipo ausente, erro de transporte): a OP não foi confirmada —
 //     NÃO crie à mão; peça a quem cuida da produção para conferir no Omie.
+// O texto CRU do Omie/edge nunca vai ao vendedor (5ª e 6ª rodadas: "confira antes de repetir", "Tente novamente
+// em 1799 segundos" — instrução de repetir ao lado de "não crie à mão"). Ele fica no log; ao vendedor, só motivo
+// escrito por nós (MOTIVOS_PROPRIOS).
 
 interface DesfechoOpResposta {
   status?: unknown;
@@ -29,14 +32,18 @@ const idPositivo = (v: unknown): boolean => {
   return Number.isFinite(n) && n > 0;
 };
 
+/** Motivos que a própria edge escreve (./ordem-producao.ts) — os únicos que chegam ao vendedor. */
+const MOTIVOS_PROPRIOS = new Set(['produto sem código no Omie', 'quantidade inválida']);
+
 function mensagemNaoConfirmada(produto: string | null, motivo: string | null): string {
-  return `Ordem de produção de ${produto ?? 'produto'} não confirmada no Omie: ${motivo ?? 'sem detalhe do Omie'}. `
+  const detalhe = motivo && MOTIVOS_PROPRIOS.has(motivo) ? ` (${motivo})` : '';
+  return `Ordem de produção de ${produto ?? 'produto'} não confirmada no Omie${detalhe}. `
     + 'Não crie à mão — peça a quem cuida da produção para conferir no Omie.';
 }
 
 function mensagem(tipo: string | null, produto: string | null, motivo: string | null): string {
   if (tipo === 'sem_registro_local') {
-    return `Ordem de produção de ${produto ?? 'produto'}: ${motivo ?? 'a OP existe no Omie, mas o app não confirmou o registro local'}. `
+    return `Ordem de produção de ${produto ?? 'produto'}: a OP existe no Omie, mas o app não confirmou o registro local. `
       + 'Não crie outra — peça a conferência do vínculo no app.';
   }
   return mensagemNaoConfirmada(produto, motivo);
@@ -47,6 +54,8 @@ export function falhasDaOrdemProducao(data: unknown): string[] {
   // Corpo ausente/ilegível sem `error` do invoke = OP NÃO confirmada (a chamada só sai com itens a produzir).
   if (!data || typeof data !== 'object') return [mensagemNaoConfirmada(null, null)];
   const r = data as { success?: unknown; desfecho?: unknown; production_orders?: unknown };
+  // `desfecho` vazio com itens enviados = resposta anômala (6ª rodada do Codex, P1): não fica calado.
+  if (Array.isArray(r.desfecho) && r.desfecho.length === 0) return [mensagemNaoConfirmada(null, null)];
   if (Array.isArray(r.desfecho)) {
     const falhas = (r.desfecho as DesfechoOpResposta[])
       .filter((d) => d && d.status === 'falhou')
@@ -59,13 +68,16 @@ export function falhasDaOrdemProducao(data: unknown): string[] {
   if (Array.isArray(r.production_orders)) {
     const semId = (r.production_orders as OpLegada[]).filter((o) => !idPositivo(o?.omie_ordem_id));
     if (semId.length) return semId.map((o) => mensagemNaoConfirmada(texto(o?.descricao), null));
+    return [];
   }
-  return r.success === false ? [mensagemNaoConfirmada(null, null)] : [];
+  // Sem lista reconhecível (nem `desfecho` nem `production_orders`) = OP não confirmada.
+  return [mensagemNaoConfirmada(null, null)];
 }
 
 /** Erro de TRANSPORTE (o invoke falhou ou estourou o tempo): a edge pode ter criado parte das OPs ou ainda
- *  estar criando. Um aviso por produto (nome repetido conta uma vez), sem quantidade e sem mandar criar. */
-export function falhasDeTransporteOp(produtos: (string | null | undefined)[], motivo: string): string[] {
+ *  estar criando. Um aviso por produto (nome repetido conta uma vez), sem quantidade, sem o erro cru (vai ao
+ *  log de quem chama) e sem mandar criar. */
+export function falhasDeTransporteOp(produtos: (string | null | undefined)[]): string[] {
   const nomes = [...new Set(produtos.map((p) => texto(p)))];
-  return (nomes.length ? nomes : [null]).map((p) => mensagemNaoConfirmada(p, motivo));
+  return (nomes.length ? nomes : [null]).map((p) => mensagemNaoConfirmada(p, null));
 }

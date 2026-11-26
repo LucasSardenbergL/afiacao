@@ -308,7 +308,7 @@ describe('submitOrder', () => {
     const op = r.errors.filter((e) => e.step === 'create_production_order');
     expect(op).toHaveLength(1);
     expect(op[0].message).toContain('BASE X');
-    expect(op[0].message).toContain('sem estrutura');
+    expect(op[0].message).toContain('Não crie à mão'); expect(op[0].message).not.toContain('sem estrutura'); // texto cru do Omie fica no log
   });
 
   it('8.4: erro do invoke da OP (antes ignorado) também vira erro do envio', async () => {
@@ -324,7 +324,7 @@ describe('submitOrder', () => {
       subtotals: { oben: 0, colacor: 50, service: 0 },
       defaultProductionAssigneeId: 'assignee-1',
     }));
-    expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('edge caiu'))).toBe(true);
+    expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('Não crie à mão') && !e.message.includes('edge caiu'))).toBe(true);
     // Transporte = resultado indeterminado (a edge pode ter criado ou ainda estar criando): nunca manda criar à mão.
     expect(r.errors.some((e) => e.step === 'create_production_order' && e.message.includes('Não crie à mão'))).toBe(true);
   });
@@ -345,7 +345,7 @@ describe('submitOrder', () => {
     }));
     const op = r.errors.filter((e) => e.step === 'create_production_order');
     expect(op).toHaveLength(1);
-    expect(op[0].message).toContain('Failed to fetch');
+    expect(op[0].message).not.toContain('Failed to fetch');
     expect(op[0].message).toContain('Não crie à mão');
   });
 
