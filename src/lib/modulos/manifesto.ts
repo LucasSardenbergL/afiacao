@@ -254,11 +254,13 @@ export const MODULOS: ModuloApp[] = [
     id: "vendas",
     nome: "Vendas",
     kind: "negocio",
-    rotaPrefixos: ["/sales", "/unified-order", "/pedidos-programados"],
+    rotaPrefixos: ["/sales", "/unified-order", "/pedidos-programados", "/credito/painel"],
     gates: ["RequireStaff"],
     status: "ativo",
     codigo: [
       "src/lib/unified-order/**",
+      "src/lib/credito-painel/**",
+      "src/pages/CreditoPainel.tsx",
       "src/lib/venda-assistida/**",
       "src/lib/pedido/**",
       "src/lib/pedidosProgramados/**",
@@ -298,6 +300,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
       "src/hooks/__tests__/excecao-credito-pares-do-log.test.ts",
+      "src/lib/credito-painel/parse.test.ts",
       "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
       "src/components/unified-order/__tests__/CustomerSearch.teclado.test.tsx",
       "src/pages/__tests__/SalesProducts.catalogo-paginado.test.tsx",

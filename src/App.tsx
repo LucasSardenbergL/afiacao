@@ -61,6 +61,7 @@ const AdminPriceTable = lazyRota(() => import("./pages/AdminPriceTable"));
 const Training = lazyRota(() => import("./pages/Training"));
 const SalesProducts = lazyRota(() => import("./pages/SalesProducts"));
 const SalesOrders = lazyRota(() => import("./pages/SalesOrders"));
+const CreditoPainel = lazyRota(() => import("./pages/CreditoPainel"));
 const SalesPrintDashboard = lazyRota(() => import("./pages/SalesPrintDashboard"));
 
 const UnifiedOrder = lazyRota(() => import("./pages/UnifiedOrder"));
@@ -293,6 +294,8 @@ const arvoreDeRotas = (
         <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
         <Route path="admin/clientes-nao-vinculados" element={<ClientesNaoVinculados />} />
         <Route path="sales" element={<SalesOrders />} />
+        {/* crédito-IA PR 8: leitura gestor/master — o gate fino é a RPC credito_painel_resumo (42501) */}
+        <Route path="credito/painel" element={<CreditoPainel />} />
         <Route path="sales/products" element={<SalesProducts />} />
         <Route path="sales/new" element={<UnifiedOrder />} />
         <Route path="sales/print" element={<SalesPrintDashboard />} />
