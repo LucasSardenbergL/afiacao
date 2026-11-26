@@ -62,7 +62,7 @@ O vigente **revisável** volta ao laço da edge `credito-ia-avaliar`: origem = r
 
 `db/test-credito-reducao-auto.sh` roda em PG17, com as migrations reais do PR 1, PR 2, PAGTO PARCIAL, fronteira-60 e PR 4, mais a 5b.
 
-**81 asserts** com controle verde e **36 sabotagens** vermelhas pelo motivo certo, cada uma derrubando uma camada. Depois vem a re-prova estrita. Verde em `C` e `pt_BR.UTF-8`. Cobre:
+**86 asserts** com controle verde e **38 sabotagens** vermelhas pelo motivo certo, cada uma derrubando uma camada. Depois vem a re-prova estrita. Verde em `C` e `pt_BR.UTF-8`. Cobre:
 - inerte sem vigente;
 - E1, E2 (duas passadas, fronteira de 15 d, vencido já visto pelo Lucas, reservas efetivas × sombra, exposição NULL), E3;
 - nunca sobe;
