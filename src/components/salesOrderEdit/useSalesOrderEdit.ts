@@ -202,16 +202,13 @@ export function useSalesOrderEdit() {
   };
 
   const carregarInsumosPreco = async (cliente: string | null, criador: string | null, carga: number) => {
-    const publicar = (v: InsumosDoNascimento) => {
-      if (cargaPrecoRef.current === carga) setInsumosPreco(v);
-    };
     const vazio: InsumosDoNascimento = {
       precos: { oben: {}, colacor: {} }, datas: { oben: {}, colacor: {} }, tierPorConta: null, multConfig: null,
     };
     // Legado: orçamento que nasceu sem cliente grava `customer_user_id = user.id` (submitQuote). Ler o
     // histórico/tier dessa identidade daria o preço do VENDEDOR — sem cliente provado, tabela pura.
     if (!cliente || (criador !== null && cliente === criador)) {
-      publicar(vazio);
+      setInsumosPreco(vazio); // síncrono: ainda é a carga atual
       return;
     }
     const [precos, tier, mult] = await Promise.allSettled([
@@ -226,7 +223,7 @@ export function useSalesOrderEdit() {
           : 'Produto adicionado agora não considera o tier do cliente. Confira o preço antes de salvar.',
       });
     }
-    publicar({
+    setInsumosPreco({
       precos: precos.status === 'fulfilled' ? { oben: precos.value.oben, colacor: precos.value.colacor } : vazio.precos,
       datas: precos.status === 'fulfilled' ? { oben: precos.value.datasOben, colacor: precos.value.datasColacor } : vazio.datas,
       tierPorConta: tier.status === 'fulfilled' ? tier.value : null,
