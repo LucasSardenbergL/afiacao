@@ -187,13 +187,14 @@ A1=a1000000-0000-0000-0000-000000000001
 D=d0000000-0000-0000-0000-000000000001
 F=f0000000-0000-0000-0000-000000000001
 X=99999999-9999-9999-9999-999999999999
+Z=7a000000-0000-0000-0000-000000000001
 P -q <<SQL
 INSERT INTO public.customer_canonical_alias VALUES ('$A1','$C','active');
 INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES
-  ('$C','oben',101), ('$A1','colacor_sc',202), ('$D','oben',501), ('$F','oben',701);
+  ('$C','oben',101), ('$A1','colacor_sc',202), ('$D','oben',501), ('$F','oben',701), ('$Z','oben',801);
 INSERT INTO public.profiles VALUES ('$C','SENTINELA_NOME_PROFILE','SENTINELA_RAZAO','12345678000190'),
                                    ('$F','Cliente F',NULL,'98765432000110'),
-                                   ('$D','Cliente D',NULL,'12.ABC.345/01DE-35');  -- CNPJ alfanumérico
+                                   ('$Z','Cliente Z',NULL,'12.ABC.345/01DE-35');  -- CNPJ alfanumérico
 INSERT INTO public.radar_ingest_state VALUES ('2026-10','complete',now(),'2026-11-01','2026-11-01'),
   -- 2026-12 REPROCESSADO: situação aplicada no fechamento ANTERIOR (≠ finalizado_em) ⇒ não publicado
   ('2026-12','complete',now(),'2026-12-01','2026-12-05');
@@ -330,7 +331,7 @@ check_pagto_parcial_zero() {
 }
 check_cnpj_alfanumerico() {
   reset
-  eq "F12 CNPJ alfanumérico irregular é lido (não vira sem_cnpj)" "$(fx $D situacao_cadastral)" "irregular"
+  eq "F12 CNPJ alfanumérico irregular é lido (não vira sem_cnpj)" "$(fx $Z situacao_cadastral)" "irregular"
 }
 check_injection() {
   base_c
