@@ -373,22 +373,30 @@ ORDER BY edge, n;
  * O recorte é o MESMO de `SQL_SONDA_CRON_DISPAROS` — por edge, não por tick global. As duas leituras
  * têm de concordar sobre o conjunto examinado: um disparo que o juiz julga e cuja atestação não foi
  * perguntada aqui viraria silêncio fabricado.
+ *
+ * **O `request_id` NÃO é único no tempo.** É `net._http_response.id`, que sai de uma sequência que
+ * o pg_net REINICIA (4 vezes entre 2026-10-29 e 2026-11-25: 136392→4, 1193→3, 2183→1, 36397→2). Sem
+ * o corte `observado_em >= enfileirado_em`, o disparo 570 de 2026-11-26 casava também com a eco do
+ * `analytics-outbox-drain` de 2026-10-29 de mesmo id — 🔴 IDENTIDADE_INCOERENTE falso em 10 edges, e
+ * o `pendencias:deploy` saindo 1. O corte não é atribuição por tempo: uma resposta anterior ao
+ * disparo não pode ser dele. A ligação continua sendo o `request_id`.
  */
 export const SQL_SONDA_CRON_ATESTACOES = `
 WITH recorte AS (
-  SELECT d.request_id,
+  SELECT d.request_id, d.enfileirado_em,
          row_number() OVER (PARTITION BY d.edge ORDER BY d.enfileirado_em DESC, d.request_id DESC) AS n
   FROM public.deploy_sonda_disparos d
   WHERE d.enfileirado_em > now() - interval '${JANELA_VOLUME_DISPAROS}'
 ), pedidos AS (
-  SELECT request_id FROM recorte WHERE n <= ${DISPAROS_QUE_JULGAM}
+  SELECT request_id, enfileirado_em FROM recorte WHERE n <= ${DISPAROS_QUE_JULGAM}
 ), tudo AS (
-  SELECT request_id, edge FROM public.deploy_atestacoes
+  SELECT request_id, edge, observado_em FROM public.deploy_atestacoes
   UNION ALL
-  SELECT request_id, edge FROM public.deploy_atestacoes_janela_viva()
+  SELECT request_id, edge, observado_em FROM public.deploy_atestacoes_janela_viva()
 )
 SELECT DISTINCT tudo.request_id, tudo.edge
 FROM tudo JOIN pedidos p ON p.request_id = tudo.request_id
+                        AND tudo.observado_em >= p.enfileirado_em
 ORDER BY 1;
 `.trim();
 
@@ -408,6 +416,7 @@ FROM (
          CASE WHEN x.content IS JSON OBJECT THEN x.content::jsonb END AS c
   FROM public.deploy_sonda_disparos d
   JOIN net._http_response x ON x.id = d.request_id
+                           AND x.created >= d.enfileirado_em  -- o id é reciclado (ver ATESTACOES)
   WHERE d.enfileirado_em > now() - interval '48 hours'
     AND x.content IS NOT NULL
     AND left(ltrim(x.content), 1) = '{'

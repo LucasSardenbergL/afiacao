@@ -357,3 +357,24 @@ O que a soma **não** dá é a metade verbatim: ela segue exatamente onde o pilo
   lado esperado é idêntico. Ela mede persistência do veredito, não robustez a drift.)
 - **O artefato do prompt** (`pacote-deploy-29258bf8ac3d.md`): 34 entradas, 24 caminhos únicos, 10
   `_shared/` repetidos exatamente 2× — contados no arquivo, não estimados.
+
+## `request_id` reciclado pelo pg_net — IDENTIDADE_INCOERENTE falso (2026-11-26)
+
+- **Sintoma:** `pendencias:deploy` saindo 1 com 20 linhas 🔴 `IDENTIDADE_INCOERENTE` em 10 edges (a
+  resposta do disparo "se identificava" como `analytics-outbox-drain` ou `sayerlack-varrer-pedidos-portal`),
+  com as 17 edges ativas na verdade atestadas. Como o vigia do Publish trata `pendencias:deploy≠0` como
+  edge pendente, todo commit só de edge ficaria RETIDO.
+- **Causa:** o `request_id` é `net._http_response.id`, e o pg_net **reinicia** essa sequência — 4 vezes
+  entre 2026-10-29 e 2026-11-25 (136392→4, 1193→3, 2183→1, 36397→2, medido no próprio
+  `deploy_atestacoes`). `SQL_SONDA_CRON_ATESTACOES` e `SQL_SONDA_CRON_MOTIVOS` casavam disparo e
+  resposta SÓ pelo id: o disparo 570 de 26/11 casava com a sua sonda E com a eco de 29/10 de mesmo id.
+  O ledger em si está certo (PK `(request_id, observado_em)`); errava a leitura.
+- **Conserto:** a resposta tem de ser posterior ao enfileiramento (`observado_em`/`created >=
+  enfileirado_em`). Não é atribuição por tempo — a ligação continua o `request_id`; só exclui o
+  impossível. O lado pior do mesmo defeito era o **verde falso**: uma resposta antiga de mesmo id e
+  mesma edge cobriria um disparo silencioso.
+- **Prova:** na mesma leitura de prod, a main saiu `rc=1` com 20 alarmes e o fix `rc=0` com 34/34
+  atestados. Guarda em `pendencias-deploy.test.ts` falsificada cláusula por cláusula (cada sabotagem
+  1 vermelho, controle 2 verdes).
+- **Regra:** `request_id` do pg_net é chave só **dentro da janela do disparo** — todo JOIN por ele contra
+  histórico precisa do corte temporal.
