@@ -2,7 +2,7 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # PROVA PG17 — crédito-IA PR 4: ficha do grupo, reivindicação por raiz, writer único da proposta,
 # aprovação endurecida (individual + lote), ACL e cron.
-# Migration sob prova: 20261125120000_credito_ia_avaliar.sql (a MIG4).
+# Migration sob prova: 20261126090000_credito_ia_avaliar.sql (a MIG4).
 # Base: arranque + zona 1 copiados de db/test-credito-gate-fronteira-60.sh (prod = PR1 + PR2 + PAGTO
 # PARCIAL + fronteira-60).
 # Rode: bash db/test-credito-ia-avaliar.sh > /tmp/t.log 2>&1; echo $?
@@ -146,7 +146,7 @@ BEGIN
 END $f$;
 SQL
 
-MIG4="$REPO_ROOT/supabase/migrations/20261125120000_credito_ia_avaliar.sql"
+MIG4="$REPO_ROOT/supabase/migrations/20261126090000_credito_ia_avaliar.sql"
 QUIETO=0; PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); [ "$QUIETO" = 1 ] || echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); [ "$QUIETO" = 1 ] || echo "  ❌ $1"; }
