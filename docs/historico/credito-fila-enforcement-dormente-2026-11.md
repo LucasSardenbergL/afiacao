@@ -33,6 +33,21 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
 - **Follow-up `claude_ro` resolvido:** o laço de ACL da view tinha revogado o SELECT do `claude_ro` em `credito_fila_v` (as tabelas mantinham). A migration `20261126010000` (PR #4200) devolveu o SELECT, foi aplicada pelo envelope (recibo **#1453**) e a 2ª testemunha confirmou: SELECT `t`, INSERT `f`, `anon` sem SELECT, a view lida pelo psql-ro (44 linhas).
 - **Publish (founder): liberado** — a edge já está no ar. A tela `/credito/fila` e o item "Fila de crédito" no menu Financeiro só aparecem após o Publish.
 
+## 403 da `credito_fila_v` em toda tela (2026-11-26, ~11h–12h13)
+
+Depois do Publish, todo `GET /rest/v1/credito_fila_v?…` do contador do menu dava **403**, inclusive para o master. Duas causas empilhadas, as duas invisíveis no PG17 porque o stub dava permissão demais:
+1. **Coluna fechada lida pela view** (#4206, recibo #1464). O `authenticated` tem SELECT em `sales_orders` **por coluna**, e `vendedor_user_id` está fechada (#d7a15546d). Com `security_invoker`, uma coluna sem grant derruba a view inteira com 42501. A coluna passou a vir `NULL::uuid` (mesmo nome e tipo; `CREATE OR REPLACE` preserva o ACL). A postcondição pega a **classe**: por `pg_depend` de colunas, toda coluna lida pela view tem grant.
+2. **Policies de SELECT chamando a função errada** (#4210, recibo #1468). Desde `20260718180000`, a `public.pode_ver_carteira_completa` só executa para o `service_role`, e o `authenticated` usa a `private.` Mesmo assim, **18 policies** `*_select_gestor` da família `credito_*` (PR 2 a PR 8) chamavam a versão `public`. As RPCs SECURITY DEFINER não passam pela policy, por isso só a view (invoker) falhava. As 18 foram reapontadas com `ALTER POLICY`, só na forma exata, com `quote_all_identifiers`/`search_path` fixados (Codex).
+
+A sessão da onda D confirmou **200** no navegador às 12:13:48Z. O harness passou a reproduzir as duas permissões da prod (E11/E12, F18/F19).
+
+## 6b — o `omie-vendas-sync` chama o gate v2 efetivo (2026-11-26)
+
+- **#4213** (v1.49): módulo `gate-v2.ts`, chamado em `criar_pedido` (depois do piso, tint e ATP, antes do claim) e em `alterar_pedido` (fora do `edicaoExigeGate`, antes de `ExcluirItemPedido`). Com o flag desligado, a RPC devolve `desligado` e o pedido segue o caminho de hoje. Amarelo, vermelho, pendência e revalidação saem como **erro**, nunca como `blocked` novo. O verde exige `ligado:true` e UUIDs de decisão e reserva. Nada da resposta vai à mensagem nem ao log. Codex: desenho (2 P0 e 3 P1) e diff em 2 rodadas, tudo acatado.
+- **#4217** (v1.51): **opção (b) do founder** (Q1, "Deixar seguir"). Sem resposta da RPC (transporte ou formato inesperado), o pedido **segue** e grava `gate_indisponivel` em `venda_bloqueio_credito_log`. Antes, com a opção (a), o pedido ficava segurado; essa foi a única diferença em relação ao caminho de hoje com o flag desligado. A v1.50 tinha ido ao ar pelo PR da edição de pedido já com a (a): por algumas horas, uma falha da RPC teria segurado pedido real.
+- **Deploy:** pacote `4e13ae8086fb` (43 arquivos, main `d5f0b163e`) pelo Lovable MCP às 16:22Z. O agente conferiu 43/43 hashes e respondeu sem `edit_id`. A sonda saiu pelo **relé** (recibo #1480), porque o bloco de POST direto é recusado nesta edge: num bundle velho, ele rodaria o fluxo real. **Atestado:** sensor `SEM_EDICAO` (0 commits do bot, confirmação presente) e ledger com `v1.51-gate-v2-sem-veredito-segue` servida às 16:27Z; `pendencias:deploy` 94/94 em "confere".
+- **Prontidão** (#4223, aplicada depois da atestação, recibo **#1482**; 2ª testemunha: 13 pendentes, prontidão `false` nas 3, flag desligado nas 3, ACL intacto): sai o item 6b; entram `m_front_trata_credito_fila_e_retomada_do_envio` e `n_gate_v2_volta_a_fail_closed_antes_de_ligar`. Os pré-requisitos d, e, f e g a l continuam.
+
 ## Lições
 
 - **`_push_enviar` volta em silêncio** sem `CRON_SECRET` ou sem destinatário — gravar "alerta enviado" depois dele é mentira. Meça o canal ANTES (segredo, assinatura) e registre `sem_canal`; e `enfileirado` no pg_net ainda não é entrega.
@@ -42,6 +57,7 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
 - **Conta autoritativa ANTES do flag.** Um gate que lê o flag pela empresa que o chamador DECLARA deixa uma chamada errada desligar a empresa ligada — e o teste que eu tinha escrito EXIGIA esse resultado. Leia a conta do pedido primeiro; divergência é resultado próprio.
 - **Vigência numa fonte só.** View, contador, alerta, IA e ação liam "atual" de jeitos diferentes; um retry do mesmo 🟡 (decisão nova reusando a solicitação) virava "superada" num lugar e "aberta" noutro. A ação agora lê a vigência DA VIEW.
 - **RETURNS TABLE em plpgsql** colide com coluna de mesmo nome (`decisao_id` ambíguo) — `#variable_conflict use_column`.
+- **Stub de permissão mais largo que a prod esconde a classe inteira.** Grant de tabela inteira e EXECUTE para todos no PG17 deixaram passar dois 403 seguidos (coluna fechada; função `public` sem EXECUTE). O harness tem de **reproduzir o ACL da prod** (grant por coluna, REVOKE da função `public`) antes de afirmar que uma view `security_invoker` é legível. E a postcondição precisa olhar a classe (`pg_depend` de colunas; nenhuma policy chamando a função `public`), não só o caso que mordeu.
 - **Medido em prod (psql-ro, 2026-11-25):** `push_subscriptions` = **0 linhas no app inteiro** — a infra de push existe e ninguém ativou. O alerta > 2 h só chega quando o Lucas ativar o push num aparelho (condição `aprovador_alcancavel` da prontidão).
 
 ## Para ligar (Lucas) — e quando

@@ -183,12 +183,17 @@ CV_PREDECESSORAS=(
 #     private._venda_sugestoes_json, mas a PRE exige o corpo de prod da 20261113110200 (fora, acima) e de
 #     private.venda_resumo_bloco, e a PÓS exige as tabelas novas e o venda_config da Entrega 1. Prova que cobre:
 #     db/test-venda-sistema.sh (corpos de prod com md5 conferido, --falsificar, nos dois locales).
+#   · 20261126170000 (onda D 4a-2 · snapshot de pedido e contatos do cliente fecham pela API) entra pelo REVOKE de
+#     coluna em sales_orders, mas a PÓS exige v_pedido_snapshot_proprio (20261126160000) e v_cliente_contatos (fatia 2,
+#     20261124180000, que traz o contrato de carteira inteiro da onda D) — nada disso está no snapshot de 10-15. Prova
+#     que cobre: db/test-clientes-pii-fatia4a-corte.sh (ACL de prod medido, 23 sabotagens, nos dois locales).
 CV_FORA=(
   "20261111100000_radar_acompanhamento_pacote_g.sql"
   "20261111134000_radar_posse_pacote_l.sql"
   "20261113090000_clientes_mei_cpf_mascarado.sql"
   "20261113110200_venda_resumo_email_controle.sql"
   "20261113213317_venda_sistema_completo.sql"
+  "20261126170000_clientes_pii_fatia4a_corte.sql"
 )
 _cv_fora() {
   local x

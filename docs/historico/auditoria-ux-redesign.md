@@ -404,7 +404,7 @@ Lacuna: o front ainda não mostra `aviso_previsao`/`aviso_local` (Onda 3); até 
 `omie_payload`. Falsificação 26/26 vermelha (13 sabotagens, uma por camada e uma por P0/P1 do Codex, × `C`
 e `pt_BR.UTF-8`), controle verde na mesma invocação.
 
-**PR 8.4 — ordem de produção honesta** (edge `omie-vendas-sync` v1.49 + front; a v1.48 ficou com o 2.5). O
+**PR 8.4 — ordem de produção honesta** (edge `omie-vendas-sync` v1.52 + front; v1.48 = 2.5, v1.49 e v1.51 = crédito-IA 6b, v1.50 = edição de pedido). O
 `catch` do `IncluirOrdemProducao` só logava, a OP local nascia com número `"null"` (`String(null)`), a resposta
 era `success: true` incondicional e o front nem lia o retorno do invoke. Agora cada produto volta com desfecho
 (`criada` · `falhou` + tipo + motivo), `success` só sem falha, produto inválido não vai ao Omie nem grava linha
@@ -416,5 +416,8 @@ Lição (núcleo): o Codex achou P0 em 4 rodadas seguidas (6 → 2 → 2 → 2),
 → "não crie outra, peça a conferência do vínculo"; qualquer outra falha → "não confirmada — não crie à mão, peça
 a quem cuida da produção para conferir no Omie". Antes disso, a 1ª rodada já tinha cortado uma "idempotência
 local" que nenhum caminho do app usava. Fora do PR: reenvio da OP pela tela (a falha não segura o pedido);
-`production_orders` tem 0 linhas em prod. Falsificação 50/50 vermelha (25 sabotagens × `C` e `pt_BR.UTF-8`),
-controle verde na mesma invocação; a ligação no `index.ts` tem teste Deno de fiação.
+`production_orders` tem 0 linhas em prod. r5 e r6 (núcleo) acharam 1 P0 cada, ambos o texto CRU do Omie/edge na
+tela ("confira antes de repetir", "Tente novamente em 1799 segundos") ao lado de "não crie à mão": só motivo
+escrito por nós chega ao vendedor; o cru vai ao log. Teto de 6 rodadas, sem r7. Falsificação 66/66 vermelha
+(33 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação; a ligação no `index.ts` tem teste Deno
+de fiação.
