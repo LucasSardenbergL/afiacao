@@ -26,7 +26,7 @@ export function useSalesOnlyRestriction(): boolean {
     queryKey: ['profile', 'document', user?.id],
     queryFn: async () => {
       const { data } = await supabase
-        .from('profiles')
+        .from('v_perfil_contato') // onda D: self pela view
         .select('document')
         .eq('user_id', user!.id)
         .maybeSingle();

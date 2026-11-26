@@ -13,6 +13,7 @@ import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelas
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
 import { edicaoExigeGate, gateCredito, MENSAGEM_CREDITO_INDISPONIVEL } from "./gate-credito.ts";
+import { gateV2Efetivo } from "./gate-v2.ts";
 import { calendarioDaParcela, parcelaEfetiva, registrarRevisao, totalCentavos } from "./revisao-credito.ts";
 import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
@@ -20,12 +21,16 @@ import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import {
+  avisoPrevisaoEntregaPv,
   avisoPvReconciliado,
   classificarConsultaExclusao,
   classificarErroConsultaExclusao,
   compararCarrinhoPv,
+  compararPrevisaoEntregaPv,
+  type ComparacaoPrevisao,
   type ConsultaExclusao,
   edicaoBloqueadaPorPvDivergente,
+  payloadDoPvReconciliado,
   vereditoExclusaoNoOmie,
 } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
@@ -34,6 +39,19 @@ import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { infoAdicionalItem, infoAdicionalItemAninhada, previsaoEntregaOmie, previsaoOrdemProducao } from "./o-que-vai-ao-omie.ts";
+import {
+  type CabecalhoLido,
+  cabecalhoDaEdicao,
+  codigoClienteDoPayload,
+  freteDaEdicao,
+  informacoesAdicionaisDaEdicao,
+  lerCabecalhoParaEdicao,
+  vereditoClienteEdicao,
+  vereditoEtapaEdicao,
+  vereditoGemeoEdicao,
+  vereditoParcelaEdicao,
+  vereditoPedidoLocalEdicao,
+} from "./edicao-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
@@ -2330,6 +2348,10 @@ async function criarPedidoVenda(
   let omie_numero_pedido: string | number;
   let omie_response: unknown = null;
   let comparacaoPv: "igual" | "divergente" | "ilegivel" | null = null;
+  let comparacaoPrevisao: ComparacaoPrevisao | null = null;
+  // O que `sales_orders.omie_payload` guarda: o que FOI ao Omie. Reconciliado ⇒ o PV que o Omie TEM
+  // (PR 2.5): o payload deste envio foi recusado como duplicata e gravá-lo faria o local mentir.
+  let payloadGravado: Record<string, unknown> | null = payload;
   try {
     const result = await callOmieVendasApi(
       "produtos/pedido/",
@@ -2382,6 +2404,15 @@ async function criarPedidoVenda(
     omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
     omie_response = { reconciled: true, consulta };
     comparacaoPv = compararCarrinhoPv(items, consulta);
+    comparacaoPrevisao = compararPrevisaoEntregaPv(previsaoEntrega, consulta);
+    payloadGravado = payloadDoPvReconciliado(consulta);
+  }
+
+  // PR 2.5: previsão de entrega do PV reconciliado — só AVISA (não lança: lançar pulava a OP da
+  // Colacor). Vai no resultado do criar_pedido; a verdade fica no omie_payload (o PV do Omie).
+  const avisoPrevisao = avisoPrevisaoEntregaPv(comparacaoPrevisao, omie_pedido_id);
+  if (comparacaoPrevisao !== null && comparacaoPrevisao.estado !== "igual" && previsaoEntrega) {
+    console.warn(`[Omie Vendas][${account}] PV ${omie_pedido_id} reconciliado: previsão de entrega ${comparacaoPrevisao.estado} (enviada ${previsaoEntrega})`);
   }
 
   // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
@@ -2398,7 +2429,7 @@ async function criarPedidoVenda(
     p_account: account,
     p_omie_pedido_id: omie_pedido_id,
     p_omie_numero_pedido: String(omie_numero_pedido),
-    p_omie_payload: payload,
+    p_omie_payload: payloadGravado,
     p_omie_response: omie_response,
   });
   if (wbError?.code === "PGRST202") {
@@ -2414,7 +2445,7 @@ async function criarPedidoVenda(
       .update({
         omie_pedido_id,
         omie_numero_pedido: String(omie_numero_pedido),
-        omie_payload: payload,
+        omie_payload: payloadGravado,
         omie_response,
         status: "enviado",
       })
@@ -2427,7 +2458,7 @@ async function criarPedidoVenda(
     if (!wbRows || wbRows.length !== 1) {
       throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
     }
-    return { omie_pedido_id, omie_numero_pedido };
+    return { omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao };
   }
   if (wbError?.code === "P0002") {
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
@@ -2446,7 +2477,7 @@ async function criarPedidoVenda(
     if (aviso) throw new Error(aviso);
   }
 
-  return { omie_pedido_id, omie_numero_pedido };
+  return { omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao };
 }
 
 // ─── Observabilidade do sync em fin_sync_log (best-effort) ───
@@ -3165,6 +3196,16 @@ Deno.serve(async (req) => {
             // caller antigo, falha de TRANSPORTE: segue como hoje (o registro acima mede o furo)
           }
         }
+        // Crédito-IA 6b — gate v2 EFETIVO, DORMENTE (gate-v2.ts): com o flag da conta desligado a RPC
+        // devolve `desligado` e o envio segue exatamente o caminho de hoje. Depois do piso, tint e ATP
+        // e antes do claim: nada foi despachado ainda. Segura = ERRO (nunca `blocked` novo).
+        const creditoV2 = await gateV2Efetivo(supabaseAdmin, {
+          salesOrderId: sales_order_id,
+          company: account,
+          revisao: revisaoCriacao?.revisao ?? null,
+          contexto: "criacao",
+        });
+        if (!creditoV2.segue) throw new Error(creditoV2.mensagem);
         // Claim ATÔMICO do envio (migration 20261120230001), o mais perto possível do IncluirPedido:
         // carimba o pedido SÓ se ele não está marcado para exclusão. A leitura de deleted_at lá em
         // cima é só o atalho; esta é a disputa de verdade com o excluir_pedido (lock de linha).
@@ -3255,8 +3296,40 @@ Deno.serve(async (req) => {
         if (!existingOrder) throw new Error("Pedido não encontrado");
         if (!existingOrder.omie_pedido_id) throw new Error("Pedido não possui ID no Omie para alteração");
 
-        const editAccount: Account = (existingOrder.account === "colacor") ? "colacor" : "oben";
+        // Pedido local, antes de qualquer escrita (./edicao-omie.ts): conta conhecida (antes qualquer valor
+        // que não fosse 'colacor' virava 'oben'), origem do app e status editável — a trava do React não
+        // protege uma tela antiga aberta. 200 estruturado com o motivo, como os outros `blocked`.
+        const vereditoLocal = vereditoPedidoLocalEdicao({
+          account: existingOrder.account,
+          hashPayload: (existingOrder as { hash_payload?: string | null }).hash_payload ?? null,
+          status: (existingOrder as { status?: string | null }).status ?? null,
+        });
+        if (!vereditoLocal.permitido) {
+          result = { success: false, blocked: vereditoLocal.bloqueio, contexto: "edicao", motivo: vereditoLocal.motivo };
+          break;
+        }
+        const editAccount: Account = existingOrder.account === "colacor" ? "colacor" : "oben";
         const editConfig = getAccountConfig(editAccount);
+
+        // Trava do GÊMEO: o recibo do app cujo espelho importado do mesmo PV já avançou não se edita
+        // pelo app. A conta do espelho é a do pedido (a que o sync usa no hash). Leitura que falha
+        // RECUSA: sem ela não dá para provar nada. O cliente é provado depois, pelo ConsultarPedido.
+        const { data: gemeoEdit, error: gemeoErr } = await supabaseAdmin
+          .from("sales_orders")
+          .select("status")
+          .eq("account", editAccount)
+          .eq("hash_payload", `omie_${editAccount}_${Number(existingOrder.omie_pedido_id)}`)
+          .maybeSingle();
+        if (gemeoErr) {
+          throw new Error(`Edição recusada: não consegui ler o espelho do pedido no Omie (${gemeoErr.message}). Nada foi alterado.`);
+        }
+        const vereditoGemeo = vereditoGemeoEdicao(
+          gemeoEdit ? { status: (gemeoEdit.status as string | null) ?? null } : null,
+        );
+        if (!vereditoGemeo.permitido) {
+          result = { success: false, blocked: vereditoGemeo.bloqueio, contexto: "edicao", motivo: vereditoGemeo.motivo };
+          break;
+        }
 
         // ATP 3.3 (Codex P1): pedido vinculado por duplicidade a um PV com OUTROS itens. Os itens
         // locais são o carrinho, não o PV — o gate de aumento abaixo compararia carrinho × pedido e
@@ -3360,10 +3433,6 @@ Deno.serve(async (req) => {
         const updatedSubtotal = updatedItemsPayload.reduce((s: number, i) => s + i.valor_total, 0);
 
         // Build Omie payload
-        const origPayload = existingOrder.omie_payload as {
-          informacoes_adicionais?: { codVend?: number };
-          frete?: { codigo_transportadora?: number };
-        } | null;
         const codigoPedido = Number(existingOrder.omie_pedido_id);
         const buildExpectedSignature = (items: EditItemInput[]) => items
           .map((item) => `${Number(item.omie_codigo_produto)}:${Number(item.quantidade)}:${Number(item.valor_unitario).toFixed(4)}`)
@@ -3383,6 +3452,9 @@ Deno.serve(async (req) => {
         let omieCodigoClienteEdit: number | null = null;
         let omieParcelaEdit: string | null = null;
         let omieTotalPedidoEdit: { valor_descontos?: unknown } | null = null;
+        // Etapa/previsão/frete/classificação LIDOS do PV (./edicao-omie.ts): é o que o AlterarPedidoVenda
+        // reenvia — antes ia `etapa "10"`, previsão de hoje e um frete montado do zero.
+        let cabecalhoLidoEdit: CabecalhoLido | null = null;
         try {
           const consultResult = (await callOmieVendasApi(
             "produtos/pedido/",
@@ -3415,6 +3487,7 @@ Deno.serve(async (req) => {
           omieTotalPedidoEdit = consultResult?.pedido_venda_produto?.total_pedido
             ?? consultResult?.total_pedido
             ?? null;
+          cabecalhoLidoEdit = lerCabecalhoParaEdicao(consultResult as Parameters<typeof lerCabecalhoParaEdicao>[0]);
           consultEditOk = true;
           // Cabeçalho sofre o MESMO drift de shape do det (aninhado ou no topo).
           omieCodigoClienteEdit =
@@ -3468,6 +3541,29 @@ Deno.serve(async (req) => {
           throw new Error(
             "Edição não aplicada: não foi possível confirmar com segurança os itens atuais do pedido no Omie. Nada foi alterado — tente novamente.",
           );
+        }
+
+        // Estado VIVO do PV, antes de qualquer mutação no ERP (./edicao-omie.ts). (1) etapa: em separação,
+        // faturado ou cancelado — inclusive o cancelado congelado em 10/20, por isso a marca 'N' explícita
+        // — o app não edita; leitura sem etapa/previsão/frete também recusa, porque o cabeçalho reenviado
+        // seria inventado. (2) cliente: o PV ainda é do cliente para quem o APP o criou? Os recibos não
+        // têm `customer_document`, então o verify-before-edit abaixo é pulado neles; a âncora que existe
+        // é o `codigo_cliente` do payload de criação (PV reaproveitado no Omie para outro cliente).
+        const lidoEdit = cabecalhoLidoEdit as CabecalhoLido;
+        const vereditoEtapa = vereditoEtapaEdicao(lidoEdit);
+        const vereditoCliente = vereditoEtapa.permitido
+          ? vereditoClienteEdicao({
+            codigoClienteAncora: codigoClienteDoPayload(existingOrder.omie_payload),
+            codigoClienteVivo: omieCodigoClienteEdit,
+            ancoraIndependente: (existingOrder as { omie_response?: { reconciled?: unknown } | null }).omie_response?.reconciled !== true,
+          })
+          : vereditoEtapa;
+        const vereditoParcela = vereditoCliente.permitido
+          ? vereditoParcelaEdicao({ informada: editParcela, viva: omieParcelaEdit })
+          : vereditoCliente;
+        if (!vereditoParcela.permitido) {
+          result = { success: false, blocked: vereditoParcela.bloqueio, contexto: "edicao", motivo: vereditoParcela.motivo };
+          break;
         }
 
         // Guard money-path: a edição APAGA o desconto do Omie — o Step 2 exclui cada item e o Step 3 reinclui
@@ -3593,8 +3689,46 @@ Deno.serve(async (req) => {
             break;
           }
         }
+        // Crédito-IA 6b — gate v2 EFETIVO, DORMENTE (gate-v2.ts). FORA do `edicaoExigeGate` (Codex Q3):
+        // o predicado é do PISO; com o flag ligado toda revisão nova é avaliada. Desligado → segue o
+        // caminho de hoje. Antes da fase destrutiva (ExcluirItemPedido): nada mudou no Omie ainda.
+        const creditoV2Edit = await gateV2Efetivo(supabaseAdmin, {
+          salesOrderId: editSoId,
+          company: editAccount,
+          revisao: revisaoEdicao?.revisao ?? null,
+          contexto: "edicao",
+        });
+        if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);
 
-        // Step 2: Delete all existing items
+        // Step 2 (cabeçalho ANTES do delete+add): etapa, previsão, frete e classificação são os LIDOS
+        // do PV (./edicao-omie.ts) — salvar só a observação não regride etapa, não troca a previsão e
+        // não apaga transportadora/volumes/valor do frete. Vem antes da fase destrutiva de propósito: o
+        // frete reenviado é o objeto que o próprio Omie devolveu (não provado em homologação — Codex
+        // 2026-11-26); se o Omie o recusar, a edição falha com os ITENS intactos, em vez de deixá-los
+        // trocados e o cabeçalho para trás. O TotalizarPedido do fim recalcula as parcelas.
+        const editCabecalho = cabecalhoDaEdicao({ codigoPedido, lido: lidoEdit, codigoParcela: editParcelaEnvio });
+        const editInfoAdic = informacoesAdicionaisDaEdicao(lidoEdit);
+        const editFrete = freteDaEdicao({ lido: lidoEdit, quantidadeVolumes: editVolumes });
+
+        try {
+          // throwOnTransient: o `null` aqui deixava o cabeçalho VELHO (parcela, observações, volumes) no
+          // ERP e a action seguia para a troca de itens como se tivesse aplicado.
+          await callOmieVendasApi("produtos/pedido/", "AlterarPedidoVenda",
+            { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
+            editAccount, { throwOnTransient: true });
+        } catch (headerErr) {
+          const msg = headerErr instanceof Error ? headerErr.message : String(headerErr);
+          // Estado no ERP: NENHUM item foi tocado; o cabeçalho pode ou não ter sido aplicado (o
+          // transitório é ambíguo quanto ao efeito).
+          throw new Error(
+            `Falha ao atualizar cabeçalho do pedido no Omie: ${msg}. ` +
+              `O pedido no Omie pode ter ficado PARCIALMENTE alterado (os itens NÃO foram tocados; a ` +
+              `condição de pagamento/observações podem ou não ter sido atualizadas) e o registro local ` +
+              `NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
+          );
+        }
+
+        // Step 3a: Delete all existing items
         // Contador de exclusões CONFIRMADAS (resposta recebida). Não é o mesmo que "itens que sumiram
         // do ERP": um transitório esgotado é ambíguo quanto ao EFEITO — a chamada pode ter sido
         // aplicada e só a resposta ter se perdido. É por isso que a mensagem abaixo fala em
@@ -3635,14 +3769,14 @@ Deno.serve(async (req) => {
                 `Falha ao excluir item existente do pedido no Omie: ${msg}. ` +
                   `O pedido no Omie pode ter ficado PARCIALMENTE alterado ` +
                   `(${exclusoesConfirmadas} de ${omieCurrentItems.length} exclusões confirmadas, a que ` +
-                  `falhou pode ou não ter sido aplicada, e nenhum item novo foi incluído) e o registro ` +
+                  `falhou pode ou não ter sido aplicada, nenhum item novo foi incluído e o cabeçalho já foi atualizado) e o registro ` +
                   `local NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
               );
             }
           }
         }
 
-        // Step 3: Add each new item individually
+        // Step 3b: Add each new item individually
         const newDetForPayload: Array<{ ide: { codigo_item_integracao: number }; produto: { codigo_produto: number; quantidade: number; valor_unitario: number } }> = [];
 
         // Extract default CFOP from existing items (before deletion)
@@ -3689,7 +3823,7 @@ Deno.serve(async (req) => {
               `Falha ao incluir item ${index + 1} no Omie: ${msg}. ` +
                 `O pedido no Omie ficou PARCIALMENTE alterado (os itens antigos já foram excluídos e ` +
                 `${index} de ${editItems.length} inclusões estão confirmadas, com a que falhou podendo ` +
-                `ou não ter sido aplicada) e o registro local NÃO foi gravado. Confira o pedido no Omie ` +
+                `ou não ter sido aplicada; o cabeçalho já foi atualizado) e o registro local NÃO foi gravado. Confira o pedido no Omie ` +
                 `e NÃO re-salve sem recarregar.`,
             );
           }
@@ -3698,54 +3832,6 @@ Deno.serve(async (req) => {
             ide: { codigo_item_integracao: itemCode },
             produto: { codigo_produto: item.omie_codigo_produto, quantidade: item.quantidade, valor_unitario: item.valor_unitario },
           });
-        }
-
-        // Step 4: Update header (payment, freight, obs) without det
-        const editCabecalho: Record<string, unknown> = {
-          codigo_pedido: codigoPedido,
-          data_previsao: paraDataOmie(hojeSP()),
-          etapa: "10",
-          codigo_parcela: editParcelaEnvio,
-        };
-
-        const editInfoAdic: Record<string, unknown> = {
-          codigo_categoria: editConfig.codigo_categoria,
-          codigo_conta_corrente: editConfig.codigo_conta_corrente,
-        };
-        if (origPayload?.informacoes_adicionais?.codVend) {
-          editInfoAdic.codVend = origPayload.informacoes_adicionais.codVend;
-        }
-
-        const editFrete: Record<string, unknown> = { modalidade: "0", especie_volumes: "VOL" };
-        // O frete é REENVIADO inteiro: sem isto a alteração mandava o frete sem a data prometida.
-        // Data já vencida não vai (pedido antigo reeditado) — ./o-que-vai-ao-omie.ts.
-        const editPrevisaoEntrega = previsaoEntregaOmie(existingOrder.ready_by_date, hojeSP());
-        if (editPrevisaoEntrega) {
-          editFrete.previsao_entrega = editPrevisaoEntrega;
-        }
-        if (origPayload?.frete?.codigo_transportadora) {
-          editFrete.codigo_transportadora = origPayload.frete.codigo_transportadora;
-        }
-        if (editVolumes && editVolumes > 0) {
-          editFrete.quantidade_volumes = editVolumes;
-        }
-
-        try {
-          // throwOnTransient: o `null` aqui deixava o cabeçalho VELHO (parcela, frete, transportadora,
-          // observações, volumes) no ERP enquanto os itens já eram os novos — e ninguém lia o retorno.
-          await callOmieVendasApi("produtos/pedido/", "AlterarPedidoVenda",
-            { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
-            editAccount, { throwOnTransient: true });
-        } catch (headerErr) {
-          const msg = headerErr instanceof Error ? headerErr.message : String(headerErr);
-          // Estado no ERP: os ITENS já foram substituídos por completo; o cabeçalho é que pode ter
-          // ficado para trás (o transitório é ambíguo quanto ao efeito — pode ter sido aplicado).
-          throw new Error(
-            `Falha ao atualizar cabeçalho do pedido no Omie: ${msg}. ` +
-              `O pedido no Omie ficou PARCIALMENTE alterado (os itens já foram substituídos, mas a ` +
-              `condição de pagamento/frete/observações podem não ter sido atualizadas) e o registro ` +
-              `local NÃO foi gravado. Confira o pedido no Omie e NÃO re-salve sem recarregar.`,
-          );
         }
 
         try {
@@ -3847,7 +3933,9 @@ Deno.serve(async (req) => {
         }
 
         const editPayload: Record<string, unknown> = {
-          cabecalho: editCabecalho, frete: editFrete, det: newDetForPayload,
+          // `codigo_cliente` = o vivo, já provado igual à âncora: sem ele o payload regravado perdia a âncora
+          // e a PRÓXIMA edição seria recusada por "sem registro do cliente".
+          cabecalho: { ...editCabecalho, codigo_cliente: omieCodigoClienteEdit }, frete: editFrete, det: newDetForPayload,
           observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic,
         };
 

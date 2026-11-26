@@ -36,8 +36,25 @@
 # Uso: scripts/lovable-publish.sh [--julgar] [<sha-head>]
 #   --julgar: roda SÓ os passos 1-3 (sem API, sem chave) e sai `VEREDITO=PUBLICAR` (exit 0) quando
 #   haveria Publish — é o tick barato do vigia local (scripts/lovable-vigia.sh), que publica pelo MCP.
+#
+#   --esperar <sha>: NÃO publica. Loop barato (shell, sem LLM, sem chave) para a sessão que acabou
+#   de mergear: a cada LP_ESPERAR_INTERVALO s (45) lê o carimbo servido e sai quando o ar CONTÉM
+#   <sha> (`git merge-base --is-ancestor <sha> <servido>`; `git fetch` se o servido não for local).
+#   Entre leituras, re-julga `--julgar origin/main` e lê o estado do vigia ($LP_VIGIA_ESTADO,
+#   default o do lovable-vigia.sh) para distinguir "só demora" de "não vai sair sozinho".
+#   Prazo: LP_ESPERAR_PRAZO s (1800, contado em intervalos dormidos — aproximado). Uso canônico:
+#   Bash com run_in_background (docs/agent/deploy.md, Camada 2). Exit (última linha estável):
+#     0  NO_AR=<sha servido>          — o ar contém <sha>
+#     0  NADA_A_PUBLICAR=<sha servido> — ar..main só tem inerte (docs/scripts/db): não haverá Publish,
+#                                        e o front de <sha> já é o do ar
+#     10 RETIDO=<migration|edge>:<arquivo> — migration sem `liberar` no vigia, ou edge que o ledger
+#                                        diz não servida (pendencias:deploy=1): aplicar a camada
+#     30 TIMEOUT                       — prazo estourou sem o ar conter <sha> (vigia parado? fila?)
+#     6  MECANICA=<motivo>             — <sha> não resolve / não está na main, ou nunca medi o ar
 # Teste: scripts/test-lovable-publish.sh
 set -u
+
+case "${1:-}" in -h|--help) sed -n '2,/^set -u$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
 PROJETO=${LOVABLE_PROJECT_ID:-8f005805-000a-42b7-88a1-9683f785fab6}
 APP=${APP_URL:-https://steu.lovable.app}
@@ -57,11 +74,11 @@ trap 'rm -rf "$TMP"' EXIT
 fim() { echo "VEREDITO=$2"; exit "$1"; }
 mecanica() { echo "  motivo: $1"; fim 6 MECANICA; }
 
-JULGAR=0
-[ "${1:-}" = --julgar ] && { JULGAR=1; shift; }
-[ "$JULGAR" = 1 ] || [ -n "${LOVABLE_API_KEY:-}" ] || mecanica "LOVABLE_API_KEY ausente"
-command -v jq >/dev/null || mecanica "jq ausente"
-HEAD_SHA=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || mecanica "HEAD não resolve: ${1:-HEAD}"
+JULGAR=0; ESPERAR=""
+case "${1:-}" in
+  --julgar) JULGAR=1; shift ;;
+  --esperar) [ -n "${2:-}" ] || { echo "MECANICA=uso: --esperar <sha>"; exit 6; }; ESPERAR=$2; shift 2 ;;
+esac
 
 # api <método> <caminho> [corpo] → grava o corpo em $TMP/resp, ecoa o HTTP code (000 = sem resposta)
 api() {
@@ -89,6 +106,67 @@ camadas() {
   git diff --name-only "$1" "$2" > "$TMP/diff" 2>/dev/null || return 1
   grep -E "$CAMADAS" "$TMP/diff" || true
 }
+
+# ── --esperar <sha>: só OBSERVA o ar (nunca publica) ───────────────────────────────────────────
+if [ -n "$ESPERAR" ]; then
+  PRAZO=${LP_ESPERAR_PRAZO:-1800}; PASSO=${LP_ESPERAR_INTERVALO:-45}
+  VIGIA=${LP_VIGIA_ESTADO:-$HOME/.local/state/afiacao/lovable-vigia}
+  sai() { echo "$2"; exit "$1"; }
+  diz() { [ "$1" = "${dito:-}" ] || echo "  $1"; dito=$1; }   # loga só quando o estado MUDA
+  # carimbo de commit que este clone ainda não tem (merge recente) → fetch e relê uma vez
+  ar_lido() { local r; r=$(sha_no_ar) && { echo "$r"; return 0; }
+    case "$r" in CARIMBO_NAO_RESOLVE*) git fetch -q origin 2>/dev/null; sha_no_ar ;; *) echo "$r"; return 1 ;; esac; }
+  resolve() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null; }
+  PEDIDO=$(resolve "$ESPERAR") || { git fetch -q origin 2>/dev/null; PEDIDO=$(resolve "$ESPERAR"); } \
+    || sai 6 "MECANICA=SHA_NAO_RESOLVE:$ESPERAR"
+  echo "esperando o ar conter ${PEDIDO:0:8} (prazo ${PRAZO}s, leitura a cada ${PASSO}s) app=$APP"
+  t=0; mediu=0; falha=""
+  while :; do
+    if AR=$(ar_lido); then
+      mediu=1
+      git merge-base --is-ancestor "$PEDIDO" "$AR" 2>/dev/null && sai 0 "NO_AR=$AR"
+      TIPO=$(git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)
+      [ -n "$TIPO" ] && { resolve "$TIPO" >/dev/null || git fetch -q origin 2>/dev/null; }
+      if [ -z "$TIPO" ] || ! resolve "$TIPO" >/dev/null; then
+        diz "ar=${AR:0:8} · main remota ilegível agora — sigo esperando"
+      elif ! git merge-base --is-ancestor "$PEDIDO" "$TIPO" 2>/dev/null; then
+        # a main só cresce: fora dela agora = nunca (ex.: SHA do ramo, não o do squash)
+        sai 6 "MECANICA=FORA_DA_MAIN:${PEDIDO:0:8} não é ancestral de origin/main (${TIPO:0:8}) — passe o SHA do merge"
+      else
+        # o MESMO julgamento do tick do vigia (sem liberação), e depois o estado dele
+        J=$(LP_LIBERAR_SHA='' bash "$0" --julgar "$TIPO" 2>&1); jrc=$?
+        VER=$(printf '%s\n' "$J" | tail -1 | sed -n 's/^VEREDITO=//p')
+        if [ "$jrc" = 10 ]; then
+          MIG=$(printf '%s\n' "$J" | sed -n 's/^  - \(supabase\/migrations\/.*\)/\1/p' | head -1)
+          EDG=$(printf '%s\n' "$J" | sed -n 's/^  - \(supabase\/functions\/.*\)/\1/p' | head -1)
+          if [ -n "$MIG" ]; then
+            [ "$(resolve "$(cat "$VIGIA/liberar" 2>/dev/null)")" = "$TIPO" ] \
+              || sai 10 "RETIDO=migration:$MIG"
+            diz "ar=${AR:0:8} · migration liberada no vigia ($VIGIA/liberar) — aguardando o Publish"
+          else
+            case "$(cat "$VIGIA/pendencias-$TIPO" 2>/dev/null)" in
+              1) sai 10 "RETIDO=edge:$EDG" ;;
+              0) diz "ar=${AR:0:8} · só edge no intervalo e o ledger diz servida — o vigia libera" ;;
+              *) diz "ar=${AR:0:8} · só edge no intervalo; o vigia ainda não consultou o ledger" ;;
+            esac
+          fi
+        elif [ "$jrc" = 0 ] && [ "$VER" = NADA_A_PUBLICAR ]; then
+          sai 0 "NADA_A_PUBLICAR=$AR"
+        else
+          diz "ar=${AR:0:8} main=${TIPO:0:8} · julgar: ${VER:-?} (rc $jrc) — sigo esperando"
+        fi
+      fi
+    else
+      falha=$AR; diz "leitura do ar falhou: $AR"
+    fi
+    [ "$t" -ge "$PRAZO" ] && { [ "$mediu" = 1 ] && sai 30 TIMEOUT; sai 6 "MECANICA=AR_ILEGIVEL:$falha"; }
+    "$DORME" "$PASSO"; t=$((t + PASSO))
+  done
+fi
+
+[ "$JULGAR" = 1 ] || [ -n "${LOVABLE_API_KEY:-}" ] || mecanica "LOVABLE_API_KEY ausente"
+command -v jq >/dev/null || mecanica "jq ausente"
+HEAD_SHA=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || mecanica "HEAD não resolve: ${1:-HEAD}"
 
 # ── 1. o que o ar serve ────────────────────────────────────────────────────────────────────────
 AR=$(sha_no_ar) || mecanica "$AR"

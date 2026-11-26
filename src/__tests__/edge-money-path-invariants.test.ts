@@ -704,7 +704,9 @@ describe('guardrail money-path: alterar_pedido não lê `null` do Omie como muta
   };
 
   // As 4 mutações + a leitura de confirmação: todas deixam o Omie em estado que o app não gravou.
-  const APOS_MUTAR = ['ExcluirItemPedido', 'IncluirItemPedido', 'AlterarPedidoVenda', 'TotalizarPedido'];
+  // Ordem da v1.49: o cabeçalho (AlterarPedidoVenda) vai ANTES do delete+add — se o Omie recusar o
+  // cabeçalho/frete reenviado, os itens ficam intactos (docs/historico/edicao-pedido-envio-omie.md).
+  const APOS_MUTAR = ['AlterarPedidoVenda', 'ExcluirItemPedido', 'IncluirItemPedido', 'TotalizarPedido'];
 
   it('sentinela: a extração achou o bloco e EXATAMENTE as chamadas conhecidas ao Omie', () => {
     expect(bloco, 'bloco da action alterar_pedido não encontrado').not.toBe('');
@@ -5137,6 +5139,36 @@ describe('guardrail money-path: erro sem override do gate ATP nunca segue para o
 // #3: excluir pedido Oben sem PID consulta o Omie pela chave PV_<id> ANTES do DELETE; PV achado ⇒
 // vínculo recuperado e exclusão RECUSADA (nenhuma mutação nova no Omie). Comportamento puro:
 // _shared/atp-pv-omie_test.ts; RPC: zona 11 do harness PG17.
+// ── PR 2.5 (rodada 3, "reenvio honesto"): endereço/turno no reenvio que reconcilia a OS ──
+// O upsert de `orders` é ignoreDuplicates. O reenvio reconciliado só AVISA que o endereço/turno deste
+// envio não entrou — NÃO regrava (2 rodadas do Codex no #4174 acharam P0 na regravação: null do front
+// antigo/consulta falha apagava o endereço, e reenvios concorrentes se desfaziam). Endereço/turno seguem
+// FORA da assinatura da OS (o id da OS não muda).
+describe('guardrail money-path: reenvio da OS só avisa endereço/turno, sem regravar (PR 2.5)', () => {
+  const src = removerComentarios(read(OMIE_SYNC));
+  const chave = removerComentarios(read('supabase/functions/omie-sync/chave-os.ts'));
+  const ini = src.indexOf('if (osResult.reconciliada) {');
+  const passo = src.slice(ini, src.indexOf('if (osResult.primeiro)', ini));
+
+  it('sentinela: recortou o passo 3b', () => {
+    expect(ini).toBeGreaterThan(0);
+    expect(passo).toContain('avisoEnderecoTurnoOs(');
+  });
+  it('o passo 3b NÃO escreve em orders', () => {
+    expect(passo, 'REGRESSÃO: o reenvio volta a regravar orders (P0s do Codex no #4174)').not.toMatch(/\.(update|upsert|insert|delete)\(/);
+  });
+  it('só compara com a modalidade DECLARADA, lida junto da linha', () => {
+    expect(passo).toMatch(/modalidade\.valor === MODALIDADE_LEGADA \? null : modalidade\.valor,/);
+    expect(passo).toContain('.select("address, time_slot, delivery_option")');
+  });
+  it('o aviso volta no resultado de sucesso', () => {
+    expect(src).toContain('aviso_local: avisoLocal,');
+  });
+  it('endereço/turno NÃO entram na assinatura da OS (o id da OS do #4138 não muda)', () => {
+    expect(chave, 'REGRESSÃO: endereço/turno na assinatura mudariam o id da OS').not.toMatch(/address|time_slot|endereco|turno/i);
+  });
+});
+
 describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', () => {
   const src = read('supabase/functions/omie-vendas-sync/index.ts');
   const ini = src.indexOf('async function criarPedidoVenda(');
@@ -5159,6 +5191,21 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(aviso, 'REGRESSÃO: PV reconciliado divergente volta a ser sucesso silencioso').toBeGreaterThan(rpc);
     expect(fn.slice(aviso, aviso + 120)).toMatch(/if \(aviso\) throw new Error\(aviso\)/);
     expect(fn).toMatch(/reconciled: true, consulta \};\s*comparacaoPv = compararCarrinhoPv\(items, consulta\);/);
+  });
+
+  // PR 2.5 (rodada 3, "reenvio honesto"): a data prometida do PV reconciliado é conferida, e o
+  // `omie_payload` local grava o PV que o Omie TEM — não o payload que ele recusou como duplicata.
+  it('o PV reconciliado confere a previsão de entrega e grava o PV do Omie como payload', () => {
+    expect(fn, 'REGRESSÃO: data prometida trocada no reenvio volta a ser sucesso calado')
+      .toMatch(/comparacaoPv = compararCarrinhoPv\(items, consulta\);\s*comparacaoPrevisao = compararPrevisaoEntregaPv\(previsaoEntrega, consulta\);\s*payloadGravado = payloadDoPvReconciliado\(consulta\);/);
+    expect(fn, 'REGRESSÃO: o write-back atômico volta a gravar o payload recusado').toContain('p_omie_payload: payloadGravado,');
+    expect(fn, 'REGRESSÃO: o write-back legado volta a gravar o payload recusado').toContain('omie_payload: payloadGravado,');
+    expect(fn).not.toMatch(/omie_payload: payload,|p_omie_payload: payload,/);
+  });
+  it('a data divergente só AVISA (não lança: lançar pulava a OP da Colacor) e o aviso sai nos 2 retornos', () => {
+    expect(fn).toContain('const avisoPrevisao = avisoPrevisaoEntregaPv(comparacaoPrevisao, omie_pedido_id);');
+    expect(fn, 'REGRESSÃO: data divergente volta a lançar e pular a OP').not.toMatch(/throw new Error\(avisoPrevisao\)/);
+    expect(fn.match(/return \{ omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao \};/g) ?? []).toHaveLength(2);
   });
 
   it('a edição de pedido reconciliado divergente é recusada antes do gate de aumento', () => {
@@ -5313,5 +5360,61 @@ describe('guardrail money-path: A4 sem caixa fabricado (fin-next-best-action, pl
       const codigo = removerComentarios(read(f));
       expect(codigo, `${f}: voltou a fabricar caixa com ?? 0`).not.toMatch(/(dias_cobertura|saldo_tesouraria|disponivel)\s*\?\?\s*0\b/);
     }
+  });
+});
+
+// ── Crédito-IA 6b: gate v2 EFETIVO dormente nas 2 vias de pedido (2026-11-26) ──
+// Com o flag desligado a RPC devolve `desligado` e o envio segue o caminho de hoje (gate-v2_test.ts).
+// Aqui a ORDEM: em cada `case`, depois do piso (e de tint/ATP na criação) e ANTES da 1ª mutação
+// (claim/IncluirPedido na criação; ExcluirItemPedido na edição). Segura = throw, nunca `blocked` novo.
+describe('omie-vendas-sync — gate v2 efetivo (6b)', () => {
+  const src = removerComentarios(read(VENDAS));
+  const criar = blocoCriarPedido(src);
+  const alterar = src.match(/case "alterar_pedido": \{[\s\S]*?\n {6}case "/)?.[0] ?? '';
+
+  it('criar_pedido: v2 depois de piso, tint e ATP; antes do claim e do IncluirPedido', () => {
+    const v2 = criar.indexOf('await gateV2Efetivo(');
+    expect(v2, 'gateV2Efetivo sumiu do criar_pedido').toBeGreaterThan(-1);
+    for (const antes of ['await gateCredito(', 'await gateTintPreco(', '"atp_gate_pedido"', 'await registrarRevisao(']) {
+      const i = criar.indexOf(antes);
+      expect(i, `${antes} sumiu do criar_pedido`).toBeGreaterThan(-1);
+      expect(i, `o v2 roda antes de ${antes}`).toBeLessThan(v2);
+    }
+    // O que importa é o THROW, não só a chamada (Codex diff P2: mover o throw para depois do claim
+    // passava verde): a recusa tem de sair antes do claim e do IncluirPedido.
+    const parada = criar.indexOf('if (!creditoV2.segue) throw new Error(creditoV2.mensagem);');
+    expect(parada, 'a parada do v2 sumiu do criar_pedido').toBeGreaterThan(v2);
+    for (const depois of ['"sales_order_reivindicar_envio"', 'await criarPedidoVenda(']) {
+      const i = criar.indexOf(depois);
+      expect(i, `${depois} sumiu do criar_pedido`).toBeGreaterThan(-1);
+      expect(parada, `a parada do v2 vem depois de ${depois} — chegaria tarde`).toBeLessThan(i);
+    }
+    expect(criar).toMatch(/revisao: revisaoCriacao\?\.revisao \?\? null/);
+    expect(criar, 'o v2 que segura tem de LANÇAR (blocked novo é lido como sucesso por bundle antigo)')
+      .toMatch(/if \(!creditoV2\.segue\) throw new Error\(creditoV2\.mensagem\);/);
+  });
+
+  it('alterar_pedido: v2 FORA do edicaoExigeGate, depois do piso e antes da fase destrutiva', () => {
+    expect(alterar, 'bloco do alterar_pedido não encontrado').not.toBe('');
+    const v2 = alterar.indexOf('await gateV2Efetivo(');
+    expect(v2, 'gateV2Efetivo sumiu do alterar_pedido').toBeGreaterThan(-1);
+    const piso = alterar.indexOf('await gateCredito(');
+    expect(piso).toBeGreaterThan(-1);
+    expect(piso, 'o v2 roda antes do piso').toBeLessThan(v2);
+    const parada = alterar.indexOf('if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);');
+    expect(parada, 'a parada do v2 sumiu do alterar_pedido').toBeGreaterThan(v2);
+    for (const depois of ['"ExcluirItemPedido"', '"IncluirItemPedido"', '"AlterarPedidoVenda"']) {
+      const i = alterar.indexOf(depois);
+      expect(i, `${depois} sumiu do alterar_pedido`).toBeGreaterThan(-1);
+      expect(parada, `a parada do v2 vem depois de ${depois} — o Omie já teria mudado`).toBeLessThan(i);
+    }
+    // Fora do `if (edicaoExigeGate(...)) { ... }`: o bloco do if fecha antes do v2.
+    const ifGate = alterar.indexOf('if (edicaoExigeGate(');
+    const trecho = alterar.slice(ifGate, v2);
+    const abre = (trecho.match(/\{/g) ?? []).length;
+    const fecha = (trecho.match(/\}/g) ?? []).length;
+    expect(abre, 'o v2 ficou DENTRO do if edicaoExigeGate (Codex Q3)').toBe(fecha);
+    expect(alterar).toMatch(/revisao: revisaoEdicao\?\.revisao \?\? null/);
+    expect(alterar).toMatch(/if \(!creditoV2Edit\.segue\) throw new Error\(creditoV2Edit\.mensagem\);/);
   });
 });

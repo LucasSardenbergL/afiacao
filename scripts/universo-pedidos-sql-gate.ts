@@ -30,11 +30,15 @@ import { drenar, type Passos } from '@/lib/gates/passos';
  */
 export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>> = {
   // ── lookup ──────────────────────────────────────────────────────────────────────────────────
+  'public.contato_cliente_operacional': { tipo: 'lookup', motivo: 'Onda D: contato do cliente pelo OBJETO — pedido por id (inclusive orçamento/cancelado que se imprime/detalha) e o pedido da tarefa de picking' },
   'private.atp_disponivel': { tipo: 'lookup', motivo: 'ATP: confere se o pedido da RESERVA já existe no Omie (por id)' },
   'private.atp_canonico_da_reserva': { tipo: 'lookup', motivo: 'ATP 3.1: acha a canônica de UMA reserva pelo par próprio (conta, omie_pedido_id) ou pelo vínculo (por id da reserva)' },
   'private.atp_pedido_canonico': { tipo: 'lookup', motivo: 'ATP: acha o gêmeo canônico de um pedido empurrado (por id/omie_pedido_id)' },
   'private.expirar_reservas_vencidas_job': { tipo: 'lookup', motivo: 'ATP: expira reserva cujo pedido não virou Omie (por id)' },
   'public.credito_registrar_revisao': { tipo: 'lookup', motivo: 'Crédito-IA PR 3: confere a conta de UM pedido (por id) antes de registrar a revisão da operação' },
+  'public.credito_gate_v2_efetivo': { tipo: 'lookup', motivo: 'Crédito-IA PR 6a: lê a conta de UM pedido (por id) — a conta autoritativa escolhe o flag de enforcement; pedido cancelado/apagado não entra aqui (a edge só chama no envio)' },
+  'public.credito_fila_v': { tipo: 'lookup', motivo: 'Crédito-IA PR 6a: fila de crédito junta o pedido de CADA solicitação/decisão (por id) para exibir número/cliente e marcar cancelado/apagado como superado — não é universo de pedidos' },
+  'public.credito_painel_resumo': { tipo: 'lookup', aliases: ['g'], motivo: 'Crédito-IA PR 8: status do GÊMEO importado de UM pedido do app (por id) — gêmeo cancelado no Omie = pedido não liberado' },
   'public.pedido_por_checkout': { tipo: 'lookup', motivo: 'Checkout: acha a linha do par idempotente (checkout_id, account) para decidir insert/reuse/skip' },
   'public.pedidos_vendedor': { tipo: 'lookup', motivo: 'Meu dia do CEO: vendedor de um lote de pedidos que o front JÁ leu no universo canônico (por ids)' },
   'public.liberar_reserva_checkout': { tipo: 'lookup', motivo: 'ATP 3.2: preserva a reserva cujo pedido já virou PV no Omie (por id)' },
@@ -83,6 +87,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.order_feed': { tipo: 'proposito', motivo: 'feed de pedidos da equipe: mostra todo status (orçamento, rascunho, cancelado); só esconde o apagado' },
   'public.pedidos_ids_do_vendedor': { tipo: 'proposito', motivo: '"Meus pedidos" do /sales: ids do vendedor no MESMO universo do order_feed (todo status, só esconde o apagado) — cruzado com a view' },
   'public.selfservice_meus_pedidos': { tipo: 'proposito', motivo: 'self-service: o cliente vê os próprios pedidos em todo status (view-gate)' },
+  'public.v_pedido_snapshot_proprio': { tipo: 'proposito', motivo: 'lookup por id do snapshot de contato do PRÓPRIO pedido (onda D 4a): o universo é o do detalhe que pediu o id, não de venda' },
   'public.listar_pedidos_a_separar': { tipo: 'proposito', motivo: 'picking: universo OPERACIONAL do que falta separar (não do que foi vendido)' },
   'public.get_whatsapp_funil': { tipo: 'proposito', motivo: 'funil de propostas: conta toda proposta, orçamento inclusive (0 pedidos com conversa em 2026-10-01)' },
   'public.cockpit_itens_snapshot': { tipo: 'proposito', motivo: 'export: devolve status/deleted_at por linha e o universo é do CONSUMIDOR (fin-valor-cockpit — metade TS da classe)' },
@@ -95,6 +100,13 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   },
   // ── canônico por parâmetro ──────────────────────────────────────────────────────────────────
   'public.apriori_universo_snapshot': { tipo: 'canonico_por_parametro', motivo: 'recebe p_status_nao_venda e o VALIDA contra STATUS_NAO_VENDA antes de ler' },
+  // ── crédito-IA PR 5 (sombra) — exposição de crédito NÃO é universo de venda ─────────────
+  'private.credito_sombra_versao': { tipo: 'lookup', motivo: 'Crédito-IA PR 5: versão corrente de UM pedido (por id) — app = revisão, importado = conteúdo' },
+  'private.credito_sombra_titulos_pv': { tipo: 'lookup', motivo: 'Crédito-IA PR 5: unicidade do número do PV na empresa (vínculo PV→título); duplicata = vínculo não comprovável' },
+  'private.credito_sombra_residual': { tipo: 'lookup', motivo: 'Crédito-IA PR 5: número do PV de UMA reserva (por id), para derivar o residual' },
+  'private.credito_sombra_avaliar': { tipo: 'proposito', motivo: 'Crédito-IA PR 5: exposição do grupo — PV excluído no app (deleted_at) segue exposição até o Omie cancelar (Codex P1); a denylist de venda é aplicada, o deleted_at não por desenho' },
+  'private.credito_sombra_lote': { tipo: 'proposito', motivo: 'Crédito-IA PR 5: candidatos e conciliação da sombra — avalia PV excluído no app (ausente ≠ cancelado) e libera reserva só pelo status cancelado do Omie' },
+  'public.credito_sombra_saude': { tipo: 'proposito', motivo: 'Crédito-IA PR 5: sensor — conta carga pendente e reserva ativa de PV excluído no app (justamente o que o universo de venda esconde)' },
 };
 
 export function lerMigrations(raiz: string): Array<{ nome: string; sql: string }> {

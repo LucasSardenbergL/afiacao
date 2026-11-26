@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { Loader2, FileText, User, Lock, Eye, EyeOff, MapPin, AlertCircle, Factory, ChevronLeft } from 'lucide-react';
+import { Loader2, FileText, User, Lock, Eye, EyeOff, MapPin, Factory, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
-import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 import { ehDocumentoPessoaJuridica } from '@/lib/omie/documento-cliente';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
@@ -30,7 +29,7 @@ interface SignupFormProps {
   toolCategories: { id: string; name: string; description: string; usage_type: string; suggested_interval_days: number }[];
 }
 
-export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, onSwitchToLogin, toolCategories }: SignupFormProps) {
+export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, toolCategories }: SignupFormProps) {
   const [signupStep, setSignupStep] = useState<SignupStep>('document');
   const [isCheckingDocument, setIsCheckingDocument] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -40,7 +39,6 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
   const [isEmployee, setIsEmployee] = useState(false);
   const [cnae, setCnae] = useState<string | null>(null);
   const [cnaeDescricao, setCnaeDescricao] = useState<string | null>(null);
-  const [existingUserError, setExistingUserError] = useState(false);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
 
   const filteredTools = toolCategories.filter(tool =>
@@ -56,7 +54,6 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
     setIsIndustrial(false);
     setIsEmployee(false);
     setCnae(null);
-    setExistingUserError(false);
     // Reset form fields except document
     ['name', 'tradeName', 'email', 'phone', 'password', 'confirmPassword',
       'street', 'number', 'complement', 'neighborhood', 'city', 'state', 'zipCode',
@@ -72,16 +69,10 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
     }
     setIsCheckingDocument(true);
     setErrors({});
-    setExistingUserError(false);
     try {
-      const docLimpo = normalizarDocumento(formData.document);
-      const { data: existingProfile } = await supabase.from('profiles').select('id').eq('document', docLimpo).maybeSingle();
-      if (existingProfile) {
-        setExistingUserError(true);
-        toast.error('Cadastro existente', { description: 'Este documento já está cadastrado. Faça login com seu e-mail.' });
-        setIsCheckingDocument(false);
-        return;
-      }
+      // Onda D fatia 3: o "documento já cadastrado" que morava aqui lia profiles.document como ANON — a RLS
+      // nunca deixou o anon ver linha alheia (a checagem jamais disparou) e, com o grant de coluna, a
+      // leitura dá 42501. A resposta pública fica uniforme; duplicidade é problema do servidor (spec).
       const { data, error } = await supabase.functions.invoke('omie-cliente', {
         body: { action: 'buscar_por_documento', documento: formData.document },
       });
@@ -173,18 +164,6 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
             {errors.document && <p className="text-xs text-destructive mt-1">{errors.document}</p>}
             <p className="text-xs text-muted-foreground mt-2">Verificaremos se você já possui cadastro</p>
           </div>
-          {existingUserError && (
-            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
-              <div className="text-sm">
-                <p className="font-medium text-destructive">Cadastro já existe</p>
-                <p className="text-muted-foreground">
-                  Este documento já está cadastrado.{' '}
-                  <button type="button" onClick={onSwitchToLogin} className="text-primary hover:underline font-medium">Faça login</button>
-                </p>
-              </div>
-            </div>
-          )}
           <Button type="button" className="w-full h-12 text-base font-semibold shadow-glow"
             disabled={isCheckingDocument || !formData.document} onClick={checkDocumentInOmie}>
             {isCheckingDocument ? (<><Loader2 className="w-5 h-5 mr-2 animate-spin" />Verificando...</>) : 'Continuar'}

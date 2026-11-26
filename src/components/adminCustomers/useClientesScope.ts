@@ -6,6 +6,7 @@
 import { useMemo } from 'react';
 import { keepPreviousData, useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
@@ -20,7 +21,8 @@ import {
 import type { Customer, ClientScore } from './types';
 
 const PAGE_SIZE = TAMANHO_PAGINA_CLIENTES;
-const COLUNAS_PROFILE = 'user_id, name, email, phone, document, customer_type, created_at, requires_po';
+// Sem PII: o contato vem da view mascarada (onda D) por comContatoMascarado.
+const COLUNAS_PROFILE = 'user_id, name, customer_type, created_at, requires_po';
 
 /**
  * Resolução do deep link `/admin/customers/:customerId`, independente das páginas carregadas.
@@ -216,7 +218,8 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
         .maybeSingle();
       if (error) throw error;
       // maybeSingle: null sem error = nenhuma linha visível — é "não encontrado", não malformado.
-      return (data ?? null) as Customer | null;
+      if (!data) return null;
+      return ((await comContatoMascarado([data]))[0] ?? null) as Customer | null;
     },
   });
 

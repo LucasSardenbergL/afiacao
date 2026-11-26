@@ -5,7 +5,7 @@
  * `openPrintOrder` escreve o cupom numa janela nova, e o dublê de `window.open` captura o HTML.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { openPrintOrder, type PrintOrderData } from '../OrderPrintLayout';
+import { openPrintOrder, textoVencimentosDoCupom, type PrintOrderData } from '../OrderPrintLayout';
 import { formatPrecoOuAusente as fmt } from '@/lib/format';
 
 afterEach(() => {
@@ -115,5 +115,27 @@ describe('openPrintOrder — B4: serviço a orçar no cupom (rodada 2)', () => {
     const html = imprimir({ ...base, total: 50 });
     expect(html).toContain(`<span>TOTAL:</span><span>${fmt(50)}</span>`);
     expect(html).not.toContain('SUBTOTAL CONHECIDO');
+  });
+});
+
+describe('textoVencimentosDoCupom — vencimento não se inventa', () => {
+  it('S41 (Oben = 28/42/56 dias) não vira "41 dias" nem data alguma', () => {
+    const t = textoVencimentosDoCupom({ parcelaCode: 'S41', condPagamento: undefined });
+    expect(t).toBe('A definir no faturamento — as datas e os valores de cada parcela saem na nota fiscal e nos boletos.');
+    expect(t).not.toMatch(/\d{2}\/\d{2}\/\d{4}/);
+    expect(t).not.toContain('41');
+  });
+
+  it('à vista ou sem condição: sem linha de vencimentos', () => {
+    expect(textoVencimentosDoCupom({ parcelaCode: '000', condPagamento: undefined })).toBe('');
+    expect(textoVencimentosDoCupom({ parcelaCode: undefined, condPagamento: '000' })).toBe('');
+    expect(textoVencimentosDoCupom({ parcelaCode: 'A01', condPagamento: 'À vista' })).toBe('');
+    expect(textoVencimentosDoCupom({ parcelaCode: undefined, condPagamento: undefined })).toBe('');
+  });
+
+  it('3 parcelas: nenhum valor por parcela é impresso (o rateio real é do PV, não divisão igual)', () => {
+    const t = textoVencimentosDoCupom({ parcelaCode: 'T03', condPagamento: '30/60/90 dias' });
+    expect(t).not.toMatch(/R\$/);
+    expect(t).not.toContain('ª parcela');
   });
 });

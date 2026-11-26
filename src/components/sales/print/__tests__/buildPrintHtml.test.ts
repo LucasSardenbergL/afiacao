@@ -5,7 +5,7 @@
  * `.ts` — logo, no ambiente `node` por padrão — mas toca DOM. O docblock sobrepõe o
  * project e é local ao arquivo, então não vira ímã de conflito entre worktrees.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '../buildPrintHtml';
 import type { LeituraDescontosItens, LinhaDescontoItem } from '../descontoCupom';
 import type { SalesOrderRow } from '../types';
@@ -69,11 +69,27 @@ describe('buildSingleOrderHtml', () => {
     expect(html).toContain('RECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL');
   });
 
-  it('gera parcelas a partir de condPagamento "28/42"', () => {
+  it('condição a prazo: imprime o prazo e "a definir", nunca datas nem rateio inventados', () => {
     const html = buildSingleOrderHtml(buildPrintData({ ...order, cond_pagamento: '28/42' }, 'colacor', undefined, SEM_ORDER_ITEMS));
-    expect(html).toContain('1ª parcela');
-    expect(html).toContain('2ª parcela');
     expect(html).toContain('CONDIÇÃO DE PAGAMENTO');
+    expect(html).toContain('A definir no faturamento');
+    expect(html).not.toContain('1ª parcela');
+    expect(html).not.toMatch(/\d{2}\/\d{2}\/\d{4} – R\$/);
+  });
+
+  it('reimprimir em outro dia não muda os vencimentos (antes: hoje + dias do código)', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-26T12:00:00Z'));
+      const hoje = buildSingleOrderHtml(buildPrintData({ ...order, cond_pagamento: '28/42' }, 'colacor', undefined, SEM_ORDER_ITEMS));
+      vi.setSystemTime(new Date('2026-12-10T12:00:00Z'));
+      const depois = buildSingleOrderHtml(buildPrintData({ ...order, cond_pagamento: '28/42' }, 'colacor', undefined, SEM_ORDER_ITEMS));
+      const vencimentos = (html: string) => html.slice(html.indexOf('CONDIÇÃO DE PAGAMENTO'), html.indexOf('CONDIÇÃO DE PAGAMENTO') + 600);
+      expect(vencimentos(depois)).toBe(vencimentos(hoje));
+      expect(vencimentos(hoje)).not.toContain('24/12/2026'); // 26/11 + 28 dias, o calendário que se inventava
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('à vista (000) não gera parcelas', () => {

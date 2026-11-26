@@ -45,7 +45,7 @@ function degrauAbaixo(prazo: number): number | null {
   return null;
 }
 
-/** Acima disso o gate da fronteira exige exceção de gestor — degrau não cabe, só à vista. */
+/** A partir disso (≥ 60 d, migration 20261124170000) o gate da fronteira exige exceção de gestor — degrau não cabe, só à vista. */
 const DIAS_VENCIDO_A_VISTA = 60;
 /** Teto de sanidade do calendário (acima disso a descrição não é prazo em dias). */
 const PRAZO_MAX_DIAS = 365;
@@ -170,7 +170,7 @@ export function sugerirParcela(input: {
   // Só um código REAL da conta pode ser sugerido — nunca se inventa um "999".
   const aVista = lidas.find((l) => l.prazo === 0) ?? null;
 
-  if (diasVencidoMax !== null && Number.isFinite(diasVencidoMax) && diasVencidoMax > DIAS_VENCIDO_A_VISTA) {
+  if (diasVencidoMax !== null && Number.isFinite(diasVencidoMax) && diasVencidoMax >= DIAS_VENCIDO_A_VISTA) {
     if (!aVista) return { tipo: 'nenhuma', motivoSistema: 'sem_forma_menor' };
     return { tipo: 'degrau', sugerida: aVista.forma, prazoAtual, prazoSugerido: 0, motivo: 'vencido_60d' };
   }

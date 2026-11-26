@@ -1354,3 +1354,21 @@ describe('montarUniverso — a UNIÃO das duas réguas (o caso não existe na á
     expect(u1.semMarcador.map((e) => e.edge)).toEqual(['a', 'z']);
   });
 });
+
+// O `request_id` é `net._http_response.id`, e o pg_net REINICIA essa sequência (4× entre 2026-10-29 e
+// 2026-11-25). Casar só pelo id ligava o disparo de hoje à resposta de outra edge de um mês atrás:
+// 🔴 IDENTIDADE_INCOERENTE falso em 10 edges em 2026-11-26. O SQL roda no banco (aqui é mock), então
+// a guarda é sobre o predicado: tirar o corte devolve o alarme falso em prod.
+describe('sonda por cron — request_id reciclado pelo pg_net', () => {
+  const plano = (sql: string) => sql.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ');
+  it('atestação só casa com disparo se foi observada DEPOIS do enfileiramento', () => {
+    expect(plano(SQL_SONDA_CRON_ATESTACOES)).toContain(
+      'ON p.request_id = tudo.request_id AND tudo.observado_em >= p.enfileirado_em',
+    );
+  });
+  it('motivo do relé só casa com resposta criada DEPOIS do enfileiramento', () => {
+    expect(plano(SQL_SONDA_CRON_MOTIVOS)).toContain(
+      'ON x.id = d.request_id AND x.created >= d.enfileirado_em',
+    );
+  });
+});

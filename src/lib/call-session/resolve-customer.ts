@@ -101,8 +101,10 @@ async function lerEvidenciaDoCandidato(candidato: string, phoneDialed: string): 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
     const [contatos, perfil, carteira] = await Promise.all([
-      supabase.from('customer_contacts').select('phone').eq('customer_user_id', candidato),
-      supabase.from('profiles').select('phone').eq('user_id', candidato).maybeSingle(),
+      // Onda D: pelas views — fora da carteira/cobertura não há telefone visível, logo não há
+      // evidência e a ligação vai para a conferência (degrada seguro, decisão da spec).
+      supabase.from('v_cliente_contatos').select('phone').eq('customer_user_id', candidato),
+      supabase.from('v_perfil_contato').select('phone').eq('user_id', candidato).maybeSingle(),
       supabase.from('carteira_assignments').select('customer_user_id')
         .eq('customer_user_id', candidato).eq('owner_user_id', user.id).eq('eligible', true).limit(1),
     ]);

@@ -11,26 +11,34 @@ const prod: OmieProduct = {
 describe('AddProductSearch', () => {
   it('dispara setProductSearch ao digitar', () => {
     const setProductSearch = vi.fn();
-    render(<AddProductSearch productSearch="" setProductSearch={setProductSearch} filteredProducts={[]} onAddProduct={vi.fn()} />);
+    render(<AddProductSearch productSearch="" setProductSearch={setProductSearch} filteredProducts={[]} onAddProduct={vi.fn()} precoPrevisto={() => null} />);
     fireEvent.change(screen.getByPlaceholderText(/Buscar produto/), { target: { value: 'ver' } });
     expect(setProductSearch).toHaveBeenCalledWith('ver');
   });
 
   it('mostra dica quando < 2 caracteres', () => {
-    render(<AddProductSearch productSearch="v" setProductSearch={vi.fn()} filteredProducts={[]} onAddProduct={vi.fn()} />);
+    render(<AddProductSearch productSearch="v" setProductSearch={vi.fn()} filteredProducts={[]} onAddProduct={vi.fn()} precoPrevisto={() => null} />);
     expect(screen.getByText('Digite pelo menos 2 caracteres')).toBeTruthy();
   });
 
   it('mostra "nenhum produto" quando >=2 e lista vazia', () => {
-    render(<AddProductSearch productSearch="xyz" setProductSearch={vi.fn()} filteredProducts={[]} onAddProduct={vi.fn()} />);
+    render(<AddProductSearch productSearch="xyz" setProductSearch={vi.fn()} filteredProducts={[]} onAddProduct={vi.fn()} precoPrevisto={() => null} />);
     expect(screen.getByText('Nenhum produto encontrado')).toBeTruthy();
   });
 
   it('lista produtos e dispara onAddProduct ao clicar', () => {
     const onAddProduct = vi.fn();
-    render(<AddProductSearch productSearch="ver" setProductSearch={vi.fn()} filteredProducts={[prod]} onAddProduct={onAddProduct} />);
+    render(<AddProductSearch productSearch="ver" setProductSearch={vi.fn()} filteredProducts={[prod]} onAddProduct={onAddProduct} precoPrevisto={() => 25} />);
     expect(screen.getByText('Verniz incolor')).toBeTruthy();
     fireEvent.click(screen.getByText('Verniz incolor'));
     expect(onAddProduct).toHaveBeenCalledWith(prod);
+  });
+
+  it('mostra o preço que o clique APLICA (praticado), não a tabela; carregando = —', () => {
+    const { rerender } = render(<AddProductSearch productSearch="ver" setProductSearch={vi.fn()} filteredProducts={[prod]} onAddProduct={vi.fn()} precoPrevisto={() => 87.5} />);
+    expect(screen.getByText('R$ 87.50')).toBeTruthy();
+    expect(screen.queryByText('R$ 25.00')).toBeNull();
+    rerender(<AddProductSearch productSearch="ver" setProductSearch={vi.fn()} filteredProducts={[prod]} onAddProduct={vi.fn()} precoPrevisto={() => null} />);
+    expect(screen.getByText('—')).toBeTruthy();
   });
 });

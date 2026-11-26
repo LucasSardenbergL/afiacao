@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import {
+  mensagemDoLote,
   type Account,
   type CursorFeed,
   type OrderFeedRow,
@@ -244,7 +245,7 @@ export function useSalesOrders() {
   const getDetail = (row: Pick<OrderFeedRow, 'origin' | 'id'> & { customer_name?: string | null }) =>
     queryClient.fetchQuery({
       queryKey: orderDetailQueryKey(user?.id, row.origin, row.id),
-      queryFn: () => fetchOrderDetail(row.origin, row.id, row.customer_name),
+      queryFn: () => fetchOrderDetail(row.origin, row.id, row.customer_name, isStaff),
       staleTime: 60_000,
     });
 
@@ -487,13 +488,10 @@ export function useSalesOrders() {
       ...(rollbackFalhou ? [`Os que falharam ficaram OCULTOS no app (falha ao desfazer: ${rollbackFalhou}) — avise o suporte.`] : []),
     ].join(' · ') || undefined;
 
-    if (failed === 0) {
-      toast.success(`${success} pedido(s) excluído(s)`);
-    } else if (success === 0) {
-      toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`, { description: detalhe });
-    } else {
-      toast.warning(`${success} excluído(s), ${failed} falharam`, { description: detalhe });
-    }
+    const toastDoLote = mensagemDoLote(success, failed);
+    if (failed === 0) toast.success(toastDoLote);
+    else if (success === 0) toast.error(toastDoLote, { description: detalhe });
+    else toast.warning(toastDoLote, { description: detalhe });
     // Reconcilia com o servidor em qualquer desfecho do bulk: os que falharam (deleted_at já
     // revertido) voltam à lista; os que ficaram ocultos por falha do rollback, não — é o estado real.
     void reconciliar();

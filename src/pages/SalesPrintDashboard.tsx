@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { lerContatoOperacional, type ContatoOperacional } from '@/lib/contato-cliente';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { useQuery } from '@tanstack/react-query';
 import { Printer, ArrowLeft } from 'lucide-react';
@@ -90,7 +91,7 @@ const SalesPrintDashboard = () => {
       // um `.select('*')` daria 42501 (o * inteiro cai).
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('id, customer_user_id, account, omie_numero_pedido, created_at, items, subtotal, total, discount, notes, status, customer_address, customer_phone, customer_document, order_date_kpi')
+        .select('id, customer_user_id, account, omie_numero_pedido, created_at, items, subtotal, total, discount, notes, status, order_date_kpi')
         .gte('created_at', dayStart)
         .lte('created_at', dayEnd)
         // Imprime o que foi VENDIDO no dia: o universo canônico. O `.neq('cancelado')` deixava
@@ -99,12 +100,15 @@ const SalesPrintDashboard = () => {
         .is('deleted_at', null)
         .order('created_at', { ascending: true });
       if (error) throw error;
+      // Snapshot de entrega do pedido pelo contexto OPERACIONAL (onda D): objeto = o pedido; a
+      // leitura fora da carteira fica no ledger. Falha LANÇA — folha sem endereço não sai calada.
+      const snap = await lerContatoOperacional('pedido', (data ?? []).map((r) => r.id), 'impressao_pedido');
       const rows: SalesOrderRow[] = (data ?? []).map((r) => ({
         ...r,
         items: itensImpressaoDoJson(r.items, `sales_orders ${r.id}`),
-        customer_document: r.customer_document ?? undefined,
-        customer_phone: r.customer_phone ?? undefined,
-        customer_address: r.customer_address ?? undefined,
+        customer_document: snap.get(r.id)?.pedido_documento ?? undefined,
+        customer_phone: snap.get(r.id)?.pedido_telefone ?? undefined,
+        customer_address: snap.get(r.id)?.pedido_endereco ?? undefined,
       }));
       // A impressão lê cabecalho.codigo_parcela e cabecalho.codigo_cliente do payload —
       // recupera em LOTE pelo canal staff SECDEF e re-injeta em cada linha.
@@ -173,33 +177,45 @@ const SalesPrintDashboard = () => {
     return [...ids];
   }, [allOrdersRaw]);
 
-  const { data: profiles = [] } = useQuery({
+  // Contato do cliente (documento, telefone, endereços) pelo contexto OPERACIONAL — objeto = o
+  // pedido/OS impresso, nunca o cliente solto (onda D). Nome segue de `profiles` (identidade).
+  const salesIdsImpressao = useMemo(() => salesOrders.map((o) => o.id), [salesOrders]);
+  const osIdsImpressao = useMemo(() => afiacaoOrders.map((o) => o.id), [afiacaoOrders]);
+  const { data: contatoPorCliente } = useQuery({
+    queryKey: ['sales-print-contato', salesIdsImpressao, osIdsImpressao],
+    queryFn: async () => {
+      const [pedidos, oss] = await Promise.all([
+        lerContatoOperacional('pedido', salesIdsImpressao, 'impressao_pedido'),
+        lerContatoOperacional('ordem_servico', osIdsImpressao, 'lista_os'),
+      ]);
+      const m = new Map<string, ContatoOperacional>();
+      for (const c of [...pedidos.values(), ...oss.values()]) m.set(c.customer_user_id, c);
+      return m;
+    },
+    enabled: salesIdsImpressao.length + osIdsImpressao.length > 0,
+  });
+
+  const { data: nomes = [] } = useQuery({
     queryKey: ['sales-print-profiles', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
       const { data } = await supabase
         .from('profiles')
-        .select('user_id, name, document, phone')
+        .select('user_id, name')
         .in('user_id', customerIds);
       return data || [];
     },
     enabled: customerIds.length > 0,
   });
+  const profiles = useMemo((): ProfileLite[] => nomes.map((p) => {
+    const c = contatoPorCliente?.get(p.user_id);
+    return { ...p, document: c?.document ?? null, phone: c?.phone ?? null } as ProfileLite;
+  }), [nomes, contatoPorCliente]);
 
-  // Fetch customer addresses from local table
-  const { data: customerAddresses = [] } = useQuery({
-    queryKey: ['sales-print-addresses', customerIds],
-    queryFn: async () => {
-      if (customerIds.length === 0) return [];
-      const { data } = await supabase
-        .from('addresses')
-        .select('user_id, street, number, complement, neighborhood, city, state, zip_code, is_default')
-        .in('user_id', customerIds)
-        .order('is_default', { ascending: false });
-      return data || [];
-    },
-    enabled: customerIds.length > 0,
-  });
+  const customerAddresses = useMemo((): AddressLite[] =>
+    [...(contatoPorCliente?.values() ?? [])].flatMap((c) =>
+      c.enderecos.map((e) => ({ ...e, user_id: c.customer_user_id }) as AddressLite)),
+  [contatoPorCliente]);
 
   // Código do cliente (conta colacor_sc) p/ address lookup — via view fresca account-correta.
   const { data: omieClientes = [] } = useQuery({

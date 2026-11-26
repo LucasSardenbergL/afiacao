@@ -11,7 +11,8 @@ export function useCustomerContacts(customerId: string | null) {
     queryFn: async (): Promise<CustomerContact[]> => {
       if (!customerId) return [];
        
-      const { data, error } = await supabase.from('customer_contacts')
+      // Onda D: leitura pela view (só staff, só cliente com contato visível); escrita segue na tabela.
+      const { data, error } = await supabase.from('v_cliente_contatos')
         .select('*')
         .eq('customer_user_id', customerId)
         .order('is_primary', { ascending: false })
@@ -40,7 +41,9 @@ interface SaveInput {
 export function useSaveContact() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: SaveInput): Promise<CustomerContact> => {
+    // Onda D fatia 4a: a releitura pós-escrita pede só a chave — o contato (telefone, e-mail, nota)
+    // fecha a authenticated na tabela (20261126170000) e a lista relê pela `v_cliente_contatos`.
+    mutationFn: async (input: SaveInput): Promise<Pick<CustomerContact, 'id' | 'customer_user_id'>> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Não autenticado');
 
@@ -68,18 +71,20 @@ export function useSaveContact() {
       };
 
       if (input.id) {
-         
+        // O dono do contato e quem o criou são imutáveis na edição (grant de coluna de UPDATE, 20261126170000):
+        // reatribuir um contato para um cliente da carteira o exibiria inteiro pela view.
+        const { customer_user_id: _dono, created_by: _criador, ...edicao } = payload;
         const { data, error } = await supabase.from('customer_contacts')
-          .update(payload).eq('id', input.id).select().single();
+          .update(edicao).eq('id', input.id).select('id, customer_user_id').single();
         if (error) throw error;
-        return data as CustomerContact;
+        return data;
       }
 
        
       const { data, error } = await supabase.from('customer_contacts')
-        .insert(payload).select().single();
+        .insert(payload).select('id, customer_user_id').single();
       if (error) throw error;
-      return data as CustomerContact;
+      return data;
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['customer-contacts', data.customer_user_id] });

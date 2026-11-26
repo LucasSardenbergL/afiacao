@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { lerContatoOperacional } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
@@ -52,7 +53,7 @@ const AdminApprovals = () => {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, user_id, name, email, phone, document, customer_type, created_at, prospect_source')
+        .select('id, user_id, name, customer_type, created_at, prospect_source')
         .eq('is_approved', false)
         // Clientes-fantasma importados do Omie (prospect_source='omie_import') nunca pediram conta:
         // exclui-los NO SERVIDOR (antes do cap de 1000 do PostgREST) é obrigatório — com 1.633 imports,
@@ -63,7 +64,14 @@ const AdminApprovals = () => {
 
       if (error) throw error;
 
-      const pendingOnly = (data || []).filter(p => !employeeIds.has(p.user_id));
+      // Contato do cadastro PENDENTE pelo contexto operacional (onda D): o servidor só devolve para
+      // is_approved=false e não-staff, e grava no ledger a leitura fora da carteira. Falha LANÇA.
+      const pendentes = (data || []).filter(p => !employeeIds.has(p.user_id));
+      const contato = await lerContatoOperacional('aprovacao', pendentes.map((p) => p.user_id), 'aprovar_cadastro');
+      const pendingOnly = pendentes.map((p) => {
+        const c = contato.get(p.user_id);
+        return { ...p, email: c?.email ?? null, phone: c?.phone ?? null, document: c?.document ?? null };
+      });
       setPendingUsers(pendingOnly);
 
       const unapprovedEmployees = (data || []).filter(p => employeeIds.has(p.user_id));

@@ -717,7 +717,9 @@ export async function getProjecaoSnapshotsCockpit(
     companies.map(async (company): Promise<SnapshotEmpresa | null> => {
       const { data, error } = await supabase
         .from('fin_projecao_snapshots')
-        .select('company, snapshot_at, ncg, saldo_tesouraria, dados, id, ncg_parcial:premissas->ncg_parcial')
+        .select(
+          'company, snapshot_at, ncg, saldo_tesouraria, dados, id, ncg_parcial:premissas->ncg_parcial, ncg_cr_aberto, ncg_estoque, ncg_adiantamentos, ncg_cp_fornecedor, ncg_folha_30d, ncg_tributos_a_pagar',
+        )
         .eq('company', company)
         .eq('cenario', cenario)
         .order('snapshot_at', { ascending: false })
@@ -736,6 +738,15 @@ export async function getProjecaoSnapshotsCockpit(
         ncg_completa: ncgCompleta((data as { ncg_parcial?: unknown }).ncg_parcial),
         saldo_tesouraria: (data.saldo_tesouraria as number | null) ?? null,
         semanas,
+        // Cruas: a leitura (NULL = não medido / parcial / não segregado) é do `composicaoNcgDoEscopo`.
+        composicao_ncg: {
+          ncg_cr_aberto: data.ncg_cr_aberto,
+          ncg_estoque: data.ncg_estoque,
+          ncg_adiantamentos: data.ncg_adiantamentos,
+          ncg_cp_fornecedor: data.ncg_cp_fornecedor,
+          ncg_folha_30d: data.ncg_folha_30d,
+          ncg_tributos_a_pagar: data.ncg_tributos_a_pagar,
+        },
       };
     }),
   );

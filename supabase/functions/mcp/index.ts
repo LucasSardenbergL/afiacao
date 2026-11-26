@@ -50,14 +50,42 @@ var search_customers_default = defineTool2({
     }
     const safe = sanitizeForPostgrestOr(query);
     const sb = supabaseForUser(ctx);
-    const predicado = ["name", "document", "email", "phone"].map((c) => `${c}.ilike.%${safe}%`).join(",");
-    const { data, error } = await sb.from("profiles").select("user_id, name, document, phone, email, customer_type").or(predicado).limit(20);
-    if (error) {
-      return { content: [{ type: "text", text: error.message }], isError: true };
+    const predicadoNome = ["name"].map((c) => `${c}.ilike.%${safe}%`).join(",");
+    const predicado = ["document", "email", "phone"].map((c) => `${c}.ilike.%${safe}%`).join(",");
+    const [{ data: idsPorContato, error: erroContato }, { data: idsPorNome, error: erroNome }] = await Promise.all([
+      sb.from("v_perfil_contato").select("user_id").or(predicado).limit(20),
+      sb.from("profiles").select("user_id").or(predicadoNome).limit(20)
+    ]);
+    const erro = erroNome ?? erroContato;
+    if (erro) {
+      return { content: [{ type: "text", text: erro.message }], isError: true };
+    }
+    const ids = [...new Set([...idsPorNome ?? [], ...idsPorContato ?? []].map((r) => r.user_id))].slice(0, 20);
+    let data = [];
+    if (ids.length > 0) {
+      const [{ data: identidades, error: erroIdent }, { data: contatos, error: erroContatos }] = await Promise.all([
+        sb.from("profiles").select("user_id, name, customer_type").in("user_id", ids),
+        sb.from("v_perfil_contato").select("user_id, document, phone, email, contato_visivel").in("user_id", ids)
+      ]);
+      const erro2 = erroIdent ?? erroContatos;
+      if (erro2) {
+        return { content: [{ type: "text", text: erro2.message }], isError: true };
+      }
+      const porId = new Map((contatos ?? []).map((c) => [c.user_id, c]));
+      data = (identidades ?? []).map((p) => {
+        const c = porId.get(p.user_id);
+        return {
+          ...p,
+          document: c?.document ?? null,
+          phone: c?.phone ?? null,
+          email: c?.email ?? null,
+          contato_visivel: c?.contato_visivel === true
+        };
+      });
     }
     return {
-      content: [{ type: "text", text: JSON.stringify(data ?? []) }],
-      structuredContent: { results: data ?? [] }
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      structuredContent: { results: data }
     };
   }
 });

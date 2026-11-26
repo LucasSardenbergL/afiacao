@@ -59,3 +59,27 @@ segue o `CriarTarefaDialog`: com a empresa comprovada, usa ela; quando é ambíg
 leitura falhou, mostra o seletor (`voz-escolher-empresa`) com o motivo e trava o salvar até a escolha. A
 escolha vale também para os cards detectados antes dela. Falsificado: voltar ao "oben" e tirar o
 seletor deixa 2 de 3 vermelhos, e o controle fica verde.
+
+## Seguimento (2026-11-26): 2ª medição de a11y em prod, depois da onda D fatia 3
+
+Mesma leitura do DOM da rodada anterior: o `axe` por CDN foi recusado de novo pela permissão. As medições foram
+feitas na lista e na 360, nos dois temas, logado como master, no build `9efe21ae`. Passaram: nome acessível,
+ids duplicados, `lang`, `h1` e `alt`. O contraste reprovou em 5 pontos, e 3 deles estão no shell, fora da tela:
+
+| Achado | Onde | Antes | Agora |
+|---|---|---|---|
+| dias sem compra > 30 | lista | 3,06:1 (`text-status-warning`) | `-foreground`: 6,76:1 claro · 12,85:1 escuro |
+| "0–100" da nota | 360 (`components.tsx`) | 2,71:1 claro · 3,78:1 escuro (`muted-foreground/70`) | sem o `/70`: 4,76 · 6,44 |
+| títulos das seções do menu | shell, claro | 2,79:1 (`--sidebar-muted` 60%) | token em 45%: 4,66:1 |
+| letra do monograma da empresa | shell, escuro | 1,12:1 no "C" (branco sobre 95%) | token `--company-monograma-texto` (escuro no dark): C 16,1 · Oben 5,7 · SC 8,3 |
+| selo vermelho de contagem e os 16 usos de `bg-destructive` | shell, escuro | 3,82:1 (branco sobre `0 70% 60%`) | `--destructive-foreground` 6% no dark: 5,01:1 |
+
+O "0 violações no escuro" da rodada anterior mediu só o conteúdo da tela, não o topo e o menu. O
+`html.legacy-visual` tem o mesmo defeito no `--sidebar-muted` (4,02:1), mas ficou de fora por ser o visual
+antigo. A conta das razões está no #4209.
+
+**Re-medição em prod depois do Publish** (build `94d09707`, 1280 px, logado como master), mesma leitura do DOM:
+- lista: 0 falhas em 183 textos no claro (eram 15) e 0 em 183 no escuro (eram 3);
+- 360: 0 em 247 no claro (eram 13) e 0 em 251 no escuro (eram 5).
+
+As células de 35, 37 e 50 dias, o "0–100" e os selos "63" e "448" estavam na tela, então o zero não é falta de dado. A largura conta: no painel estreito (533 px) o menu some e a medição pula os títulos das seções.

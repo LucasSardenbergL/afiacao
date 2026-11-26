@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { clientePorDocumento, comContatoMascarado } from '@/lib/contato-cliente';
 import { Constants } from '@/integrations/supabase/types';
-import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
+import { ilikeContainsPattern } from '@/lib/postgrest';
 import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -211,7 +212,7 @@ const FarmerCalls = () => {
       const localPromise = namePat
         ? supabase
             .from('profiles')
-            .select('user_id, name, email, phone')
+            .select('user_id, name')
             .ilike('name', namePat)
             .limit(10)
         : null;
@@ -220,7 +221,8 @@ const FarmerCalls = () => {
       });
 
       const { data: localProfiles } = localPromise ? await localPromise : { data: null };
-      const local: Customer[] = (localProfiles || []).map(p => ({
+      // Telefone/e-mail pela view MASCARADA (onda D).
+      const local: Customer[] = (await comContatoMascarado(localProfiles || [])).map(p => ({
         user_id: p.user_id,
         name: p.name,
         email: p.email,
@@ -334,13 +336,8 @@ const FarmerCalls = () => {
       let customerUserId = selectedCustomer.user_id;
       if (!customerUserId && selectedCustomer.document) {
         const docClean = normalizarDocumento(selectedCustomer.document);
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('user_id')
-          .or(orFilter(eqText('document', docClean), eqText('document', selectedCustomer.document)))
-          .limit(1)
-          .maybeSingle();
-        if (profile?.user_id) customerUserId = profile.user_id;
+        // Onda D fatia 3: o vínculo por documento sai pela RPC de identidade (erro LANÇA).
+        customerUserId = (await clientePorDocumento([docClean, selectedCustomer.document])) ?? customerUserId;
       }
       if (!customerUserId && selectedCustomer.omie_codigo_cliente) {
         // Fatia 3 (épico-drop): o código veio da busca OBEN — resolve pela proof fresca account-correta

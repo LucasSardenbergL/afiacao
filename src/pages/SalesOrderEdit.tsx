@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, Save, Plus, AlertCircle, X } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useSalesOrderEdit } from '@/components/salesOrderEdit/useSalesOrderEdit';
+import { formatPrecoOuAusente } from '@/lib/format';
 import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentComboboxEdit';
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
@@ -38,6 +39,7 @@ const SalesOrderEdit = () => {
     updateItem,
     removeItem,
     addProduct,
+    precoPrevisto,
     handleTintConfirm,
     tintProductAsProduct,
     filteredProducts,
@@ -45,6 +47,8 @@ const SalesOrderEdit = () => {
     invalidPriceItemIndices,
     handleSave,
     isBlocked,
+    motivoBloqueio,
+    invalidQuantityItemIndices,
   } = useSalesOrderEdit();
 
   if (loading) {
@@ -90,7 +94,7 @@ const SalesOrderEdit = () => {
             <CardContent className="p-4 flex items-center gap-2 text-destructive">
               <AlertCircle className="w-5 h-5" />
               <p className="text-sm font-medium">
-                Este pedido está com status "{order.status}" e não pode ser editado.
+                {motivoBloqueio}
               </p>
             </CardContent>
           </Card>
@@ -122,16 +126,20 @@ const SalesOrderEdit = () => {
                 setProductSearch={setProductSearch}
                 filteredProducts={filteredProducts}
                 onAddProduct={addProduct}
+                precoPrevisto={precoPrevisto}
               />
             )}
 
             {items.map((item, index) => (
               <OrderItemCard
-                key={index}
+                // Chave pelo ITEM, não pela posição: o campo guarda o texto digitado, e com key={index}
+                // remover um item fazia o seguinte herdar o rascunho do removido (Codex, 2026-11-25).
+                key={`${item.omie_codigo_produto}-${item.tint_cor_id ?? ''}-${item.codigo ?? ''}`}
                 item={item}
                 index={index}
                 isBlocked={isBlocked}
                 isPriceInvalid={invalidPriceItemIndices.includes(index)}
+                isQuantityInvalid={invalidQuantityItemIndices.includes(index)}
                 onUpdate={updateItem}
                 onRemove={removeItem}
               />
@@ -164,8 +172,8 @@ const SalesOrderEdit = () => {
               />
               {parcelaTravada && (
                 <p className="text-xs text-muted-foreground">
-                  A condição atual do pedido ({selectedParcela}) foi mantida e vai íntegra ao
-                  Omie. Recarregue a página quando o Omie voltar para poder alterá-la.
+                  A condição de pagamento não pode ser trocada agora: ao salvar, o pedido mantém a
+                  condição que está no Omie. Recarregue a página quando o Omie voltar para poder alterá-la.
                 </p>
               )}
             </CardContent>
@@ -193,7 +201,9 @@ const SalesOrderEdit = () => {
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-lg font-bold">
               <span>Total</span>
-              <span>R$ {subtotal.toFixed(2)}</span>
+              <span className="font-tabular">{/* Bloqueado = nada a recalcular: mostra o total GRAVADO (o importado traz o líquido, e a
+                  soma das linhas sem `valor_total` não reconstrói o desconto). */}
+              {formatPrecoOuAusente(isBlocked ? order.total : subtotal)}</span>
             </div>
           </CardContent>
         </Card>
@@ -202,7 +212,7 @@ const SalesOrderEdit = () => {
         {!isBlocked && (
           <Button
             onClick={handleSave}
-            disabled={saving || items.length === 0 || invalidPriceItemIndices.length > 0}
+            disabled={saving || items.length === 0 || invalidPriceItemIndices.length > 0 || invalidQuantityItemIndices.length > 0 || subtotal === null}
             className="w-full gap-2"
             size="lg"
           >

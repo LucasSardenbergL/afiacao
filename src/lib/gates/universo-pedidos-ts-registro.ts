@@ -44,7 +44,7 @@ interface EntradaRegistro {
 
 export const REGISTRO: readonly EntradaRegistro[] = [
   // ── lookup ──────────────────────────────────────────────────────────────────────────────────
-  { arquivo: 'src/components/salesOrders/useSalesOrderDetail.ts', forma: 'select·eq(id)·maybeSingle', categoria: 'lookup', motivo: 'detalhe de UM pedido por id (abre cancelado e orçamento também)' },
+  { arquivo: 'src/components/salesOrders/useSalesOrderDetail.ts', forma: 'select·eq(id)·maybeSingle', n: 1, categoria: 'lookup', motivo: 'detalhe de UM pedido por id (abre cancelado e orçamento também); o snapshot do customer saiu para v_pedido_snapshot_proprio (onda D 4a)' },
   { arquivo: 'src/components/salesOrderEdit/useSalesOrderEdit.ts', forma: 'select·eq(id)·single', categoria: 'lookup', motivo: 'edição de UM pedido por id' },
   { arquivo: 'src/pages/UnifiedOrder.tsx', forma: 'select·eq(id)·maybeSingle', categoria: 'lookup', motivo: 'retoma/edita UM pedido por id' },
   { arquivo: 'src/services/whatsappProposta/enviarProposta.ts', forma: 'select·eq(whatsapp_proposta_dedupe)·maybeSingle', categoria: 'lookup', motivo: 'dedupe da proposta: acha o orçamento já criado por ela' },
@@ -58,7 +58,7 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(omie_pedido_id)', categoria: 'sincronizacao', motivo: 'reconcilia pela chave do Omie' },
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·maybeSingle', n: 3, categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/excluir no Omie; prazo prometido da OP)' },
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·single', categoria: 'sincronizacao', motivo: 'UM pedido por id (alterar no Omie)' },
-  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(hash_payload)·maybeSingle', categoria: 'lookup', motivo: 'a linha canônica de UM PV por hash exato (excluir só depois do cancelamento feito no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(hash_payload)·maybeSingle', n: 2, categoria: 'lookup', motivo: 'a linha canônica de UM PV por hash exato (excluir só depois do cancelamento feito no Omie; status do gêmeo importado que trava a edição)' },
   { arquivo: 'supabase/functions/omie-desconto-backfill/index.ts', forma: 'select·eq(account)·in(hash_payload)', categoria: 'sincronizacao', motivo: 'backfill de desconto casa o pedido pelo hash' },
   { arquivo: 'supabase/functions/omie-desconto-backfill/index.ts', forma: 'select·is(desconto_valor)·eq(sales_orders.account)·gte(sales_orders.order_date_kpi)', categoria: 'sincronizacao', motivo: 'alvo do backfill de desconto (denominador da cobertura): apura TODO item da janela, cancelado inclusive — o dado é do item, não da venda' },
   // ── propósito ───────────────────────────────────────────────────────────────────────────────

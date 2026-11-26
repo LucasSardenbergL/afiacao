@@ -308,6 +308,62 @@ na entrada; `nPercentual` (33,33/33,33/33,34) divergia do valor rateado → `par
 percentual do valor, saldo na última fecha 100,00. Falsificado uma camada por vez, controle verde na
 mesma invocação.
 
+**PR 2.2 — PV duplicado entre abas: FECHADO sem merge, adiado para a Onda 3** (#4138, decisão do founder
+em 25/11). O P0 era o envelope de envio `{checkoutId, fingerprint, committed}` numa chave FIXA do
+localStorage, com o `checkoutId` sorteado no clique: duas abas, ou um refresh que perdesse o envelope,
+geravam 2 PVs. A ideia central era derivar o id: `SHA-256(nonce do rascunho, itens)`, com o envelope por
+usuário e a reserva feita sob Web Locks. Entre 22 e 25/11 o PR teve 6 versões, e o Codex achou P0 em
+todas: 4 → 4 → 6 → 8 → 7 → 6. A última versão separava o id por conta (Oben, Colacor e OS) e criou 6 P0
+que deixavam o envio PIOR que a main:
+- OS duplicada quando o vendedor muda a quantidade antes de reenviar;
+- reenvio do PV Colacor barrado depois do autocadastro;
+- 2º PV numa conta já confirmada quando o código do cliente é corrigido;
+- id inválido que ainda libera o envio;
+- mesma tinta com dois ids entre abas;
+- cor com `#` que muda o id da outra conta.
+
+**Lição:** idempotência de dinheiro calculada no navegador, com três contas, várias abas e cadastro que
+muda no meio do envio, não fecha. Cada borda corrigida abre outra, porque o navegador não tem uma fonte
+única de verdade. A Onda 3 resolve com o rascunho no servidor: "já enviado" é o ESTADO da linha, e o
+`nonce` é o id dela. Até lá vale a regra da main. Se a série de P0 por rodada não cai, a saída é mudar de
+camada, não fazer a 7ª rodada.
+
+**PR 2.4 — centavos no front: FECHADO sem merge, adiado para a Onda 3** (#4164, decisão do founder em
+26/11). Decisão de produto (24/11): o unitário do produto vive ao centavo, inclusive o último praticado
+com 4 casas, e o total soma as linhas já arredondadas (`round(q × v, 2)`), como o Omie e o gate de
+crédito. O PR teve 5 rodadas do Codex, todas com P0: 1 → 4 → 4 → 4 → 6. Três dos 6 P0 da última rodada
+vinham de remendos de rodadas anteriores:
+- a guarda "menos de 1 centavo não reprecifica" mantinha um preço vencido;
+- a referência da Régua arredondada para baixo reduzia um preço negociado;
+- a soma de quantidade normalizada mudava 1,4999999 para 1,5.
+
+Os outros 3 eram superfícies que recalculam a linha com regra própria:
+- o admin regravava a OS a R$ 30,22;
+- o importador grava o total do PV sem o valor da linha;
+- OS antiga em `/sales`.
+
+**Lição:** arredondamento de dinheiro tem UM dono ou nenhum. O total da linha é recalculado em pelo menos
+8 lugares, e mudar a regra em parte deles sempre desencontra outro:
+- carrinho;
+- envio;
+- admin;
+- importador;
+- feed;
+- WhatsApp;
+- Régua;
+- dados já gravados.
+
+A Onda 3 resolve com um único cálculo de linha, consultado pelo front, pelas edges, pelo admin e pelo
+importador, mais uma decisão explícita sobre o legado (recalcular ou congelar o que já foi gravado). Até
+lá vale a regra da main.
+
+O que serve de base fica na branch `claude/r3-2.4-centavos-front`:
+- o helper em decimal exato (`src/lib/centavos.ts`, BigInt sobre `String(x)`, como o `numeric`);
+- os testes das 5 rodadas;
+- os cenários do Codex (`~/.cache/afiacao-r3-2.4/codex-2.4*.out`).
+
+Mesma regra do 2.2: série de P0 que não cai pede mudar de camada, não uma 6ª rodada.
+
 **PR 2.3 — o que vai ao Omie** (edges `omie-vendas-sync` v1.47 e `omie-sync` v1.17, front 1 campo).
 (a) Tinta COM ordem de compra saía SEM a cor no item: `if (ordemCompra) … else if (cor)` — a NF e a
 observação do item (a que a produção lê para tingir) perdiam a cor. `infoAdicionalItem`
@@ -324,6 +380,29 @@ app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; fr
 'retirada'). `orders` está vazia em prod. Falsificação 16/16 vermelha (8 sabotagens × `C` e
 `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
 Deno (a edge inteira não é importável no teste).
+
+**PR 2.5 — reenvio honesto, parte das edges** (edges `omie-vendas-sync` v1.48 e `omie-sync` v1.18;
+o front fica para a Onda 3, com o 2.2). Os dois reenvios que reconciliam (PV por duplicata, OS pela
+chave) passam a AVISAR o que deste envio não entrou, e o `omie_payload` passa a dizer a verdade.
+(A) O PV vinculado só era comparado por SKU e quantidade: a data prometida trocada saía como sucesso.
+`compararPrevisaoEntregaPv` (`_shared/atp-pv-omie.ts`) confere `frete.previsao_entrega` (na doc do Omie,
+string10 SEM formato documentado; 0 ConsultarPedido real em prod). Só a divergência PROVADA conta —
+envio com data legível × PV com outra data legível ou o campo presente e vazio; ausente, ilegível, envio
+sem data ou objeto sem `cabecalho` = não conferível, nunca "igual". Ela volta como `aviso_previsao` no
+resultado do `criar_pedido` (e log), SEM lançar. O `omie_payload` gravava o payload que o Omie RECUSOU
+como duplicata; passa a gravar o PV que o Omie tem (`pedido_venda_produto` da consulta, mesmo objeto da
+comparação; `null` sem `cabecalho`), no write-back atômico e no legado. (B) No reenvio que reconcilia a
+OS, o upsert `ignoreDuplicates` de `orders` mantinha o endereço/turno da tentativa anterior em silêncio;
+`avisoEnderecoTurnoOs` (`omie-sync/reenvio-os-local.ts`) devolve `aviso_local` quando o deste envio
+difere (só com a modalidade declarada e igual à gravada), SEM regravar. Endereço/turno seguem FORA da
+assinatura da OS. **Por que só avisar** (decisão do founder, 2026-11-25): 2 rodadas do Codex, 3 P0 cada,
+todos nas BORDAS da própria correção. Lançar na data pulava a OP da Colacor (o front não cria a OP num
+envio com erro, e o clique seguinte cai em "já enviado"); regravar `orders` apagava o endereço quando
+o front mandava `null` (bundle antigo ou consulta de endereço que falhou) e dois reenvios concorrentes
+se desfaziam mesmo gravando só o campo que mudou. Sem lançar e sem escrever, os 6 somem por construção.
+Lacuna: o front ainda não mostra `aviso_previsao`/`aviso_local` (Onda 3); até lá, a trilha é o log e o
+`omie_payload`. Falsificação 26/26 vermelha (13 sabotagens, uma por camada e uma por P0/P1 do Codex, × `C`
+e `pt_BR.UTF-8`), controle verde na mesma invocação.
 
 **PR 8.1 — vendedor e crédito falham fechado** (só front · Publish). A validação do vendedor nos
 Omies (`omie-cliente` → `validar_vendedor`) só bloqueava com `consistente === false` E lista

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { lerContatoNovoPedido, lerPerfilContato } from '@/lib/contato-cliente';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { condicoesComParcelaRetirada } from './unifiedOrder/parcela-manual';
@@ -15,7 +16,7 @@ import { codigoObenDoBuscarCliente } from '@/hooks/unifiedOrder/codigo-oben-busc
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
-import { precoPartida } from '@/lib/pricing/precoPartida';
+import { precoDeNascimento } from '@/lib/pricing/precoDeNascimento';
 import { mensagemBloqueioVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
@@ -303,22 +304,14 @@ export function useUnifiedOrder() {
 
   // Pricing helpers (defined here so useCart can depend on them)
   const getProductPrice = useCallback((product: Product): number => {
-    const account = (product.account || 'oben') as ProductAccount;
-    const contaKey = account === 'colacor' ? 'colacor' : 'oben'; // wizard só vende oben/colacor
-    const prices = contaKey === 'oben' ? customerPricesOben : customerPricesColacor;
-    const datas = contaKey === 'oben' ? customerPriceDatesOben : customerPriceDatesColacor;
-    const omiePrice = prices[product.omie_codigo_produto];
-    const tier = tierPorConta?.[contaKey] ?? null;
-    const mult = tier ? (multConfig?.[contaKey]?.[tier] ?? null) : null;
-    // Precedência de nascimento (spec §4): último praticado ≤180d > tabela×mult(tier) > tabela.
-    return precoPartida({
-      tabela: product.valor_unitario,
-      ultimoPraticado: omiePrice && omiePrice > 0 ? omiePrice : null,
-      ultimoPraticadoEm: datas[product.omie_codigo_produto] ?? null,
-      hoje: new Date(),
-      tier,
-      mult,
-    });
+    // Mesma decisão que a edição de pedido usa (src/lib/pricing/precoDeNascimento.ts). `null` = sem
+    // praticado e sem tabela positiva: devolve a tabela como sempre (o carrinho trata ≤ 0).
+    return precoDeNascimento(product, {
+      precos: { oben: customerPricesOben, colacor: customerPricesColacor },
+      datas: { oben: customerPriceDatesOben, colacor: customerPriceDatesColacor },
+      tierPorConta,
+      multConfig,
+    }, new Date()) ?? product.valor_unitario;
   }, [
     customerPricesOben, customerPricesColacor,
     customerPriceDatesOben, customerPriceDatesColacor,
@@ -550,16 +543,16 @@ export function useUnifiedOrder() {
     // Set a synthetic customer object so the UI considers customer selected
     (async () => {
       try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('name, document')
-          .eq('user_id', user.id)
-          .maybeSingle();
+        // Onda D: o documento do PRÓPRIO cliente vem pela view (self é sempre visível).
+        const [{ data: profile }, contato] = await Promise.all([
+          supabase.from('profiles').select('name').eq('user_id', user.id).maybeSingle(),
+          lerPerfilContato(user.id),
+        ]);
         setSelectedCustomer({
           codigo_cliente: 0,
           razao_social: profile?.name || user.email?.split('@')[0] || 'Cliente',
           nome_fantasia: profile?.name || '',
-          cnpj_cpf: profile?.document || '',
+          cnpj_cpf: contato?.document || '',
           codigo_vendedor: null,
           local_user_id: user.id,
         });
@@ -711,15 +704,19 @@ export function useUnifiedOrder() {
   const selectCustomerByUserId = useCallback(async (userId: string) => {
     if (!userId) return;
     try {
-      const { data: profile } = await supabase.from('profiles')
-        .select('razao_social, name, document')
-        .eq('user_id', userId).maybeSingle();
+      // Onda D: staff montando pedido PARA o cliente lê o documento pelo contexto `novo_pedido`
+      // (fora da carteira grava no ledger); o próprio cliente, pela view.
+      const [{ data: identidade }, contato] = await Promise.all([
+        supabase.from('profiles').select('razao_social, name').eq('user_id', userId).maybeSingle(),
+        lerContatoNovoPedido(userId, userId === user?.id, 'novo_pedido'),
+      ]);
+      const profile = identidade ? { ...identidade, document: contato?.document ?? null } : null;
       const omieCustomer = buildOmieCustomer(userId, profile, null);
       if (omieCustomer) await selectCustomer(omieCustomer);
     } catch {
       // fallback silencioso: mantém o fluxo manual intacto
     }
-  }, [selectCustomer]);
+  }, [selectCustomer, user?.id]);
 
   // Unified AI handler
   const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {
@@ -807,8 +804,10 @@ export function useUnifiedOrder() {
       if (selectedCustomer.cnpj_cpf) {
         const docClean = chaveDocumentoParaBusca(selectedCustomer.cnpj_cpf);
         if (docClean) {
+          // Onda D: filtro pelo documento na view MASCARADA — fora da carteira é miss e cai no
+          // `criar_perfil_local`, que refaz a busca por documento no servidor (sem perfil duplicado).
           const { data: profile } = await supabase
-            .from('profiles').select('user_id').eq('document', docClean).maybeSingle();
+            .from('v_perfil_contato').select('user_id').eq('document', docClean).maybeSingle();
           if (profile?.user_id) {
             setCustomerUserId(profile.user_id);
             loadUserTools(profile.user_id);

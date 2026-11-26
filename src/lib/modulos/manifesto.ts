@@ -239,14 +239,28 @@ export const MODULOS: ModuloApp[] = [
     risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
   },
   {
+    // Crédito-IA (PR 6a fila; o PR 4 acrescenta /credito/limites na mesma entrada — combinado).
+    id: "credito",
+    nome: "Crédito (limite do grupo por IA)",
+    kind: "negocio",
+    rotaPrefixos: ["/credito"],
+    gates: ["RequireStaff"],
+    status: "ativo",
+    codigo: ["src/lib/credito/**", "src/pages/CreditoFila.tsx", "src/pages/CreditoLimites.tsx"],
+    testes: ["src/lib/credito/fila.test.ts", "src/lib/credito/limites.test.ts"],
+    risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
+  },
+  {
     id: "vendas",
     nome: "Vendas",
     kind: "negocio",
-    rotaPrefixos: ["/sales", "/unified-order", "/pedidos-programados"],
+    rotaPrefixos: ["/sales", "/unified-order", "/pedidos-programados", "/credito/painel"],
     gates: ["RequireStaff"],
     status: "ativo",
     codigo: [
       "src/lib/unified-order/**",
+      "src/lib/credito-painel/**",
+      "src/pages/CreditoPainel.tsx",
       "src/lib/venda-assistida/**",
       "src/lib/pedido/**",
       "src/lib/pedidosProgramados/**",
@@ -286,6 +300,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
       "src/hooks/__tests__/excecao-credito-pares-do-log.test.ts",
+      "src/lib/credito-painel/parse.test.ts",
       "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
       "src/components/unified-order/__tests__/CustomerSearch.teclado.test.tsx",
       "src/pages/__tests__/SalesProducts.catalogo-paginado.test.tsx",
@@ -394,9 +409,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useMyMixGap.ts",
       "src/hooks/useMyPositivacao.ts",
       "src/hooks/useSinalPositivacao.ts",
-      "src/hooks/useMyCarteiraScores.ts",
       "src/hooks/useMyVisitSuggestions.ts",
-      "src/hooks/useMyAgendaToday.ts",
       "src/hooks/useTacticalPlan.ts",
       "src/hooks/useTeamKpis.ts",
       "src/hooks/useTeamRanking.ts",
@@ -507,7 +520,6 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/lens-atividade-vendedor.test.tsx",
       "src/hooks/__tests__/lens-engines-ia.test.tsx",
       "src/hooks/__tests__/lens-tactical-plan.test.tsx",
-      "src/hooks/__tests__/useMyCarteiraScores.corte.test.tsx",
       "src/hooks/__tests__/plano-bundle-ausente.test.tsx",
       "src/hooks/__tests__/plano-tatico-margem-rpc.test.tsx",
       "src/hooks/__tests__/tactical-plan-posse-dono.test.tsx",
@@ -867,11 +879,15 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/telefonia", "/whatsapp", "/rota", "/admin/route-planner", "/admin/sip-credentials"],
     gates: ["RequireStaff"],
-    status: "congelado",
-    congelamento: {
+    // Telefonia (/telefonia, /admin/sip-credentials) DESCONGELADA em 2026-11-25 para o piloto
+    // com 1 vendedora no ramal Nvoip já cadastrado (decisão Lucas). Sinal de saída do piloto =
+    // call_log + farmer_calls dela vs o extrato da Nvoip. WhatsApp e Rota seguem congelados.
+    status: "ativo",
+    rotasCongeladas: {
+      prefixos: ["/whatsapp", "/rota", "/admin/route-planner"],
       desde: "2026-10-12",
       ate: "2027-01-10",
-      motivo: "0 linha em whatsapp_messages/whatsapp_conversations/farmer_calls/route_visits; call_log parado desde 2026-06-09 (psql-ro 2026-10-12)",
+      motivo: "0 linha em whatsapp_messages/whatsapp_conversations/route_visits (psql-ro 2026-10-12); a telefonia saiu do congelamento em 2026-11-25",
     },
     codigo: [
       "src/lib/call/**",
@@ -1012,6 +1028,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/json-forma.ts",
       "src/lib/logger.ts",
       "src/lib/lotes.ts",
+      // Onda D: as DUAS portas do contato de cliente (view mascarada / RPC operacional por objeto).
+      "src/lib/contato-cliente.ts",
       "src/lib/logger-migration.md",
       "src/lib/offline-cliente-do-dono.ts",
       "src/lib/offline-handlers.ts",

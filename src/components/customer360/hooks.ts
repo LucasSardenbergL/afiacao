@@ -58,9 +58,10 @@ export function useCustomerAddress(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 5 * 60_000,
     queryFn: async () => {
+      // Onda D: endereço pela view MASCARADA — fora da carteira vem cidade/UF, rua/CEP null.
       const { data, error } = await supabase
-        .from('addresses')
-        .select('label, street, number, complement, neighborhood, city, state, zip_code, is_default')
+        .from('v_endereco_contato')
+        .select('label, street, number, complement, neighborhood, city, state, zip_code, is_default, contato_visivel')
         .eq('user_id', customerId!)
         .order('is_default', { ascending: false });
       // Falha LANÇA (onda B): o erro descartado virava "nenhum endereço" na ficha.

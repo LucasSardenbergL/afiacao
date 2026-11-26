@@ -11,7 +11,8 @@ import { montarParcelasOS, parcelasComValor } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
-import { enderecoDaOs, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
+import { enderecoDaOs, MODALIDADE_LEGADA, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
+import { avisoEnderecoTurnoOs } from "./reenvio-os-local.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -1138,6 +1139,8 @@ Deno.serve(async (req) => {
         if (modalidade.invalida) {
           console.warn(`[Omie Sync] delivery_option fora do vocabulário (${String(orderData.delivery_option)}) — gravando '${modalidade.valor}'`);
         }
+        const enderecoEnvio = enderecoDaOs(modalidade.valor, addressData);
+        const turnoEnvio = turnoDaOs(modalidade.valor, orderData.time_slot);
         const { error: orderInsertError } = await supabaseAdmin
           .from("orders")
           .upsert({
@@ -1150,8 +1153,8 @@ Deno.serve(async (req) => {
             total: orderData.total || 0,
             delivery_option: modalidade.valor,
             // Endereço e turno ESCOLHIDOS: sem eles a parada da rota caía no endereço padrão, sem turno.
-            address: enderecoDaOs(modalidade.valor, addressData),
-            time_slot: turnoDaOs(modalidade.valor, orderData.time_slot),
+            address: enderecoEnvio,
+            time_slot: turnoEnvio,
             notes: orderData.notes || null,
             status: 'pedido_recebido',
           }, { onConflict: "id", ignoreDuplicates: true });
@@ -1165,6 +1168,27 @@ Deno.serve(async (req) => {
             error: `A OS ${osResult.cNumOS} foi criada no Omie, mas o registro do pedido falhou (${orderInsertError.message}). Reenvie — a OS não duplica.`,
           };
           break;
+        }
+
+        // 3b. Reenvio que RECONCILIOU a OS (PR 2.5): o upsert acima não regrava a linha que já existia,
+        //     e o endereço/turno deste envio se perderia em silêncio. Só AVISA (não regrava) —
+        //     ./reenvio-os-local.ts. Falha da leitura NÃO derruba o envio (a OS está certa no Omie): vira aviso.
+        let avisoLocal: string | null = null;
+        if (osResult.reconciliada) {
+          const { data: atual, error: lerErr } = await supabaseAdmin
+            .from("orders")
+            .select("address, time_slot, delivery_option")
+            .eq("id", orderId)
+            .maybeSingle();
+          avisoLocal = lerErr
+            ? `A OS ${osResult.cNumOS} já existia e não deu para conferir o endereço/turno gravado no app (${lerErr.message}) — confira no roteiro.`
+            : avisoEnderecoTurnoOs(
+              atual,
+              { address: enderecoEnvio, time_slot: turnoEnvio },
+              modalidade.valor === MODALIDADE_LEGADA ? null : modalidade.valor,
+              osResult.cNumOS,
+            );
+          if (avisoLocal) console.warn(`[Omie Sync] ${avisoLocal}`);
         }
 
         // 4. Notificação por e-mail: só quem vinculou a OS (o reenvio não repete o e-mail).
@@ -1184,6 +1208,9 @@ Deno.serve(async (req) => {
           success: true,
           reconciliada: osResult.reconciliada,
           conferencia: osResult.conferencia,
+          // Aviso de endereço/turno no reenvio reconciliado (PR 2.5); null = nada a avisar. O front
+          // ainda não o exibe (espelho fica para depois do #4138) — a trilha é o log acima.
+          aviso_local: avisoLocal,
           omie_cliente: clienteResult.omieCodigoCliente,
           omie_vendedor: clienteResult.omieCodigoVendedor || null,
           omie_os: omieOs,

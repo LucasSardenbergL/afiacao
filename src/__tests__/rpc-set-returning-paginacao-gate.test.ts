@@ -224,6 +224,10 @@ const BASELINE = new Map<string, Waiver>([
   ['radar_lista @ src/queries/useRadarLista.ts',
     { tipo: 'estrutural', teto: 200, prova: '`p_limit > 200` → RAISE 22023 e `LIMIT $17` (= p_limit); o hook pede PAGE=50 por página' }],
   // Cmd-K (onda D): o teto é do SERVIDOR — o caller passa p_limite 5 e a função clampa.
+  ['contato_cliente_operacional @ src/lib/contato-cliente.ts',
+    { tipo: 'estrutural', teto: 200, prova: '`IF cardinality(p_objeto_ids) > 200 THEN RAISE 22023` e 1 linha por objeto DISTINTO (20261124180000); o helper manda lotes de LOTE_OPERACIONAL=200' }],
+  ['contato_cliente_operacional @ src/services/orderSubmission/helpers.ts',
+    { tipo: 'estrutural', teto: 1, prova: '`novo_pedido` com 1 id: o servidor recusa >1 cliente por chamada (22023, 20261124180000)' }],
   ['buscar_clientes_global @ src/hooks/useGlobalSearch.ts',
     { tipo: 'estrutural', teto: 20, prova: '`v_lim := least(greatest(coalesce(p_limite, 5), 1), 20)` e `LIMIT v_lim` no único RETURN QUERY (20261124120000/20261124130000)' }],
   ['order_feed_total @ src/components/salesOrders/useSalesOrders.ts',
@@ -252,6 +256,10 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 1, prova: '`WHERE id = ANY(p_order_ids)` e o caller passa `[id]`' }],
 
   // ── Teto MEDIDO nos dados: pior caso sobre os parâmetros reais ──────────────────────────
+  // Mesma RPC/parâmetro (UM cliente) que o Novo Pedido, agora lida também pela edição de pedido.
+  ['get_ultimos_precos_cliente @ src/hooks/unifiedOrder/precos-praticados.ts',
+    { tipo: 'medido', teto: 407, medidoEm: '2026-11-26', revisarAte: '2027-11-26',
+      prova: 'a mesma consulta da entrada de useCustomerSelection abaixo (count DISTINCT product_id por customer_user_id, filtros da função) — máx 374 em 2026-11-26' }],
   ['get_ultimos_precos_cliente @ src/hooks/unifiedOrder/useCustomerSelection.ts',
     { tipo: 'medido', teto: 407, medidoEm: '2026-08-20', revisarAte: '2027-08-20',
       prova: 'SELECT customer_user_id, count(DISTINCT product_id) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id (mesmos filtros da função: deleted_at IS NULL, status NOT IN (cancelado,orcamento), unit_price>0) GROUP BY 1 ORDER BY 2 DESC — máx 407' }],

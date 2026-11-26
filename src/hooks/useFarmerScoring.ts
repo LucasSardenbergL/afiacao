@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comContatoMascarado } from '@/lib/contato-cliente';
 import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
@@ -130,13 +131,14 @@ async function lerProfilesEmLotes(customerIds: readonly string[]): Promise<Profi
     const linhas = await fetchAllPages((de, ate) =>
       supabase
         .from('profiles')
-        .select('user_id, name, phone')
+        .select('user_id, name')
         .in('user_id', lote)
         .order('user_id', { ascending: true })
         .range(de, ate),
       'profiles/scoring',
     );
-    profiles.push(...linhas);
+    // Telefone pela view MASCARADA (onda D): fora da carteira/cobertura vem null.
+    profiles.push(...((await comContatoMascarado(linhas)) as ProfileRow[]));
   }
   return profiles;
 }

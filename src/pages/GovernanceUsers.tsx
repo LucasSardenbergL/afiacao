@@ -52,8 +52,8 @@ export default function GovernanceUsers() {
     queryFn: async () => {
       // Get all employee profiles
       const { data: profiles, error: pError } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, document, is_employee')
+        .from('v_perfil_equipe')
+        .select('user_id, name, email, is_employee')
         .eq('is_employee', true);
       if (pError) throw pError;
 
@@ -65,7 +65,7 @@ export default function GovernanceUsers() {
 
       const roleMap = new Map(roles?.map(r => [r.user_id, r.commercial_role]) || []);
 
-      return (profiles || []).map(p => ({
+      return (profiles || []).filter((p): p is typeof p & { user_id: string } => p.user_id !== null).map(p => ({
         ...p,
         commercial_role: roleMap.get(p.user_id) || null,
       }));

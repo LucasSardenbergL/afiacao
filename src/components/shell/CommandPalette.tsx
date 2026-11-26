@@ -106,6 +106,8 @@ export function CommandPalette() {
       // Financeiro
       { id: 'nav.fin-cockpit', label: 'Cockpit CFO', group: 'Financeiro', icon: Shield, keywords: ['CFO', 'caixa'], perform: go('/financeiro/cockpit') },
       { id: 'nav.fin-gestao', label: 'Gestão financeira', group: 'Financeiro', icon: DollarSign, perform: go('/financeiro/gestao') },
+      { id: 'nav.credito-limites', label: 'Limites de crédito', group: 'Financeiro', icon: Shield, keywords: ['crédito', 'limite', 'aprovar', 'prazo'], perform: go('/credito/limites') },
+      { id: 'nav.credito-fila', label: 'Fila de crédito', group: 'Financeiro', icon: Shield, keywords: ['crédito', 'aprovar', 'pedido', 'fila'], perform: go('/credito/fila') },
       // Tintométrico
       { id: 'nav.tint-formulas', label: 'Buscar fórmula tintométrica', group: 'Tintométrico', icon: Beaker, keywords: ['cor', 'tinta', 'verniz', 'sayer'], perform: go('/tintometrico/formulas') },
       { id: 'nav.tint-catalogo', label: 'Catálogo tintométrico', group: 'Tintométrico', icon: Palette, perform: go('/tintometrico/catalogo') },
