@@ -470,8 +470,8 @@ check_lote_erro() {
      INSERT INTO public.credito_limite VALUES ('$SP', 100, 7, 'medio', 1, public.credito_grupo_assinatura('$SP'), now(), '$SP', '$L', now())\$q\$)" >/dev/null
   tit oben 101 60 ATRASADO 90 60 100 100
   q "SELECT private.credito_reducao_lote(25, 20)" >/dev/null
-  eq "L2 raiz que falha (ficha recusa alias) fica registrada como erro, a outra é reduzida no mesmo lote" \
-     "$(q "SELECT string_agg(resultado, ',' ORDER BY resultado) FROM public.credito_reducao_verificacao")/$(vg $C)" "erro,reduzido/0/0/alto/v2"
+  eq "L2 raiz que virou alias ⇒ grupo_mudou (a ficha nem é chamada), a outra é reduzida no mesmo lote" \
+     "$(q "SELECT string_agg(resultado, ',' ORDER BY resultado) FROM public.credito_reducao_verificacao")/$(vg $C)" "grupo_mudou,reduzido/0/0/alto/v2"
 }
 # 2 sessões: A segura o lock do grupo C; o lote em B não espera (lock_timeout) e segue para F
 check_ocupado() {
@@ -497,6 +497,53 @@ check_ocupado() {
      "$([ $((t1-t0)) -le 4 ] && echo rapido)/$(q "SELECT left(erro, 5) FROM public.credito_reducao_verificacao WHERE raiz = '$C'")" "rapido/55P03"
   eq "C1 o outro grupo do lote foi reduzido" "$(vg $F)" "0/0/alto/v2"
   eq "C1 C intacto (volta na próxima)" "$(vg $C)" "3300/21/baixo/v1"
+}
+# o cancelamento (statement_timeout do cron) numa raiz NÃO desfaz o lote nem prende a fila
+check_cancelada() {
+  vig_c; hist oben 701 100
+  q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
+     limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_por, decidido_em)
+     VALUES ('$F', '$F', public.credito_grupo_assinatura('$F'), NULL, 100, 7, 'medio', '{}', now(), 'aprovada', '$L', now());
+     INSERT INTO public.credito_limite VALUES ('$F', 100, 7, 'medio', 1, public.credito_grupo_assinatura('$F'), now(), '$F', '$L', now())\$q\$)" >/dev/null
+  tit oben 701 160 ATRASADO 90 60 100 100
+  rm -f "$SAB"/a.out "$SAB"/a.fifo; mkfifo "$SAB/a.fifo"
+  "${PSQL[@]}" -tA -q < "$SAB/a.fifo" > "$SAB/a.out" 2>&1 &
+  local apsql=$!
+  exec 3>"$SAB/a.fifo"
+  echo "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('credito_grupo:$C', 0)); SELECT 'A:lock';" >&3
+  local i=0; until grep -q '^A:lock' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
+  # statement_timeout (1 s) vence ANTES do lock_timeout (2 s): é o 57014 do cron, não o 55P03
+  local r; r=$(q "SET statement_timeout = '1s'; SELECT private.credito_reducao_lote(25, 20) -> 'por_resultado' ->> 'cancelada'")
+  echo "COMMIT;" >&3; exec 3>&-; wait "$apsql" || true
+  eq "X1 lote cancelado na 1ª raiz devolve normalmente e registra 57014 (a fila anda)" \
+     "$r/$(q "SELECT left(erro, 5) FROM public.credito_reducao_verificacao WHERE raiz = '$C'")" "1/57014"
+  eq "X1 a próxima rodada atende a raiz seguinte primeiro" "$(q "SELECT private.credito_reducao_lote(25, 20) -> 'por_resultado' ->> 'reduzido'")/$(vg $F)" "1/0/0/alto/v2"
+}
+# o corte AINDA SEM COMMIT segura a aprovação; depois do commit ela é recusada por versão superada
+check_reducao_x_aprovacao() {
+  vig_c
+  local pid=eeee0000-0000-0000-0000-000000000005
+  q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
+     limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em) SELECT '$pid', '$C', public.credito_grupo_assinatura('$C'), 1,
+     3300, 21, 'baixo', public.credito_ficha('$C'), now()\$q\$)" >/dev/null
+  tit oben 101 60 ATRASADO 90 60 100 100
+  rm -f "$SAB"/a.out "$SAB"/b.out "$SAB"/a.fifo; mkfifo "$SAB/a.fifo"
+  "${PSQL[@]}" -tA -q < "$SAB/a.fifo" > "$SAB/a.out" 2>&1 &
+  local apsql=$!
+  exec 3>"$SAB/a.fifo"
+  echo "BEGIN; SELECT 'A:' || (private.credito_reduzir_limite('$C') ->> 'resultado');" >&3
+  local i=0; until grep -q '^A:' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
+  ( lucas "SELECT 'B:' || public.t_trym(\$x\$SELECT public.credito_aprovar_proposta('$pid')\$x\$)" > "$SAB/b.out" 2>&1 ) &
+  local bjob=$! bloq=0 n
+  for i in $(seq 1 100); do
+    n=$(q "SELECT count(*) FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid)) > 0 AND query LIKE '%B:%';")
+    if [ "$n" -ge 1 ]; then bloq=1; break; fi
+    sleep 0.05
+  done
+  echo "COMMIT;" >&3; exec 3>&-; wait "$apsql" || true; wait "$bjob" || true
+  eq "C4 a aprovação esperou o corte sem commit" "$bloq/$(grep -o 'A:[a-z_]*' "$SAB/a.out")" "1/A:reduzido"
+  tem "C4 e foi recusada por versão superada" "$(cat "$SAB/b.out")" "proposta_desatualizada"
+  eq "C4 o corte vale" "$(vg $C)" "0/0/alto/v2"
 }
 # A dentro de uma transação aberta: sem corte o lock do grupo já saiu; com corte, segura até o COMMIT
 check_lock_liberado() {
@@ -610,7 +657,8 @@ TODOS=(check_sem_vigente check_sem_mudanca check_regressao_pr4 check_piso check_
        check_e2_fronteira check_e2_reservas check_e2_exposicao_null check_nunca_aumenta check_e3 check_grupo_mudou
        check_recuperacao check_registro_base check_aprovar_antiga check_writer check_trigger check_dml_direto
        check_lote check_lote_erro check_ocupado check_serializa check_acl check_cron
-       check_lock_liberado check_lote_para check_sync_defasado check_fora_carteira check_aprovacao_x_reducao)
+       check_lock_liberado check_lote_para check_sync_defasado check_fora_carteira check_aprovacao_x_reducao
+       check_cancelada check_reducao_x_aprovacao)
 echo "· asserts"
 for c in "${TODOS[@]}"; do "$c"; done
 echo "controle: PASS=$PASS FAIL=$FAIL"
@@ -670,7 +718,7 @@ sabota "S19 laço sem o vigente revisável (sem caminho de volta)" check_recuper
 sabota "S20 registrar sem o ramo revisável" check_recuperacao "  IF FOUND AND NOT (private.credito_vigente_revisavel(p_raiz)" "  IF FOUND AND NOT (false"
 sabota "S21 registrar sem conferir a versão-base" check_registro_base "                    AND (v_f ->> 'limite_versao_base')::integer IS NOT DISTINCT FROM v_vig.versao) THEN" "                    ) THEN"
 sabota "S22 revisável ignora composição mudada" check_grupo_mudou "            OR l.grupo_assinatura IS DISTINCT FROM public.credito_grupo_assinatura(p_raiz)));" "            OR false));"
-sabota "S23 lote sem sub-bloco por raiz" check_lote_erro "    EXCEPTION WHEN OTHERS THEN
+sabota "S23 lote sem sub-bloco por raiz" check_ocupado "    EXCEPTION WHEN OTHERS THEN
       -- resultado POR raiz" "    EXCEPTION WHEN division_by_zero THEN
       -- resultado POR raiz"
 sabota "S24 lote fora da ordem de verificação" check_lote "            ORDER BY v.verificada_em NULLS FIRST, l.grupo_user_id" "            ORDER BY l.grupo_user_id"
@@ -680,6 +728,8 @@ sabota "S25 lote sem lock_timeout (espera o grupo ocupado)" check_ocupado "  PER
 sabota "S26 redutor sem o lock do grupo (o gate segurando)" check_ocupado "  PERFORM pg_advisory_lock(v_k);
   -- leitura SEM FOR UPDATE" "  -- leitura SEM FOR UPDATE"
 sabota "S27 aprovação sem o writer (grava direto, sem trigger casar)" check_regressao_pr4 "  v_nova := private.credito_limite_gravar(v_p.id, v_uid, v_versao_atual);" "  v_nova := private.credito_limite_gravar(v_p.id, '$M2', v_versao_atual);"
+sabota "S33 cancelamento derruba o lote inteiro" check_cancelada "    EXCEPTION WHEN query_canceled THEN" "    EXCEPTION WHEN division_by_zero THEN"
+sabota "S34 ficha chamada com identidade inválida" check_lote_erro "         CASE WHEN NOT m.mudou THEN public.credito_ficha(p_raiz) END," "         public.credito_ficha(p_raiz),"
 sabota "S28 lote não para no 1º corte" check_lote_para "    EXIT WHEN v_k = 'reduzido';" "    NULL;"
 sabota "S29 sem corte não solta o lock de sessão" check_lock_liberado "  IF cardinality(v_regras) = 0 THEN
     PERFORM pg_advisory_unlock(v_k);" "  IF cardinality(v_regras) = 0 THEN

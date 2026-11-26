@@ -545,14 +545,18 @@ BEGIN
   -- UM snapshot (Codex diff P1-2): identidade, ficha (STABLE ⇒ o snapshot do comando que a chama),
   -- causador do E2, exposição e reservas vêm do MESMO comando — nada de combinar leituras de momentos
   -- diferentes. Identidade mudada ⇒ não corta pela ficha de outro grupo (o gate já dá 🟡).
-  SELECT (public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura
-          OR EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz) g
-                      WHERE (public.credito_grupo_raiz(g.company, g.omie_codigo_cliente) ->> 'raiz')
-                            IS DISTINCT FROM p_raiz::text)),
-         CASE WHEN EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz)) THEN public.credito_ficha(p_raiz) END,
+  -- a ficha só é chamada com a identidade VÁLIDA (raiz que virou alias faria a ficha recusar — 22023 —
+  -- e o lote registraria erro em vez de grupo_mudou; Codex diff r3 P2-4)
+  SELECT m.mudou,
+         CASE WHEN NOT m.mudou THEN public.credito_ficha(p_raiz) END,
          t.novos, t.titulos, t.indet, r.reservas
     INTO v_mudou, v_f, v_novos, v_titulos, v_indet, v_reservas
-    FROM (SELECT count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL')
+    FROM (SELECT (public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura
+                  OR NOT EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz))
+                  OR EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz) g
+                              WHERE (public.credito_grupo_raiz(g.company, g.omie_codigo_cliente) ->> 'raiz')
+                                    IS DISTINCT FROM p_raiz::text)) AS mudou) m,
+         (SELECT count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL')
                                     AND f.data_vencimento <= (now() AT TIME ZONE 'America/Sao_Paulo')::date - 15
                                     AND f.data_vencimento > v_base - 15) AS novos,
                  COALESCE(sum(f.saldo) FILTER (WHERE f.saldo > 0), 0) AS titulos,
@@ -697,7 +701,19 @@ BEGIN
       VALUES (r.raiz, now(), v_k, NULL, v_res)
       ON CONFLICT (raiz) DO UPDATE SET verificada_em = EXCLUDED.verificada_em, resultado = EXCLUDED.resultado,
                                        erro = NULL, detalhes = EXCLUDED.detalhes;
-    EXCEPTION WHEN OTHERS THEN
+    EXCEPTION WHEN query_canceled THEN
+      -- statement_timeout do cron (ou cancelamento) numa raiz lenta: WHEN OTHERS não pega 57014, e o
+      -- rollback do lote inteiro apagaria as verificações anteriores e devolveria a raiz lenta à frente
+      -- da fila a cada rodada (Codex diff r3 P1). Registra, solta o lock de sessão e ENCERRA o lote: o
+      -- tempo acabou, e a raiz lenta vai para o fim da fila.
+      PERFORM pg_advisory_unlock_all();
+      INSERT INTO public.credito_reducao_verificacao AS v (raiz, verificada_em, resultado, erro, detalhes)
+      VALUES (r.raiz, now(), 'erro', '57014:cancelada (statement_timeout ou cancelamento)', NULL)
+      ON CONFLICT (raiz) DO UPDATE SET verificada_em = EXCLUDED.verificada_em, resultado = 'erro',
+                                       erro = EXCLUDED.erro, detalhes = NULL;
+      v_cont := v_cont || jsonb_build_object('cancelada', 1);
+      EXIT;
+    WHEN OTHERS THEN
       -- resultado POR raiz (não é teste): o erro de uma não desfaz as outras; fica registrado
       GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
       -- o lock de SESSÃO não sai com o rollback do sub-bloco: solta aqui (o backend do cron não tem outro)

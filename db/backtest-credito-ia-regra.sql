@@ -117,7 +117,8 @@ piso_t AS (
          CASE WHEN bool_or(t.data_emissao IS NOT NULL AND t.data_emissao <= h.t
                            AND ((t.aberto_hoje AND (t.saldo > 0 OR t.status_titulo = 'PAGTO PARCIAL'))
                                 OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa > h.t))) THEN 'comprovado'
-              WHEN bool_or(t.data_emissao IS NULL
+              -- emissão nula só não sabe "estava aberto em T?" se a baixa não o liquidou ANTES de T
+              WHEN bool_or((t.data_emissao IS NULL AND NOT (t.status_titulo = 'RECEBIDO' AND t.data_baixa <= h.t))
                            OR (t.aberto_hoje AND t.saldo IS NULL)
                            OR (t.status_titulo = 'RECEBIDO' AND t.data_baixa IS NULL)) THEN 'indeterminado'
               ELSE 'livre' END AS piso_t
@@ -136,11 +137,13 @@ ia AS (
    WHERE p.status <> 'aplicada_auto_reducao'      -- redução automática (5b) não é proposta da IA
    ORDER BY p.grupo_user_id, p.created_at DESC, p.id
 ),
-ia1 AS (   -- coorte FIXA do prospectivo: a 1ª proposta da IA de cada grupo (a reavaliação não a desloca)
-  SELECT p.grupo_user_id AS raiz, min(p.created_at) AS primeira_em
+ia1 AS (   -- coorte FIXA do prospectivo: data E decisão da 1ª proposta da IA (a reavaliação não a desloca)
+  SELECT DISTINCT ON (p.grupo_user_id)
+         p.grupo_user_id AS raiz, p.created_at AS primeira_em,
+         (p.limite_sugerido_brl = 0 OR p.risco IN ('alto','sem_evidencia')) AS ia_restringe
     FROM public.credito_limite_proposta p
    WHERE p.status <> 'aplicada_auto_reducao'
-   GROUP BY 1
+   ORDER BY p.grupo_user_id, p.created_at, p.id
 ),
 v2 AS (
   SELECT s.grupo_user_id AS raiz,
@@ -234,8 +237,8 @@ linhas AS (
 --    Vazio no começo; amadurece sozinho — re-rodar este arquivo é a medida. Sem vazamento: a ficha da
 --    proposta não podia conhecer estes títulos.
 , prosp AS (
-  SELECT ia.raiz, ia.ia_restringe, ia.risco, s.desfecho, s.valor_documento
-    FROM safra s JOIN ia ON ia.raiz = s.raiz JOIN ia1 ON ia1.raiz = s.raiz
+  SELECT ia1.raiz, ia1.ia_restringe, s.desfecho, s.valor_documento
+    FROM safra s JOIN ia1 ON ia1.raiz = s.raiz
    WHERE s.data_emissao > (ia1.primeira_em AT TIME ZONE 'America/Sao_Paulo')::date
 )
 SELECT 5 AS ord, 'prospectivo' AS secao,
