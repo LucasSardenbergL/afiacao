@@ -25,7 +25,8 @@ SAB="$(mktemp -d "/tmp/sab-${SLUG}.XXXXXX")"
 cleanup() { exec 3>&- 2>/dev/null || true; "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")" "$SAB"; }
 trap cleanup EXIT
 
-"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
+# o BANCO nasce no locale da rodada (collation/ctype), não só o cliente (Codex diff P2)
+"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="${LC_ALL_TESTE:-C}" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 PSQL=("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1)
@@ -425,8 +426,18 @@ check_trigger() {
   q "SELECT public.t_forca(\$q\$UPDATE public.credito_limite_proposta SET limite_sugerido_brl = 100 WHERE id = '$aid'\$q\$)" >/dev/null
   tem "T3 redução que troca ficha_calculada_em (lavaria limite_desatualizado)" \
       "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$C'); UPDATE public.credito_limite SET limite_brl = 100, versao = 2, origem_proposta_id = '$aid', ficha_calculada_em = now() + interval '1 day' WHERE grupo_user_id = '$C'\$x\$)")" "redução automática só desce"
-  tem "T4 INSERT de vigente com origem de redução" \
-      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$F'); INSERT INTO public.credito_limite (grupo_user_id, limite_brl, prazo_max_dias, risco, versao, grupo_assinatura, ficha_calculada_em, origem_proposta_id, aprovado_por) VALUES ('$F', 100, 21, 'baixo', 1, 'x', now(), '$aid', '$L')\$x\$)")" "42501:credito_limite: linha não casa"
+  local fid=eeee0000-0000-0000-0000-000000000003
+  q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
+     limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_em, motivo_decisao)
+     VALUES ('$fid', '$F', 'x', NULL, 100, 21, 'baixo', '{}', now(), 'aplicada_auto_reducao', now(), 'forjada')\$q\$)" >/dev/null
+  tem "T4 INSERT de vigente com origem de redução (mesmo casando os valores)" \
+      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$F'); INSERT INTO public.credito_limite (grupo_user_id, limite_brl, prazo_max_dias, risco, versao, grupo_assinatura, ficha_calculada_em, origem_proposta_id, aprovado_por) VALUES ('$F', 100, 21, 'baixo', 1, 'x', now(), '$fid', '$L')\$x\$)")" "42501:credito_limite: redução automática não cria vigente"
+  local sid=eeee0000-0000-0000-0000-000000000004
+  q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
+     limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_em, motivo_decisao)
+     VALUES ('$sid', '$C', 'x', 1, 3300, 21, 'baixo', '{}', now(), 'aplicada_auto_reducao', now(), 'forjada')\$q\$)" >/dev/null
+  tem "T6 redução idêntica (só versão +1, writer contornado) barrada pelo trigger" \
+      "$(q "SELECT public.t_trym(\$x\$SELECT public.credito_portao('$C'); UPDATE public.credito_limite SET versao = 2, origem_proposta_id = '$sid' WHERE grupo_user_id = '$C'\$x\$)")" "redução automática só desce"
   eq "T  vigente intacto" "$(vg $C)" "3300/21/baixo/v1"
 }
 check_dml_direto() {
@@ -451,19 +462,19 @@ check_lote() {
 30"
 }
 check_lote_erro() {
-  vig_c; local SP=eeeeeeee-0000-0000-0000-999999999999
+  vig_c; local SP=$A1   # alias de C: a ficha recusa (22023); ordena antes de C (o lote para no 1º corte)
   q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
      limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_por, decidido_em)
      VALUES ('$SP', '$SP', public.credito_grupo_assinatura('$SP'), NULL, 100, 7, 'medio', '{}', now(), 'aprovada', '$L', now());
      INSERT INTO public.credito_limite VALUES ('$SP', 100, 7, 'medio', 1, public.credito_grupo_assinatura('$SP'), now(), '$SP', '$L', now())\$q\$)" >/dev/null
   tit oben 101 60 ATRASADO 90 60 100 100
   q "SELECT private.credito_reducao_lote(25, 20)" >/dev/null
-  eq "L2 raiz que falha (ficha: grupo sem par) fica registrada como erro, a outra é reduzida no mesmo lote" \
+  eq "L2 raiz que falha (ficha recusa alias) fica registrada como erro, a outra é reduzida no mesmo lote" \
      "$(q "SELECT string_agg(resultado, ',' ORDER BY resultado) FROM public.credito_reducao_verificacao")/$(vg $C)" "erro,reduzido/0/0/alto/v2"
 }
 # 2 sessões: A segura o lock do grupo C; o lote em B não espera (lock_timeout) e segue para F
 check_ocupado() {
-  vig_c; tit oben 101 60 ATRASADO 90 60 100 100
+  vig_c                                  # C SAUDÁVEL: o lock do redutor (não o do writer) é o que esbarra
   hist oben 701 100
   q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
      limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_por, decidido_em)
@@ -485,6 +496,79 @@ check_ocupado() {
      "$([ $((t1-t0)) -le 4 ] && echo rapido)/$(q "SELECT left(erro, 5) FROM public.credito_reducao_verificacao WHERE raiz = '$C'")" "rapido/55P03"
   eq "C1 o outro grupo do lote foi reduzido" "$(vg $F)" "0/0/alto/v2"
   eq "C1 C intacto (volta na próxima)" "$(vg $C)" "3300/21/baixo/v1"
+}
+# A dentro de uma transação aberta: sem corte o lock do grupo já saiu; com corte, segura até o COMMIT
+check_lock_liberado() {
+  vig_c
+  rm -f "$SAB"/a.out "$SAB"/a.fifo; mkfifo "$SAB/a.fifo"
+  "${PSQL[@]}" -tA -q < "$SAB/a.fifo" > "$SAB/a.out" 2>&1 &
+  local apsql=$!
+  exec 3>"$SAB/a.fifo"
+  echo "BEGIN; SELECT 'A:' || (private.credito_reduzir_limite('$C') ->> 'resultado');" >&3
+  local i=0; until grep -q '^A:' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
+  local livre; livre=$(q "SELECT pg_try_advisory_xact_lock(hashtextextended('credito_grupo:$C', 0))")
+  tit oben 101 60 ATRASADO 90 60 100 100
+  echo "SELECT 'B:' || (private.credito_reduzir_limite('$C') ->> 'resultado');" >&3
+  i=0; until grep -q '^B:' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
+  local preso; preso=$(q "SELECT pg_try_advisory_xact_lock(hashtextextended('credito_grupo:$C', 0))")
+  echo "COMMIT;" >&3; exec 3>&-; wait "$apsql" || true
+  local depois; depois=$(q "SELECT pg_try_advisory_xact_lock(hashtextextended('credito_grupo:$C', 0))")
+  eq "K1 sem corte: lock livre com a transação ainda aberta · com corte: preso até o COMMIT · depois livre" \
+     "$(grep -o 'A:[a-z_]*' "$SAB/a.out")/$livre/$(grep -o 'B:[a-z_]*' "$SAB/a.out")/$preso/$depois" "A:sem_mudanca/t/B:reduzido/f/t"
+}
+check_lote_para() {
+  vig_c; tit oben 101 60 ATRASADO 90 60 100 100; hist oben 701 100
+  q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
+     limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_por, decidido_em)
+     VALUES ('$F', '$F', public.credito_grupo_assinatura('$F'), NULL, 100, 7, 'medio', '{}', now(), 'aprovada', '$L', now());
+     INSERT INTO public.credito_limite VALUES ('$F', 100, 7, 'medio', 1, public.credito_grupo_assinatura('$F'), now(), '$F', '$L', now())\$q\$)" >/dev/null
+  tit oben 701 160 ATRASADO 90 60 100 100
+  eq "L3 lote para no 1º corte (1 por transação)" "$(q "SELECT private.credito_reducao_lote(25, 20) -> 'por_resultado' ->> 'reduzido'")/$(vg $C)/$(vg $F)" "1/0/0/alto/v2/100/7/medio/v1"
+  eq "L3 o lote seguinte pega o outro" "$(q "SELECT private.credito_reducao_lote(25, 20) -> 'por_resultado' ->> 'reduzido'")/$(vg $F)" "1/0/0/alto/v2"
+}
+check_sync_defasado() {
+  vig_c 3300 21 baixo 10; tit oben 101 60 ATRASADO 90 60 100 100; tit oben 101 62 ATRASADO 40 16 1000 1000
+  q "SELECT public.t_forca(\$q\$UPDATE public.sync_state SET last_sync_at = now() - interval '49 hours' WHERE account = 'oben'\$q\$)" >/dev/null
+  local r; r=$(red $C)
+  eq "Y1 espelho do CR defasado ⇒ E1/E2 não cortam" "$(echo "$r" | JX "d['resultado']")/$(vg $C)" "sem_mudanca/3300/21/baixo/v1"
+  tem "Y1 motivo registrado" "$(echo "$r" | JX "d['avisos']")" "sync_defasado"
+  q "SELECT public.t_forca(\$q\$UPDATE public.sync_state SET last_sync_at = now() - interval '49 hours' WHERE account = 'colacor'\$q\$)" >/dev/null
+  q "SELECT public.t_forca(\$q\$UPDATE public.sync_state SET last_sync_at = now() - interval '1 hour' WHERE account = 'oben'\$q\$)" >/dev/null
+  eq "Y2 empresa SEM par do grupo defasada não impede" "$(red $C | JX "d['resultado']")" "reduzido"
+}
+# vigente revisável de cliente FORA da carteira ativa (sem título aberto, sem emissão em 180 d)
+check_fora_carteira() {
+  reset; local i; for i in 1 2 3 4 5 6; do tit oben 701 $((900+i)) RECEBIDO 300 280 1000 0; baixa oben $((900+i)) 280; done
+  q "SELECT public.t_forca(\$q\$INSERT INTO public.credito_limite_proposta (id, grupo_user_id, grupo_assinatura, limite_versao_base,
+     limite_sugerido_brl, prazo_max_dias, risco, ficha, ficha_calculada_em, status, decidido_por, decidido_em)
+     VALUES ('$F', '$F', public.credito_grupo_assinatura('$F'), NULL, 100, 7, 'medio', '{}', now(), 'aprovada', '$L', now());
+     INSERT INTO public.credito_limite VALUES ('$F', 100, 7, 'medio', 1, public.credito_grupo_assinatura('$F'), now(), '$F', '$L', now());
+     UPDATE public.radar_situacao_cadastral SET situacao = '08' WHERE cnpj = '11222333000144'\$q\$)" >/dev/null
+  eq "V4 F está fora da carteira ativa" "$(q "SELECT count(*) FROM public.credito_carteira_ativa() WHERE raiz = '$F'")" "0"
+  eq "V4 E3 corta o risco" "$(red $F | JX "d['resultado']")/$(vg $F)" "reduzido/100/7/alto/v2"
+  eq "V4 e ele volta ao Lucas mesmo fora da carteira" "$(q "SELECT public.t_claim(5, gen_random_uuid());")" "$F"
+}
+# aprovação (do Lucas, da proposta de volta) segurando o grupo; a redução espera e relê o vigente NOVO
+check_aprovacao_x_reducao() {
+  vig_c; tit oben 101 60 ATRASADO 90 60 100 100; red $C >/dev/null
+  q "SELECT public.t_claim(5, '$T2');" >/dev/null; paga 60
+  local pid; pid=$(q "SELECT public.t_registra('$T2', '$C', 3300, 21, 'baixo');")
+  rm -f "$SAB"/a.out "$SAB"/b.out "$SAB"/a.fifo; mkfifo "$SAB/a.fifo"
+  "${PSQL[@]}" -tA -q < "$SAB/a.fifo" > "$SAB/a.out" 2>&1 &
+  local apsql=$!
+  exec 3>"$SAB/a.fifo"
+  echo "SELECT set_config('request.jwt.claims', '{\"sub\":\"$L\"}', false); BEGIN; SELECT 'A:' || (public.credito_aprovar_proposta('$pid') ->> 'versao');" >&3
+  local i=0; until grep -q '^A:' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
+  ( q "SELECT 'B:' || (SELECT r ->> 'resultado' || ':v' || (r ->> 'versao') FROM private.credito_reduzir_limite('$C') r);" > "$SAB/b.out" 2>&1 ) &
+  local bjob=$! bloq=0 n
+  for i in $(seq 1 100); do
+    n=$(q "SELECT count(*) FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid)) > 0 AND query LIKE '%B:%';")
+    if [ "$n" -ge 1 ]; then bloq=1; break; fi
+    sleep 0.05
+  done
+  echo "COMMIT;" >&3; exec 3>&-; wait "$apsql" || true; wait "$bjob" || true
+  eq "C3 a redução esperou a aprovação e decidiu sobre o vigente novo (v3)" \
+     "$bloq/$(grep -o 'A:[0-9]*' "$SAB/a.out")/$(grep -o 'B:[a-z_:0-9]*' "$SAB/b.out")/$(vg $C)" "1/A:3/B:sem_mudanca:v3/3300/21/baixo/v3"
 }
 # 2 sessões: duas reduções do MESMO grupo serializam — a 2ª relê o vigente já cortado e não corta de novo
 check_serializa() {
@@ -524,7 +608,8 @@ check_cron() {
 TODOS=(check_sem_vigente check_sem_mudanca check_regressao_pr4 check_piso check_piso_indet check_e2 check_e2_antigo
        check_e2_fronteira check_e2_reservas check_e2_exposicao_null check_nunca_aumenta check_e3 check_grupo_mudou
        check_recuperacao check_registro_base check_aprovar_antiga check_writer check_trigger check_dml_direto
-       check_lote check_lote_erro check_ocupado check_serializa check_acl check_cron)
+       check_lote check_lote_erro check_ocupado check_serializa check_acl check_cron
+       check_lock_liberado check_lote_para check_sync_defasado check_fora_carteira check_aprovacao_x_reducao)
 echo "· asserts"
 for c in "${TODOS[@]}"; do "$c"; done
 echo "controle: PASS=$PASS FAIL=$FAIL"
@@ -559,24 +644,19 @@ sabota_aplica() { # rótulo velho novo — a pós-condição TEM de abortar
        *) echo "  ❌ $1: falhou por outro motivo — $(head -c 300 "$SAB/s.log")"; FAIL=$((FAIL+1));; esac; fi
 }
 
-sabota "S1 E1 piso não corta" check_piso "  IF v_f ->> 'piso_estado' = 'comprovado' THEN
-    IF v_lim > 0" "  IF false THEN
-    IF v_lim > 0"
-sabota "S2 E1 corta por piso INDETERMINADO (dado ausente vira corte)" check_piso_indet "  IF v_f ->> 'piso_estado' = 'comprovado' THEN
-    IF v_lim > 0" "  IF v_f ->> 'piso_estado' IN ('comprovado','indeterminado') THEN
-    IF v_lim > 0"
-sabota "S3 E2 sem a base (vencido que o Lucas já viu corta)" check_e2_antigo "     AND f.data_vencimento > v_base - 15;" "     ;"
+sabota "S1 E1 piso não corta" check_piso "  IF v_sync_ok AND v_f ->> 'piso_estado' = 'comprovado' THEN" "  IF false THEN"
+sabota "S2 E1 corta por piso INDETERMINADO (dado ausente vira corte)" check_piso_indet "  IF v_sync_ok AND v_f ->> 'piso_estado' = 'comprovado' THEN" "  IF v_sync_ok AND v_f ->> 'piso_estado' IN ('comprovado','indeterminado') THEN"
+sabota "S3 E2 sem a base (vencido que o Lucas já viu corta)" check_e2_antigo "                                    AND f.data_vencimento > v_base - 15) AS novos," "                                    ) AS novos,"
 sabota "S4 E2 base = ficha da ORIGEM (perde o título após o 1º corte)" check_e2 "  v_base := (v_l.ficha_calculada_em AT TIME ZONE 'America/Sao_Paulo')::date;" "  v_base := (SELECT (p.ficha ->> 'hoje_sp')::date FROM public.credito_limite_proposta p WHERE p.id = v_l.origem_proposta_id);"
-sabota "S5 E2 régua de 16 d (fronteira)" check_e2_fronteira "     AND f.data_vencimento <= v_hoje - 15
-     AND" "     AND f.data_vencimento <= v_hoje - 16
-     AND"
+sabota "S5 E2 régua de 16 d (fronteira)" check_e2_fronteira "AND f.data_vencimento <= (now() AT TIME ZONE 'America/Sao_Paulo')::date - 15" "AND f.data_vencimento <= (now() AT TIME ZONE 'America/Sao_Paulo')::date - 16"
 sabota "S6 E2 sem as reservas efetivas" check_e2_reservas "      v_corte := floor((v_titulos + v_reservas) / 100) * 100;" "      v_corte := floor(v_titulos / 100) * 100;"
-sabota "S7 E2 soma a reserva SOMBRA" check_e2_reservas "       WHERE r.status = 'ativa' AND r.modo = 'efetivo'" "       WHERE r.status = 'ativa'"
-sabota "S8 E2 exposição NULL vira 0" check_e2_exposicao_null "    v_titulos := (v_f ->> 'em_aberto_brl')::numeric;" "    v_titulos := COALESCE((v_f ->> 'em_aberto_brl')::numeric, 0);"
+sabota "S7 E2 soma a reserva SOMBRA" check_e2_reservas "           WHERE rr.status = 'ativa' AND rr.modo = 'efetivo'" "           WHERE rr.status = 'ativa'"
+sabota "S8 E2 exposição indeterminada vira corte" check_e2_exposicao_null "    IF v_indet THEN
+      v_avisos" "    IF false THEN
+      v_avisos"
 sabota "S9 E2 sem least (sobe até a exposição)" check_nunca_aumenta "      IF v_corte < v_lim THEN" "      IF v_corte <> v_lim THEN"
 sabota "S10 E3 cadastro irregular não pesa" check_e3 "  IF v_f ->> 'situacao_cadastral' = 'irregular' AND" "  IF false AND"
-sabota "S11 identidade não conferida antes da ficha" check_grupo_mudou "  IF public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura
-     OR EXISTS" "  IF false AND EXISTS"
+sabota "S11 identidade não conferida antes de cortar" check_grupo_mudou "  IF v_mudou OR v_f IS NULL THEN" "  IF v_f IS NULL THEN"
 sabota "S12 writer sem a checagem de aumento" check_writer "    IF v_p.limite_sugerido_brl > v_l.limite_brl OR v_p.prazo_max_dias > v_l.prazo_max_dias" "    IF false AND v_p.limite_sugerido_brl > v_l.limite_brl OR false AND v_p.prazo_max_dias > v_l.prazo_max_dias"
 sabota "S13 writer sem piora estrita" check_writer "    IF NOT (v_p.limite_sugerido_brl < v_l.limite_brl OR v_p.prazo_max_dias < v_l.prazo_max_dias" "    IF false AND NOT (v_p.limite_sugerido_brl < v_l.limite_brl OR v_p.prazo_max_dias < v_l.prazo_max_dias"
 sabota "S14 writer sem a versão" check_writer "     OR p_versao_esperada IS DISTINCT FROM v_p.limite_versao_base THEN" "     OR false THEN"
@@ -594,11 +674,20 @@ sabota "S23 lote sem sub-bloco por raiz" check_lote_erro "    EXCEPTION WHEN OTH
       -- resultado POR raiz"
 sabota "S24 lote fora da ordem de verificação" check_lote "            ORDER BY v.verificada_em NULLS FIRST, l.grupo_user_id" "            ORDER BY l.grupo_user_id"
 sabota "S25 lote sem lock_timeout (espera o grupo ocupado)" check_ocupado "  PERFORM set_config('lock_timeout', '2s', true);" "  PERFORM set_config('lock_timeout', '0', true);"
-# S26: contra outra REDUÇÃO o FOR UPDATE do vigente já serializa (check_serializa fica verde — redundância
-# declarada); o advisory lock é o que segura o redutor enquanto o GATE (que não trava a linha) decide.
-sabota "S26 redutor sem o lock do grupo (o gate segurando)" check_ocupado "  -- mesma fila da aprovação, do registro e do gate; TUDO o mais é lido depois do lock
-  PERFORM pg_advisory_xact_lock(hashtextextended('credito_grupo:' || p_raiz::text, 0));" "  -- sem lock"
+# S26: sem o lock do redutor, a raiz SAUDÁVEL passa enquanto o gate segura o grupo (C1); duas reduções ainda
+# colidiriam no writer (versão), então C2 seria uma 2ª testemunha — o alvo é C1.
+sabota "S26 redutor sem o lock do grupo (o gate segurando)" check_ocupado "  PERFORM pg_advisory_lock(v_k);
+  -- leitura SEM FOR UPDATE" "  -- leitura SEM FOR UPDATE"
 sabota "S27 aprovação sem o writer (grava direto, sem trigger casar)" check_regressao_pr4 "  v_nova := private.credito_limite_gravar(v_p.id, v_uid, v_versao_atual);" "  v_nova := private.credito_limite_gravar(v_p.id, '$M2', v_versao_atual);"
+sabota "S28 lote não para no 1º corte" check_lote_para "    EXIT WHEN v_k = 'reduzido';" "    NULL;"
+sabota "S29 sem corte não solta o lock de sessão" check_lock_liberado "  IF cardinality(v_regras) = 0 THEN
+    PERFORM pg_advisory_unlock(v_k);" "  IF cardinality(v_regras) = 0 THEN
+    NULL;"
+sabota "S30 E1 sem conferir o sync" check_sync_defasado "  IF v_sync_ok AND v_f ->> 'piso_estado' = 'comprovado' THEN" "  IF v_f ->> 'piso_estado' = 'comprovado' THEN"
+sabota "S31 laço só da carteira ativa (sem a união de vigentes)" check_fora_carteira "          UNION
+          SELECT lv.grupo_user_id FROM public.credito_limite lv) c" ") c"
+sabota "S32 trigger sem piora estrita" check_trigger "       OR NOT (NEW.limite_brl < OLD.limite_brl OR NEW.prazo_max_dias < OLD.prazo_max_dias
+               OR private.credito_risco_rank(NEW.risco) > private.credito_risco_rank(OLD.risco)) THEN" " THEN"
 sabota_aplica "P1 2º writer de credito_limite" "  -- 5b: o vigente tem UM writer (private.credito_limite_gravar); a versão devolvida é a gravada" "  IF false THEN UPDATE public.credito_limite SET risco = risco WHERE false; END IF;"
 sabota_aplica "P2 cron sem statement_timeout" "'SET statement_timeout = ''60s''; SELECT private.credito_reducao_lote(25, 20);'" "'SELECT private.credito_reducao_lote(25, 20);'"
 sabota_aplica "P3 lote aberto ao service_role" "      ('private.credito_reducao_lote(integer,integer)',              ARRAY[]::text[])," "      ('private.credito_reducao_lote(integer,integer)',              ARRAY['service_role']::text[]),"

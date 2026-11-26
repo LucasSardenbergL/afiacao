@@ -45,7 +45,7 @@ DECLARE
 BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('public.credito_aprovar_proposta(uuid,text)',                 '331de37f80c02ad166a559c8ed7c77cb', 'be6ce845a30e0783291bc6d692e97167'),
-      ('private.credito_raizes_elegiveis()',                         '21f0380fb0b293ee0ba8dcf3d73a94ca', '53515b0f252b35f08741eff80ec0b6a0'),
+      ('private.credito_raizes_elegiveis()',                         '21f0380fb0b293ee0ba8dcf3d73a94ca', '0f119a19be79d37f35f5b78dff4de7e6'),
       ('public.credito_registrar_avaliacao(uuid,uuid,jsonb,text)',   '9b113c73b33a9a478dcbe378e55faade', 'fa7e30aef95f0488baeef8dc453b9949')
     ) v(fn, prod, novo) LOOP
     SELECT md5(prosrc) INTO v_md5 FROM pg_proc WHERE oid = to_regprocedure(r.fn);
@@ -220,7 +220,10 @@ BEGIN
        OR NEW.ficha_calculada_em IS DISTINCT FROM OLD.ficha_calculada_em
        OR NEW.aprovado_por IS DISTINCT FROM OLD.aprovado_por
        OR NEW.versao IS DISTINCT FROM OLD.versao + 1
-       OR v_p.limite_versao_base IS DISTINCT FROM OLD.versao THEN
+       OR v_p.limite_versao_base IS DISTINCT FROM OLD.versao
+       -- ≥ 1 piora estrita: versão +1 sem piora invalidaria o lastro das reservas à toa
+       OR NOT (NEW.limite_brl < OLD.limite_brl OR NEW.prazo_max_dias < OLD.prazo_max_dias
+               OR private.credito_risco_rank(NEW.risco) > private.credito_risco_rank(OLD.risco)) THEN
       RAISE EXCEPTION 'credito_limite: redução automática só desce e preserva a aprovação' USING ERRCODE = '42501';
     END IF;
   ELSE
@@ -259,7 +262,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
   SELECT c.raiz, a.ultima_proposta_em
-    FROM public.credito_carteira_ativa() c
+    -- carteira ativa ∪ todo vigente: o vigente revisável de cliente fora da carteira (sem título em
+    -- aberto e sem emissão em 180 d) também precisa voltar ao Lucas (Codex diff P1-4)
+    FROM (SELECT ca.raiz FROM public.credito_carteira_ativa() ca
+          UNION
+          SELECT lv.grupo_user_id FROM public.credito_limite lv) c
     LEFT JOIN public.credito_avaliacao a ON a.raiz = c.raiz
     LEFT JOIN public.credito_limite l ON l.grupo_user_id = c.raiz
    WHERE (a.raiz IS NULL OR a.proxima_tentativa_em IS NULL OR a.proxima_tentativa_em <= now())
@@ -484,6 +491,8 @@ END;
 $function$;
 
 -- ── 10. A redução de UMA raiz (sob o lock do grupo; não escreve por dado ausente) ──────────
+-- Lock de SESSÃO para ler: sem corte, solta na hora (o gate daquela raiz não espera o fim do lote).
+-- Com corte, troca pelo lock de TRANSAÇÃO antes de escrever (segura até o COMMIT — Codex diff P1-3).
 CREATE OR REPLACE FUNCTION private.credito_reduzir_limite(p_raiz uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -492,8 +501,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_k bigint;
   v_l public.credito_limite%ROWTYPE;
   v_f jsonb;
+  v_mudou boolean;
   v_hoje date;
   v_base date;
   v_lim numeric;
@@ -502,8 +513,10 @@ DECLARE
   v_travas jsonb := '[]'::jsonb;
   v_regras text[] := ARRAY[]::text[];
   v_avisos text[] := ARRAY[]::text[];
+  v_sync_ok boolean;
   v_novos integer;
   v_titulos numeric;
+  v_indet boolean;
   v_reservas numeric;
   v_corte numeric;
   v_id uuid;
@@ -515,31 +528,63 @@ BEGIN
   IF current_setting('transaction_isolation') <> 'read committed' THEN
     RAISE EXCEPTION 'credito_reduzir_limite: exige READ COMMITTED' USING ERRCODE = '25000';
   END IF;
-  -- mesma fila da aprovação, do registro e do gate; TUDO o mais é lido depois do lock
-  PERFORM pg_advisory_xact_lock(hashtextextended('credito_grupo:' || p_raiz::text, 0));
-  SELECT * INTO v_l FROM public.credito_limite WHERE grupo_user_id = p_raiz FOR UPDATE;
+  -- mesma chave da aprovação, do registro e do gate; TUDO o mais é lido depois do lock
+  v_k := hashtextextended('credito_grupo:' || p_raiz::text, 0);
+  PERFORM pg_advisory_lock(v_k);
+  -- leitura SEM FOR UPDATE: todo writer do vigente toma este lock; um lock de linha aqui ficaria
+  -- até o fim do lote e seguraria a aprovação
+  SELECT * INTO v_l FROM public.credito_limite WHERE grupo_user_id = p_raiz;
   IF NOT FOUND THEN
+    PERFORM pg_advisory_unlock(v_k);
     RETURN jsonb_build_object('resultado', 'sem_vigente');
   END IF;
-
-  -- identidade antes de comparar fichas: composição ou titularidade mudou ⇒ não corta pela ficha de
-  -- outro grupo (o gate já dá 🟡 grupo_mudou; a revisão é a proposta nova do laço)
-  IF public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura
-     OR EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz) g
-                 WHERE (public.credito_grupo_raiz(g.company, g.omie_codigo_cliente) ->> 'raiz')
-                       IS DISTINCT FROM p_raiz::text) THEN
-    RETURN jsonb_build_object('resultado', 'grupo_mudou', 'versao', v_l.versao);
-  END IF;
-
-  v_f := public.credito_ficha(p_raiz);
-  v_hoje := (v_f ->> 'hoje_sp')::date;
   -- base = data SP da ÚLTIMA ficha aprovada pelo Lucas (o writer preserva ficha_calculada_em na
   -- redução; ler a ficha da origem perderia o título após o 1º corte — Codex desenho v2 P1-3)
   v_base := (v_l.ficha_calculada_em AT TIME ZONE 'America/Sao_Paulo')::date;
+
+  -- UM snapshot (Codex diff P1-2): identidade, ficha (STABLE ⇒ o snapshot do comando que a chama),
+  -- causador do E2, exposição e reservas vêm do MESMO comando — nada de combinar leituras de momentos
+  -- diferentes. Identidade mudada ⇒ não corta pela ficha de outro grupo (o gate já dá 🟡).
+  SELECT (public.credito_grupo_assinatura(p_raiz) IS DISTINCT FROM v_l.grupo_assinatura
+          OR EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz) g
+                      WHERE (public.credito_grupo_raiz(g.company, g.omie_codigo_cliente) ->> 'raiz')
+                            IS DISTINCT FROM p_raiz::text)),
+         CASE WHEN EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz)) THEN public.credito_ficha(p_raiz) END,
+         t.novos, t.titulos, t.indet, r.reservas
+    INTO v_mudou, v_f, v_novos, v_titulos, v_indet, v_reservas
+    FROM (SELECT count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL')
+                                    AND f.data_vencimento <= (now() AT TIME ZONE 'America/Sao_Paulo')::date - 15
+                                    AND f.data_vencimento > v_base - 15) AS novos,
+                 COALESCE(sum(f.saldo) FILTER (WHERE f.saldo > 0), 0) AS titulos,
+                 -- mesma régua de valor desconhecido de credito_sinais_grupo
+                 COALESCE(bool_or(f.saldo IS NULL OR (f.status_titulo = 'PAGTO PARCIAL' AND f.saldo <= 0)), false) AS indet
+            FROM (SELECT DISTINCT g.company, g.omie_codigo_cliente FROM public.credito_grupo_pares(p_raiz) g) p
+            JOIN public.fin_contas_receber f ON f.company = p.company AND f.omie_codigo_cliente = p.omie_codigo_cliente
+           WHERE f.status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL','PAGTO PARCIAL')) t,
+         -- reservas efetivas ativas do grupo, cada uma uma vez: pelo par atual OU pela raiz que a gravou
+         (SELECT COALESCE(sum(rr.valor_brl), 0) AS reservas
+            FROM public.credito_reserva rr
+           WHERE rr.status = 'ativa' AND rr.modo = 'efetivo'
+             AND (rr.grupo_user_id = p_raiz
+                  OR EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz) g
+                              WHERE g.company = rr.company AND g.omie_codigo_cliente = rr.omie_codigo_cliente))) r;
+  IF v_mudou OR v_f IS NULL THEN
+    PERFORM pg_advisory_unlock(v_k);
+    RETURN jsonb_build_object('resultado', 'grupo_mudou', 'versao', v_l.versao);
+  END IF;
+
+  v_hoje := (v_f ->> 'hoje_sp')::date;
   v_lim := v_l.limite_brl; v_prazo := v_l.prazo_max_dias; v_risco := v_l.risco;
+  -- evidência FINANCEIRA (E1, E2) só com o espelho do CR em dia nas empresas do grupo: título pago no
+  -- Omie e ainda aberto no espelho não pode virar corte permanente (Codex diff P1-1)
+  v_sync_ok := NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(v_f -> 'motivos_ausencia') m
+                            WHERE m LIKE 'sync_defasado:%');
+  IF NOT v_sync_ok THEN
+    v_avisos := v_avisos || 'sync_defasado'::text;
+  END IF;
 
   -- E1 piso comprovado (vencido ≥ 60 d com saldo; mesma régua do piso) ⇒ 0 / 0 / alto
-  IF v_f ->> 'piso_estado' = 'comprovado' THEN
+  IF v_sync_ok AND v_f ->> 'piso_estado' = 'comprovado' THEN
     IF v_lim > 0 OR v_prazo > 0 OR private.credito_risco_rank(v_risco) < 3 THEN
       v_travas := v_travas || jsonb_build_object('regra', 'E1_piso_comprovado', 'campo', 'piso_estado',
         'n_titulos_vencidos_60d', v_f -> 'n_titulos_vencidos_60d',
@@ -554,25 +599,10 @@ BEGIN
 
   -- E2 título aberto que cruzou 15 d de atraso DEPOIS da ficha aprovada (régua ≥ 15 d de
   -- credito_sinais_grupo, a mesma da aprovação) ⇒ "nada novo": limite = títulos + reservas efetivas
-  SELECT count(*) INTO v_novos
-    FROM (SELECT DISTINCT g.company, g.omie_codigo_cliente FROM public.credito_grupo_pares(p_raiz) g) p
-    JOIN public.fin_contas_receber f ON f.company = p.company AND f.omie_codigo_cliente = p.omie_codigo_cliente
-   WHERE f.status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL','PAGTO PARCIAL')
-     AND (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL')
-     AND f.data_vencimento <= v_hoje - 15
-     AND f.data_vencimento > v_base - 15;
-  IF v_novos > 0 AND v_lim > 0 THEN
-    v_titulos := (v_f ->> 'em_aberto_brl')::numeric;
-    IF v_titulos IS NULL THEN
+  IF v_sync_ok AND v_novos > 0 AND v_lim > 0 THEN
+    IF v_indet THEN
       v_avisos := v_avisos || 'exposicao_indeterminada'::text;   -- não fabrica exposição: não corta
     ELSE
-      -- reservas efetivas ativas do grupo, cada uma uma vez: pelo par atual OU pela raiz que a gravou
-      SELECT COALESCE(sum(r.valor_brl), 0) INTO v_reservas
-        FROM public.credito_reserva r
-       WHERE r.status = 'ativa' AND r.modo = 'efetivo'
-         AND (r.grupo_user_id = p_raiz
-              OR EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_raiz) g
-                          WHERE g.company = r.company AND g.omie_codigo_cliente = r.omie_codigo_cliente));
       v_corte := floor((v_titulos + v_reservas) / 100) * 100;
       IF v_corte < v_lim THEN
         v_travas := v_travas || jsonb_build_object('regra', 'E2_vencido_15d_novo', 'campo', 'em_aberto_brl',
@@ -598,8 +628,13 @@ BEGIN
   END IF;
 
   IF cardinality(v_regras) = 0 THEN
+    PERFORM pg_advisory_unlock(v_k);
     RETURN jsonb_build_object('resultado', 'sem_mudanca', 'versao', v_l.versao, 'avisos', to_jsonb(v_avisos));
   END IF;
+
+  -- vai escrever: o lock passa a ser da TRANSAÇÃO (re-entrante: já é nosso) e o de sessão sai
+  PERFORM pg_advisory_xact_lock(v_k);
+  PERFORM pg_advisory_unlock(v_k);
 
   -- trilha: a redução é uma linha de proposta já decidida (ficha de hoje, cortes antes/depois)
   v_id := gen_random_uuid();
@@ -613,6 +648,7 @@ BEGIN
           'aplicada_auto_reducao', NULL, now(),
           'reducao_automatica: ' || array_to_string(v_regras, ','));
   PERFORM public.credito_portao(NULL);
+  -- o writer relê o vigente FOR UPDATE e confere a versão: se ele mudou, recusa (nada sobrescreve)
   v_versao := private.credito_limite_gravar(v_id, NULL, v_l.versao);
   RETURN jsonb_build_object('resultado', 'reduzido', 'proposta_id', v_id, 'versao', v_versao,
     'regras', to_jsonb(v_regras), 'avisos', to_jsonb(v_avisos),
@@ -622,6 +658,9 @@ END;
 $$;
 
 -- ── 11. O lote do cron: ≤ p_max raízes, menos recente primeiro, cada uma num sub-bloco ──────
+-- Para na 1ª REDUÇÃO: no máximo um corte por transação, e o único lock que sobra até o COMMIT é o
+-- dessa raiz (as verificadas sem corte já soltaram o lock de sessão). Um timeout depois do corte não
+-- existe: o corte é a última coisa do lote (Codex diff P1-3).
 CREATE OR REPLACE FUNCTION private.credito_reducao_lote(p_max integer DEFAULT 25, p_orcamento_seg integer DEFAULT 20)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -661,6 +700,8 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
       -- resultado POR raiz (não é teste): o erro de uma não desfaz as outras; fica registrado
       GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+      -- o lock de SESSÃO não sai com o rollback do sub-bloco: solta aqui (o backend do cron não tem outro)
+      PERFORM pg_advisory_unlock_all();
       v_k := 'erro';
       INSERT INTO public.credito_reducao_verificacao AS v (raiz, verificada_em, resultado, erro, detalhes)
       VALUES (r.raiz, now(), 'erro', left(v_state || ':' || v_msg, 500), NULL)
@@ -668,6 +709,7 @@ BEGIN
                                        erro = EXCLUDED.erro, detalhes = NULL;
     END;
     v_cont := v_cont || jsonb_build_object(v_k, COALESCE((v_cont ->> v_k)::integer, 0) + 1);
+    EXIT WHEN v_k = 'reduzido';
   END LOOP;
   RETURN jsonb_build_object('raizes', v_n, 'por_resultado', v_cont,
                             'segundos', round(extract(epoch FROM clock_timestamp() - v_ini)::numeric, 1));
