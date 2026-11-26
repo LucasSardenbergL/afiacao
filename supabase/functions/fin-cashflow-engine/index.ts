@@ -42,7 +42,8 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
 import { colunasCpVencidoFora, medirCpVencidoForaProjecao, type CpVencidoForaProjecao } from "./cp-vencido.ts";
 import { colunasComposicaoNcg } from "./ncg-composicao.ts";
-import { classificarPcoNcg, LINHAS_MAPA_NCG, type LinhaMapa } from "./ncg-folha-tributos.ts";
+import { classificarPcoNcg, type LinhaMapa } from "./ncg-folha-tributos.ts";
+import { expandirRecorrenteDeno } from "./recorrente.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -430,6 +431,9 @@ type DadosBase = {
   motivos_confianca: string[];
 };
 
+/** Teto da leitura do mapa de fluxo: a página cheia é tratada como truncada (cap de 1000 do PostgREST). */
+const MAPA_FLUXO_TETO = 1000;
+
 async function carregarDados(
   supabase: SupabaseClient,
   company: Company,
@@ -495,10 +499,11 @@ async function carregarDados(
       // @ts-expect-error - fin_dre_snapshots não está nos types gerados
       supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
         .eq('company', company).eq('regime', 'competencia'),
-      // v2.7: fonte de folha/tributos da NCG = mapa curado por empresa + código (o mesmo do DFC). Cabe em
-      // < 1000 (o mapa inteiro tem ~230 linhas nas 3 empresas; aqui só 3 linhas de fluxo de 1 empresa).
+      // v2.7: fonte de folha/tributos da NCG = mapa curado por empresa + código (o mesmo do DFC). O mapa
+      // INTEIRO da empresa (todas as linhas): código ausente é o que acusa mapa incompleto. 26/11: 40–125
+      // linhas por empresa; truncamento no cap de 1000 do PostgREST LANÇA abaixo.
       supabase.from('fin_categoria_fluxo_mapping').select('omie_codigo, fluxo_linha')
-        .eq('company', company).in('fluxo_linha', [...LINHAS_MAPA_NCG]),
+        .eq('company', company).order('omie_codigo', { ascending: true }).limit(MAPA_FLUXO_TETO),
       // Fase 3 (B): PMR/PMP + cobertura da baixa derivada — a linha de v_capital_giro_prazos
       // desta empresa, via RPC com o filtro de empresa dentro do CTE (a view varria
       // fin_movimentacoes inteira 2× por chamada; ver ./prazos-empresa.ts).
@@ -610,7 +615,11 @@ async function carregarDados(
   // v2.7: o mapa de folha/tributos. Erro de leitura LANÇA (senão a composição sairia "não medida" por um
   // timeout, ou pior, folha zero medida nas empresas de folha centralizada); mapa vazio é legítimo e vira
   // fonte vazia → composição não medida (ncg-folha-tributos.ts).
-  const mapa_fluxo_ncg = ((exigirLeitura(mapaRes, 'fin_categoria_fluxo_mapping') ?? []) as Array<Record<string, unknown>>)
+  // Corpo que não é lista (HTTP 200 com `null`) também LANÇA — não vira "mapa vazio" (achado Codex v2.7).
+  const mapaLinhas = exigirLeitura(mapaRes, 'fin_categoria_fluxo_mapping');
+  if (!Array.isArray(mapaLinhas)) throw new Error('leitura crítica malformada: fin_categoria_fluxo_mapping (corpo não é lista)');
+  if (mapaLinhas.length >= MAPA_FLUXO_TETO) throw new Error(`leitura crítica truncada: fin_categoria_fluxo_mapping (≥ ${MAPA_FLUXO_TETO} linhas)`);
+  const mapa_fluxo_ncg = (mapaLinhas as Array<Record<string, unknown>>)
     .map((m) => ({ omie_codigo: String(m.omie_codigo), fluxo_linha: String(m.fluxo_linha) }));
 
   // Fase 3 (B): PMR/PMP + cobertura da baixa derivada. Degrada p/ null se a view não tiver
@@ -952,32 +961,6 @@ function prazoMedioPonderado(titulos: Array<{ dias: number; valor: number }>): n
   return mediaPonderada(titulos.map((t) => ({ valor: t.dias, peso: t.valor })));
 }
 
-function expandirRecorrenteDeno(
-  rec: EventoRecorrente,
-  de: string,
-  ate: string,
-): string[] {
-  const result: string[] = [];
-  const startBase = rec.inicio > de ? rec.inicio : de;
-  const start = new Date(startBase + 'T00:00:00Z');
-  const end = new Date(ate + 'T00:00:00Z');
-  const fim = rec.fim ? new Date(rec.fim + 'T00:00:00Z') : null;
-
-  let ano = start.getUTCFullYear();
-  let mes1 = start.getUTCMonth() + 1;
-  while (true) {
-    const ultimoDia = new Date(Date.UTC(ano, mes1, 0)).getUTCDate();
-    const dia = Math.min(rec.dia_do_mes, ultimoDia);
-    const candidato = new Date(Date.UTC(ano, mes1 - 1, dia));
-    if (candidato > end) break;
-    if (candidato >= start && (!fim || candidato <= fim)) {
-      result.push(candidato.toISOString().slice(0, 10));
-    }
-    mes1++;
-    if (mes1 > 12) { mes1 = 1; ano++; }
-  }
-  return result;
-}
 
 type ResultadoSemanas = {
   semanas: Semana[];

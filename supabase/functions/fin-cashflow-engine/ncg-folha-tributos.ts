@@ -14,16 +14,23 @@
 //     em 18 meses, NENHUM pago com mais de 19 dias de atraso (0 com > 30). Título de folha vencido há mais de 30
 //     dias não tem precedente de pagamento — não é reserva de caixa para os próximos 30 dias: fica em
 //     `cp_fornecedor` (o total da NCG não muda) e vira motivo de confiança com a contagem.
-//   - Recorrente de folha (`fin_eventos_recorrentes.is_folha`) só conta VIGENTE (início ≤ fim da janela e fim
-//     nulo ou ≥ hoje — achado Codex: ignorava `fim`). ERP vence: folha = max(CP na janela, recorrente).
+//   - Recorrente de folha (`fin_eventos_recorrentes.is_folha`) só conta com OCORRÊNCIA em [hoje, hoje + 30] pela
+//     mesma expansão da projeção semanal (./recorrente.ts: dia do mês, início, fim — achados Codex v2.6 e v2.7).
+//     ERP vence: folha = max(CP na janela, recorrente).
 //   - Folha é CENTRALIZADA na colacor_sc: nas outras empresas, sem título na janela, folha é ZERO MEDIDO (desde
 //     que o mapa tenha códigos de pessoal para a empresa). Na colacor_sc, sem título nem recorrente = fonte vazia.
 //   - Tributos: medido só com ≥ 1 título ABERTO classificado (histórico pago não atesta — achado Codex v2.6).
+//   - Mapa INCOMPLETO não atesta (achado Codex v2.7): o mapa foi semeado com os códigos que já tiveram caixa, e o
+//     plano tem códigos de pessoal/impostos fora dele (26/11: 22–28 por empresa em 2.03/2.04/2.06, nenhum com
+//     título aberto). Título aberto com código AUSENTE do mapa da empresa nessas famílias torna a parcela
+//     correspondente não medida (2.03 → folha; 2.04/2.06 → tributos). A família só ACUSA lacuna, nunca classifica.
+//   - Folha aberta SEM vencimento: posição na janela desconhecida → folha não medida (achado Codex v2.7).
 //   - Cada título cai em UM balde (adiantamento > tributo > folha na janela > fornecedor). Como o mapa é
 //     UNIQUE(company, omie_codigo), um código não pode ser folha e tributo ao mesmo tempo.
 //   - INSS/IRRF retidos não duplicam o salário: cada título de CP é um desembolso distinto (a guia é paga à
 //     parte do líquido). Medido em 26/11: na colacor_sc, 0 título aberto de INSS/IRRF.
 import { somarDias } from "../_shared/hoje-sp.ts";
+import { expandirRecorrenteDeno } from "./recorrente.ts";
 
 /** Empresa que paga a folha do grupo (decisão do founder, 26/11). */
 export const EMPRESA_FOLHA_CENTRAL = "colacor_sc";
@@ -34,8 +41,9 @@ export const FOLHA_ATRASO_MAX_DIAS = 30;
 
 export const LINHAS_FOLHA = ["op_pessoal"] as const;
 export const LINHAS_TRIBUTO = ["op_impostos", "op_impostos_lucro"] as const;
-/** Linhas do mapa que a engine lê (o resto do mapa é do DFC). */
-export const LINHAS_MAPA_NCG = [...LINHAS_FOLHA, ...LINHAS_TRIBUTO] as const;
+/** Famílias do plano Omie do grupo onde vivem folha e tributos — só para ACUSAR código fora do mapa. */
+const FAMILIAS_FOLHA = ["2.03."];
+const FAMILIAS_TRIBUTO = ["2.04.", "2.06."];
 
 export type LinhaMapa = { omie_codigo: string; fluxo_linha: string };
 export type TituloCp = {
@@ -44,7 +52,7 @@ export type TituloCp = {
   categoria_codigo: string | null;
   data_vencimento: string | null;
 };
-export type RecorrenteFolha = { valor: number; tipo: string; is_folha: boolean; inicio: string; fim: string | null };
+export type RecorrenteFolha = { valor: number; tipo: string; is_folha: boolean; dia_do_mes: number; inicio: string; fim: string | null };
 
 export type PcoNcg = {
   cp_fornecedor: number;
@@ -53,6 +61,8 @@ export type PcoNcg = {
   fontes: { folha: boolean; tributos: boolean };
   /** Títulos de folha abertos FORA da janela que ficaram em cp_fornecedor (contagem). */
   folha_fora_da_janela: { vencidos_alem_do_limite: number; a_vencer_depois: number; sem_vencimento: number };
+  /** Títulos abertos com código das famílias de folha/tributos AUSENTE do mapa da empresa (contagem). */
+  fora_do_mapa: { folha: number; tributos: number };
   motivos: string[];
 };
 
@@ -60,6 +70,7 @@ export function classificarPcoNcg(entrada: {
   company: string;
   hoje: string;
   cps: TituloCp[];
+  /** O mapa INTEIRO da empresa (todas as linhas de fluxo): ausência de código é sinal de mapa incompleto. */
   mapa: LinhaMapa[];
   adiantamentoCodigos: string[];
   recorrentes: RecorrenteFolha[];
@@ -80,12 +91,17 @@ export function classificarPcoNcg(entrada: {
   let titulosTributo = 0;
   let titulosFolha = 0;
   const fora = { vencidos_alem_do_limite: 0, a_vencer_depois: 0, sem_vencimento: 0 };
+  const foraDoMapa = { folha: 0, tributos: 0 };
 
   for (const c of cps) {
     if (!aberto(c.status_titulo) || !(c.saldo > 0)) continue;
     const cod = c.categoria_codigo;
     if (cod && adiantamentoCodigos.includes(cod)) continue; // ACO (ou fora), nunca PCO — como na v2.6
     const linha = cod ? linhaDe.get(cod) : undefined;
+    if (cod && linha === undefined) {
+      if (FAMILIAS_FOLHA.some((f) => cod.startsWith(f))) foraDoMapa.folha++;
+      else if (FAMILIAS_TRIBUTO.some((f) => cod.startsWith(f))) foraDoMapa.tributos++;
+    }
     if (ehTributo(linha)) {
       tributos_a_pagar += c.saldo;
       titulosTributo++;
@@ -106,7 +122,7 @@ export function classificarPcoNcg(entrada: {
   }
 
   const folhaRecorrente = entrada.recorrentes
-    .filter((e) => e.is_folha && e.tipo === "saida" && e.inicio <= fimJanela && (e.fim == null || e.fim >= hoje))
+    .filter((e) => e.is_folha && e.tipo === "saida" && expandirRecorrenteDeno(e, hoje, fimJanela).length > 0)
     .reduce((s, e) => s + e.valor, 0);
   // ERP vence: com CP de folha na janela, o recorrente só completa (max); os CPs já saíram de cp_fornecedor.
   const folha_30d = folhaCp > 0 ? Math.max(folhaCp, folhaRecorrente) : folhaRecorrente;
@@ -114,8 +130,8 @@ export function classificarPcoNcg(entrada: {
   const mapaTemFolha = entrada.mapa.some((m) => ehFolha(m.fluxo_linha));
   const folhaCentralizadaFora = company !== EMPRESA_FOLHA_CENTRAL && mapaTemFolha;
   const fontes = {
-    folha: titulosFolha > 0 || folhaRecorrente > 0 || folhaCentralizadaFora,
-    tributos: titulosTributo > 0,
+    folha: (titulosFolha > 0 || folhaRecorrente > 0 || folhaCentralizadaFora) && foraDoMapa.folha === 0 && fora.sem_vencimento === 0,
+    tributos: titulosTributo > 0 && foraDoMapa.tributos === 0,
   };
 
   const motivos: string[] = [];
@@ -124,12 +140,21 @@ export function classificarPcoNcg(entrada: {
       `${fora.vencidos_alem_do_limite} título(s) de folha vencido(s) há mais de ${FOLHA_ATRASO_MAX_DIAS} dias ficam em CP fornecedor, fora da reserva de folha.`,
     );
   }
-  if (!fontes.folha) {
+  if (foraDoMapa.folha > 0) {
+    motivos.push(`${foraDoMapa.folha} título(s) aberto(s) com código de pessoal fora do mapa de fluxo: a folha não é medida até o mapa cobrir o código.`);
+  }
+  if (foraDoMapa.tributos > 0) {
+    motivos.push(`${foraDoMapa.tributos} título(s) aberto(s) com código de impostos fora do mapa de fluxo: os tributos não são medidos até o mapa cobrir o código.`);
+  }
+  if (fora.sem_vencimento > 0) {
+    motivos.push(`${fora.sem_vencimento} título(s) de folha sem vencimento: a folha não é medida.`);
+  }
+  if (!fontes.folha && foraDoMapa.folha === 0 && fora.sem_vencimento === 0) {
     motivos.push("Folha dos próximos 30 dias sem fonte (nenhum título de pessoal na janela nem recorrente): o saldo de tesouraria não desconta folha.");
   }
-  if (!fontes.tributos) {
+  if (!fontes.tributos && foraDoMapa.tributos === 0) {
     motivos.push("Tributos a pagar sem fonte (nenhum título aberto de impostos no mapa da empresa).");
   }
 
-  return { cp_fornecedor, folha_30d, tributos_a_pagar, fontes, folha_fora_da_janela: fora, motivos };
+  return { cp_fornecedor, folha_30d, tributos_a_pagar, fontes, folha_fora_da_janela: fora, fora_do_mapa: foraDoMapa, motivos };
 }

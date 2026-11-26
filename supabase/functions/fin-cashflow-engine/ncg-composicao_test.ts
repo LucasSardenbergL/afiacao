@@ -52,9 +52,13 @@ const MAPA_PADRAO = [
   { omie_codigo: "2.03.98", fluxo_linha: "op_pessoal" },
   { omie_codigo: "2.06.99", fluxo_linha: "op_impostos" },
   { omie_codigo: "2.06.05", fluxo_linha: "op_impostos_lucro" },
+  // Linhas que a NCG não usa, mas que provam o código MAPEADO (ausência = mapa incompleto).
+  { omie_codigo: "2.06.50", fluxo_linha: "op_impostos_parcelamento" },
+  { omie_codigo: "2.05.01", fluxo_linha: "op_fornecedores" },
 ];
-let MAPA: unknown = MAPA_PADRAO;
-let MAPA_FALHA = false;
+// Mapa POR EMPRESA: o falso só devolve a linha da empresa pedida em `company=eq.` (prova o filtro).
+let MAPAS: Record<string, unknown> = {};
+let MAPA_FALHA: "nao" | "timeout" | "corpo-nulo" = "nao";
 const EVENTOS_PADRAO = [
   { id: "rec-folha", descricao: "Folha", valor: 60000, tipo: "saida", categoria_dre: "pessoal", is_folha: true, dia_do_mes: 5, inicio: "2025-01-01", fim: null },
 ];
@@ -119,11 +123,11 @@ h.responderForaDoGate(async (req) => {
     if (caminho === "fin_contas_pagar") return paginar(CPS, url);
     if (caminho === "fin_config_cashflow") return json([CONFIG]);
     if (caminho === "fin_categoria_fluxo_mapping") {
-      if (MAPA_FALHA) return json({ code: "57014", message: "canceling statement due to statement timeout" }, 500);
-      // A engine pede só as linhas de folha/tributos (`fluxo_linha=in.(...)`): o falso respeita o filtro.
-      const f = url.searchParams.get("fluxo_linha") ?? "";
-      const pedidas = f.startsWith("in.(") ? f.slice(4, -1).split(",") : null;
-      return json((MAPA as Array<{ fluxo_linha: string }>).filter((m) => !pedidas || pedidas.includes(m.fluxo_linha)));
+      if (MAPA_FALHA === "timeout") return json({ code: "57014", message: "canceling statement due to statement timeout" }, 500);
+      if (MAPA_FALHA === "corpo-nulo") return json(null);
+      const empresa = (url.searchParams.get("company") ?? "").replace(/^eq\./, "");
+      const linhas = (MAPAS[empresa] ?? []) as unknown[];
+      return json(linhas.slice(0, Number(url.searchParams.get("limit") ?? linhas.length)));
     }
     if (caminho === "fin_alertas") return json([]);
     if (caminho in TABELAS) return json(TABELAS[caminho]);
@@ -145,18 +149,19 @@ h.responderForaDoGate(async (req) => {
 });
 
 const URL_EDGE = `${ENV_TESTE.SUPABASE_URL}/functions/v1/fin-cashflow-engine`;
-type Cenario = { cps?: typeof CPS; mapa?: unknown; eventos?: unknown[]; company?: string };
+type Cenario = { cps?: typeof CPS; mapa?: unknown; mapas?: Record<string, unknown>; eventos?: unknown[]; company?: string };
 async function chamar(estoqueGiro: unknown, cen: Cenario = {}) {
   RPCS.fin_estoque_giro_valor = estoqueGiro;
   CPS = cen.cps ?? CPS_PADRAO;
-  MAPA = cen.mapa ?? MAPA_PADRAO;
+  const empresa = cen.company ?? "colacor_sc";
+  MAPAS = cen.mapas ?? { [empresa]: cen.mapa ?? MAPA_PADRAO };
   TABELAS.fin_eventos_recorrentes = cen.eventos ?? EVENTOS_PADRAO;
   snapshots.length = 0;
   h.limpar();
   const res = await handler(new Request(URL_EDGE, {
     method: "POST",
     headers: { "content-type": "application/json", "x-cron-secret": ENV_TESTE.CRON_SECRET },
-    body: JSON.stringify({ company: cen.company ?? "colacor_sc", cenario: "realista", save_snapshot: true }),
+    body: JSON.stringify({ company: empresa, cenario: "realista", save_snapshot: true }),
   }));
   return { res, corpo: await res.json() as Record<string, unknown> };
 }
@@ -196,6 +201,15 @@ const OBEN_MAPA_SEM_PESSOAL = await rodar(ESTOQUE_GIRO, {
   company: "oben", cps: SO_FORA_DA_JANELA, eventos: [],
   mapa: MAPA_PADRAO.filter((m) => m.fluxo_linha !== "op_pessoal"),
 });
+// Mapa só da OUTRA empresa: a oben não pode herdar o mapa da colacor_sc (prova o filtro de empresa).
+const MAPA_DE_OUTRA_EMPRESA = await rodar(ESTOQUE_GIRO, { company: "oben", mapas: { colacor_sc: MAPA_PADRAO } });
+// Mapa incompleto (achado Codex v2.7): código de pessoal (hora extra) e de impostos (ISS) do plano, fora do mapa.
+const FORA_DO_MAPA_FOLHA = await rodar(ESTOQUE_GIRO, { cps: [...CPS_PADRAO, cp(20, somarDias(HOJE, 3), 4000, "2.03.89")] });
+const FORA_DO_MAPA_TRIBUTO = await rodar(ESTOQUE_GIRO, { cps: [...CPS_PADRAO, cp(21, somarDias(HOJE, 3), 2000, "2.06.07")] });
+// Folha sem vencimento na oben (folha centralizada): posição desconhecida não vira zero medido.
+const FOLHA_SEM_VENC_OBEN = await rodar(ESTOQUE_GIRO, {
+  company: "oben", eventos: [], cps: [...SO_FORA_DA_JANELA, { ...cp(22, HOJE, 40000, "2.03.01"), data_vencimento: null as unknown as string }],
+});
 
 type NcgResposta = {
   aco: { cr_aberto: number; estoque: number | null; adiantamentos: number };
@@ -211,7 +225,7 @@ const composicao = (s: Record<string, unknown>) => ({
 Deno.test("controle: a coluna ncg (total) do snapshot = ncg.valor da resposta", () => {
   for (const [nome, r] of [
     ["completa", COMPLETA], ["parcial", PARCIAL], ["mapa vazio", MAPA_VAZIO], ["tributo só pago", TRIBUTO_SO_PAGO],
-    ["sem folha sc", SEM_FOLHA_SC], ["sem folha oben", SEM_FOLHA_OBEN],
+    ["sem folha sc", SEM_FOLHA_SC], ["sem folha oben", SEM_FOLHA_OBEN], ["fora do mapa", FORA_DO_MAPA_FOLHA],
   ] as const) {
     igual(r.snapshot.ncg, ncgDe(r).valor, `ncg do snapshot (${nome})`);
   }
@@ -245,7 +259,8 @@ Deno.test("snapshot sem estoque: ncg_estoque NULL (nunca 0), as outras 5 medidas
 });
 
 Deno.test("nada conta duas vezes: PCO = Σ CP aberto não-adiantamento (o mapa só redistribui)", () => {
-  // Com o CP de folha ≥ recorrente, o max não acrescenta nada: o total do PCO é o mesmo da v2.6.
+  // Com o CP de folha ≥ recorrente, o max não acrescenta nada. (O controle MAPA_VAZIO roda sem recorrente: com
+  // ele, a v2.6 somava o recorrente POR CIMA do CP de folha que não enxergava — prod tem 0 recorrente de folha.)
   const soma = CPS_PADRAO.filter((c) => c.categoria_codigo !== "2.01.98").reduce((s, c) => s + c.saldo, 0);
   igual(Math.round(ncgDe(COMPLETA).pco.total * 100), Math.round(soma * 100), "pco.total (completa)");
   igual(Math.round(ncgDe(MAPA_VAZIO).pco.total * 100), Math.round(soma * 100), "pco.total (mapa vazio)");
@@ -293,16 +308,39 @@ Deno.test("folha centralizada sem código de pessoal no mapa da empresa: zero N�
   igual(composicao(OBEN_MAPA_SEM_PESSOAL.snapshot), NAO_MEDIDA, "colunas ncg_* (oben sem pessoal no mapa)");
 });
 
-Deno.test("mapa ilegível (timeout): a engine LANÇA — nunca grava composição a partir de leitura falha", async () => {
-  MAPA_FALHA = true;
-  try {
-    const { res, corpo } = await chamar(ESTOQUE_GIRO);
-    igual(res.status, 500, "status com o mapa ilegível");
-    igual(snapshots.length, 0, "snapshot gravado com o mapa ilegível");
-    igual(JSON.stringify(corpo).includes("fin_categoria_fluxo_mapping"), true, "erro não nomeia a leitura");
-  } finally {
-    MAPA_FALHA = false;
+Deno.test("mapa ilegível (timeout, corpo nulo, página cheia): a engine LANÇA — nunca grava composição", async () => {
+  const cheio = Array.from({ length: 1000 }, (_, i) => ({ omie_codigo: `9.99.${i}`, fluxo_linha: "op_despesas" }));
+  const casos: Array<[string, typeof MAPA_FALHA, Cenario]> = [
+    ["timeout", "timeout", {}], ["corpo nulo", "corpo-nulo", {}], ["truncado", "nao", { mapa: cheio }],
+  ];
+  for (const [nome, falha, cen] of casos) {
+    MAPA_FALHA = falha;
+    try {
+      const { res, corpo } = await chamar(ESTOQUE_GIRO, cen);
+      igual(res.status, 500, `status (${nome})`);
+      igual(snapshots.length, 0, `snapshot gravado (${nome})`);
+      igual(JSON.stringify(corpo).includes("fin_categoria_fluxo_mapping"), true, `erro não nomeia a leitura (${nome})`);
+    } finally {
+      MAPA_FALHA = "nao";
+    }
   }
+});
+
+Deno.test("mapa é POR EMPRESA: a oben não herda o mapa da colacor_sc", () => {
+  igual(composicao(MAPA_DE_OUTRA_EMPRESA.snapshot), NAO_MEDIDA, "colunas ncg_* (mapa de outra empresa)");
+});
+
+Deno.test("mapa incompleto: código de pessoal/impostos fora do mapa → parcela não atestada, composição não medida", () => {
+  igual(composicao(FORA_DO_MAPA_FOLHA.snapshot), NAO_MEDIDA, "colunas ncg_* (pessoal fora do mapa)");
+  igual(composicao(FORA_DO_MAPA_TRIBUTO.snapshot), NAO_MEDIDA, "colunas ncg_* (imposto fora do mapa)");
+  const motivos = (FORA_DO_MAPA_FOLHA.corpo.confianca_dados as { motivos: string[] }).motivos;
+  igual(motivos.some((m) => m.startsWith("1 título(s) aberto(s) com código de pessoal fora do mapa")), true, "motivo");
+  // O título fora do mapa continua no PCO (cp_fornecedor): só a composição deixa de ser afirmada.
+  igual(Math.round(ncgDe(FORA_DO_MAPA_FOLHA).pco.cp_fornecedor * 100), Math.round((CP_FORNECEDOR + 4000) * 100), "cp_fornecedor");
+});
+
+Deno.test("folha sem vencimento na oben: não vira zero medido", () => {
+  igual(composicao(FOLHA_SEM_VENC_OBEN.snapshot), NAO_MEDIDA, "colunas ncg_* (folha sem vencimento)");
 });
 
 // ── Helper puro ───────────────────────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ const MAPA = [
   { omie_codigo: "2.06.01", fluxo_linha: "op_impostos" },
   { omie_codigo: "2.06.05", fluxo_linha: "op_impostos_lucro" },
   { omie_codigo: "2.06.50", fluxo_linha: "op_impostos_parcelamento" },
+  { omie_codigo: "2.05.01", fluxo_linha: "op_fornecedores" },
 ];
 const rodar = (cps: TituloCp[], extra: Partial<Parameters<typeof classificarPcoNcg>[0]> = {}) =>
   classificarPcoNcg({ company: "colacor_sc", hoje: HOJE, cps, mapa: MAPA, adiantamentoCodigos: ["2.01.98"], recorrentes: [], aberto, ...extra });
@@ -64,12 +65,16 @@ Deno.test("título não aberto ou sem saldo não entra em balde nenhum", () => {
   igual([r.cp_fornecedor, r.tributos_a_pagar, r.fontes.tributos], [0, 0, false], "baldes e fonte");
 });
 
-Deno.test("recorrente de folha: só vigente; o CP da janela vence (max)", () => {
-  const rec = (fim: string | null, inicio = "2025-01-01") => ({ valor: 40, tipo: "saida", is_folha: true, inicio, fim });
-  igual(rodar([], { recorrentes: [rec(null)] }).folha_30d, 40, "vigente sem fim");
-  igual(rodar([], { recorrentes: [rec(HOJE)] }).folha_30d, 40, "termina hoje");
+Deno.test("recorrente de folha: só com OCORRÊNCIA em [hoje, hoje+30]; o CP da janela vence (max)", () => {
+  const rec = (fim: string | null, inicio = "2025-01-01", dia = 5) =>
+    ({ valor: 40, tipo: "saida", is_folha: true, dia_do_mes: dia, inicio, fim });
+  igual(rodar([], { recorrentes: [rec(null)] }).folha_30d, 40, "vigente sem fim (ocorre 05/12)");
+  igual(rodar([], { recorrentes: [rec("2026-12-05")] }).folha_30d, 40, "termina no dia da ocorrência");
+  // Achado Codex v2.7: vigente HOJE, mas a última ocorrência foi 05/11 e a de 05/12 já está fora da vigência.
+  igual(rodar([], { recorrentes: [rec(HOJE)] }).folha_30d, 0, "termina hoje, sem ocorrência na janela");
   igual(rodar([], { recorrentes: [rec(somarDias(HOJE, -1))] }).folha_30d, 0, "encerrado ontem");
   igual(rodar([], { recorrentes: [rec(null, somarDias(HOJE, 31))] }).folha_30d, 0, "começa depois da janela");
+  igual(rodar([], { recorrentes: [rec(null, "2025-01-01", 26)] }).folha_30d, 40, "ocorre hoje");
   igual(rodar([t(somarDias(HOJE, 1), 100, "2.03.01")], { recorrentes: [rec(null)] }).folha_30d, 100, "CP > recorrente");
 });
 
@@ -79,4 +84,23 @@ Deno.test("fonte da folha: colacor_sc exige título na janela ou recorrente; as 
   igual(rodar([], { company: "colacor" }).fontes.folha, true, "colacor vazia, mapa com pessoal");
   igual(rodar([], { company: "oben", mapa: MAPA.filter((m) => m.fluxo_linha !== "op_pessoal") }).fontes.folha, false, "oben sem pessoal no mapa");
   igual(rodar([t(somarDias(HOJE, 60), 1, "2.03.01")]).fontes.folha, false, "colacor_sc só com folha fora da janela");
+});
+
+Deno.test("mapa incompleto: código das famílias de folha/impostos fora do mapa → parcela não atestada", () => {
+  const folha = rodar([t(somarDias(HOJE, 3), 40, "2.03.89"), t(somarDias(HOJE, 3), 5, "2.06.01")], { company: "oben" });
+  igual([folha.fontes.folha, folha.fontes.tributos, folha.fora_do_mapa.folha], [false, true, 1], "pessoal fora do mapa");
+  igual(folha.cp_fornecedor, 40, "o título fora do mapa segue no PCO (cp_fornecedor)");
+  const trib = rodar([t(somarDias(HOJE, 3), 2, "2.06.07"), t(somarDias(HOJE, 3), 5, "2.06.01")], { company: "oben" });
+  igual([trib.fontes.folha, trib.fontes.tributos, trib.fora_do_mapa.tributos], [true, false, 1], "imposto fora do mapa");
+  const iss = rodar([t(somarDias(HOJE, 3), 2, "2.04.13"), t(somarDias(HOJE, 3), 5, "2.06.01")], { company: "oben" });
+  igual(iss.fontes.tributos, false, "2.04 (ISS/IPTU/IPVA) fora do mapa também acusa");
+  // Código fora do mapa FORA das famílias (ex.: despesa nova) não acusa nada: é fornecedor.
+  const outro = rodar([t(somarDias(HOJE, 3), 2, "2.07.33"), t(somarDias(HOJE, 3), 5, "2.06.01")], { company: "oben" });
+  igual([outro.fontes.folha, outro.fontes.tributos, outro.cp_fornecedor], [true, true, 2], "outra família");
+});
+
+Deno.test("folha sem vencimento: posição na janela desconhecida → não medida (também na empresa centralizada)", () => {
+  const r = rodar([t(null, 9, "2.03.01"), t(somarDias(HOJE, 3), 5, "2.06.01")], { company: "oben" });
+  igual([r.fontes.folha, r.folha_30d, r.cp_fornecedor], [false, 0, 9], "fonte e baldes");
+  igual(r.motivos.some((m) => m.startsWith("1 título(s) de folha sem vencimento")), true, "motivo");
 });
