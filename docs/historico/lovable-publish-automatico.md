@@ -171,6 +171,7 @@ O que mudou (só `scripts/` e docs):
   em `LIBERADO..HEAD`). `HEAD`, ramo e abreviado são ignorados com aviso. Comando novo:
   `bash scripts/lovable-publish.sh --liberar <sha40>` — valida contra a origin/main, mostra a main
   medida e as migrations cobertas, grava atômico (tmp + mv). Vale também para `LP_LIBERAR_SHA` do workflow.
+- **`liberar` cobre SÓ migration:** edge entre o ar e o liberado segue pelo ledger (a base das edges avança só por ar/piso/`LP_LIBERAR_SHA`) — o humano atesta "apliquei as migrations", não edge.
 - **Piso de camadas atestadas** (`$EST/piso`): toda decisão limpa (`PUBLICAR`, `JA_NO_AR`, `NADA` sem
   camada pendente) imprime `PISO=<main>` e o vigia grava. A base das camadas é a atestação mais nova
   ancestral de HEAD entre ar, piso e liberar — o PR de front seguinte a uma migration liberada não re-trava.

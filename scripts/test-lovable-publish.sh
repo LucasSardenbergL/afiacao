@@ -212,6 +212,12 @@ CENARIO=dec_edge_1;      semeia "$MIG" x; vigia; echo 1 > "$F/vigia/pendencias-$
 CENARIO=dec_edge_velho;  semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendencias-$EDGE"; touch -t 202001010000 "$F/vigia/pendencias-$EDGE"
                          decide 11 PRECISA_LEDGER "$EDGE"
 CENARIO=dec_edge_mec;    semeia "$MIG" x; vigia; echo 2 > "$F/vigia/pendencias-$EDGE"; decide 6 MECANICA "$EDGE"
+# liberar atesta SÓ migration: edge entre o ar e o liberado continua exigindo o ledger
+git checkout -q -b libedge "$FRONT2"; c supabase/functions/g/index.ts e2 >/dev/null; M2=$(c supabase/migrations/2_y.sql m2)
+F3=$(c src/z.ts f3); git checkout -q main
+CENARIO=dec_lib_nao_cobre_edge; semeia "$FRONT2" x; vigia; echo "$M2" > "$F/vigia/liberar"; decide 11 PRECISA_LEDGER "$F3"
+CENARIO=dec_lib_edge_ledger0;   semeia "$FRONT2" x; vigia; echo "$M2" > "$F/vigia/liberar"; echo 0 > "$F/vigia/pendencias-$F3"
+                                decide 0 PUBLICAR "$F3" && tem_dec "LIBERADO=ledger"
 # teste e doc de edge não são camada: só _test.ts/.md em supabase/functions + front → PUBLICAR
 git checkout -q -b edgeteste "$FRONT2"; c supabase/functions/f/x_test.ts t >/dev/null; c supabase/functions/f/README.md d >/dev/null
 ETESTE=$(c src/t.ts front3); git checkout -q main
@@ -247,6 +253,11 @@ s_lib_mig()  { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$MIG" > "$F/vi
 s_piso_mig() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$MIG" > "$F/vigia/piso"; }
 # shellcheck disable=SC2329
 s_nada()     { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; }
+# shellcheck disable=SC2329
+s_lib_edge() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo "$M2" > "$F/vigia/liberar"; }
+# liberar volta a cobrir edge → publica sem ledger
+# shellcheck disable=SC2016
+sabota_dec lib_edge 's/considera "\$LIB_ARQ" liberar 0/considera "$LIB_ARQ" liberar 1/' s_lib_edge 11 PRECISA_LEDGER "$F3"
 # ancestral → igualdade (o código de antes): o caso real volta a ficar RETIDO
 # shellcheck disable=SC2016
 sabota_dec ancestral 's/git merge-base --is-ancestor "\$s" "\$HEAD_SHA" 2>\/dev\/null ||/[ "$s" = "$HEAD_SHA" ] ||/' s_lib_mig 0 PUBLICAR "$FRONT2"

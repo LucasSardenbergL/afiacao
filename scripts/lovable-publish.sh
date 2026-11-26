@@ -55,7 +55,8 @@
 #   --decidir <sha>: a DECISÃO ÚNICA do vigia e do --esperar (sem API, sem chave, só LÊ o estado em
 #   $LP_ESTADO — default o diretório do vigia). É o --julgar + a política de liberação:
 #     - base das camadas = o mais novo, ancestral de <sha>, entre AR, `piso` (camadas já atestadas
-#       numa decisão anterior) e `liberar` (atestação humana) — só SHA de 40 hex resolvível;
+#       numa decisão anterior) e `liberar` (atestação humana — cobre SÓ migrations; edge é sempre do
+#       ledger a partir de ar/piso) — só SHA de 40 hex resolvível;
 #     - migration em base..<sha> → RETIDO (imprime `RETIDO=migration:<arq>` e o comando de liberação);
 #     - só edge → o ledger (`pendencias-<sha>` gravado pelo vigia, válido LP_CACHE_EDGE_MIN=15 min):
 #       0 = liberado · 1 = `RETIDO=edge:<arq>` · ausente/vencido = PRECISA_LEDGER (exit 11);
@@ -210,22 +211,28 @@ git merge-base --is-ancestor "$AR" "$HEAD_SHA" 2>/dev/null \
   || mecanica "NAO_ANCESTRAL: o ar (${AR:0:8}) não é ancestral de HEAD — reconciliar à mão"
 git diff --name-only "$AR" "$HEAD_SHA" > "$TMP/diff" 2>/dev/null || mecanica "DIFF_FALHOU ${AR:0:8}..${HEAD_SHA:0:8}"
 
-# ── 2. gate de ordem: camadas em base..HEAD, base = a atestação mais nova (ar, piso, liberar) ─────
-BASE=$AR; FONTE="ar"
-considera() {  # considera <texto> <fonte> — avança a BASE se for 40 hex, ancestral de HEAD e mais novo
+# ── 2. gate de ordem: camadas a partir da atestação mais nova ───────────────────────────────────
+# Duas bases: BASE (migrations) avança por piso, LP_LIBERAR_SHA e `liberar`; BASE_E (edges) só por
+# piso e LP_LIBERAR_SHA — o `liberar` do --decidir atesta "apliquei as migrations", não edge (edge
+# tem prova melhor: o ledger). Só SHA de 40 hex, ancestral de HEAD e mais novo que a base.
+BASE=$AR; FONTE="ar"; BASE_E=$AR
+considera() {  # considera <texto> <fonte> <cobre-edge 0|1>
   local s; s=$(sha40 "$1") || { echo "  liberar/$2 '$(printf '%s' "$1" | head -c 45)' ignorado: não é SHA de 40 hex resolvível"; return 0; }
   git merge-base --is-ancestor "$s" "$HEAD_SHA" 2>/dev/null || { echo "  liberar/$2 ${s:0:8} ignorado: não é ancestral de ${HEAD_SHA:0:8}"; return 0; }
-  git merge-base --is-ancestor "$BASE" "$s" 2>/dev/null && [ "$s" != "$BASE" ] && { BASE=$s; FONTE=$2; }
+  if [ "$s" != "$BASE" ] && git merge-base --is-ancestor "$BASE" "$s" 2>/dev/null; then BASE=$s; FONTE=$2; fi
+  if [ "$3" = 1 ] && [ "$s" != "$BASE_E" ] && git merge-base --is-ancestor "$BASE_E" "$s" 2>/dev/null; then BASE_E=$s; fi
   return 0
 }
-[ -n "${LP_LIBERAR_SHA:-}" ] && considera "$LP_LIBERAR_SHA" LP_LIBERAR_SHA
+[ -n "${LP_LIBERAR_SHA:-}" ] && considera "$LP_LIBERAR_SHA" LP_LIBERAR_SHA 1
 if [ "$DECIDIR" = 1 ]; then
-  [ -s "$ESTADO/piso" ] && considera "$(head -1 "$ESTADO/piso")" piso
+  [ -s "$ESTADO/piso" ] && considera "$(head -1 "$ESTADO/piso")" piso 1
   LIB_ARQ=$(head -1 "$ESTADO/liberar" 2>/dev/null || true)
-  [ -n "$LIB_ARQ" ] && considera "$LIB_ARQ" liberar
+  [ -n "$LIB_ARQ" ] && considera "$LIB_ARQ" liberar 0
 fi
-PEND=$(camadas "$BASE" "$HEAD_SHA") || mecanica "DIFF_FALHOU ${BASE:0:8}..${HEAD_SHA:0:8}"
-[ "$BASE" != "$AR" ] && echo "camadas atestadas até ${BASE:0:8} ($FONTE) — julgo ${BASE:0:8}..${HEAD_SHA:0:8}"
+CM=$(camadas "$BASE" "$HEAD_SHA") || mecanica "DIFF_FALHOU ${BASE:0:8}..${HEAD_SHA:0:8}"
+CE=$(camadas "$BASE_E" "$HEAD_SHA") || mecanica "DIFF_FALHOU ${BASE_E:0:8}..${HEAD_SHA:0:8}"
+PEND=$( { printf '%s\n' "$CM" | grep '^supabase/migrations/'; printf '%s\n' "$CE" | grep '^supabase/functions/'; } || true)
+[ "$BASE" != "$AR" ] && echo "migrations atestadas até ${BASE:0:8} ($FONTE)$([ "$BASE_E" != "$AR" ] && echo "; edges até ${BASE_E:0:8}") — ar=${AR:0:8}"
 
 # ── 3. há algo publicável? (antes do RETIDO: sem front novo, ninguém espera o Publish) ───────────
 if ! grep -qvE "$INERTE" "$TMP/diff"; then
@@ -235,10 +242,10 @@ if ! grep -qvE "$INERTE" "$TMP/diff"; then
 fi
 
 retido() {  # retido <tipo> <arquivo>
-  echo "Camadas no intervalo ${BASE:0:8}..${HEAD_SHA:0:8} (ar=${AR:0:8}; aplicar ANTES do Publish — DDL → edges):"
+  echo "Camadas pendentes até ${HEAD_SHA:0:8} (ar=${AR:0:8}, migrations desde ${BASE:0:8}, edges desde ${BASE_E:0:8}; aplicar ANTES do Publish — DDL → edges):"
   printf '%s\n' "$PEND" | sed 's/^/  - /'
   echo "Commits:"
-  git log --format='  - %h %s' "$BASE..$HEAD_SHA" -- supabase/migrations supabase/functions
+  git log --format='  - %h %s' "$BASE_E..$HEAD_SHA" -- supabase/migrations supabase/functions
   if [ "$1" = migration ]; then
     if [ -n "${LIB_ARQ:-}" ] && L=$(sha40 "$LIB_ARQ") && [ "$L" != "$HEAD_SHA" ]; then
       echo "  liberado para SHA antigo ${L:0:8} — migration(s) depois dele até ${HEAD_SHA:0:8}:"
@@ -257,7 +264,7 @@ if [ -n "$PEND" ]; then
   # só edge: o ledger deploy_atestacoes, pelo cache que o vigia grava (mesma validade para todos)
   CACHE="$ESTADO/pendencias-$HEAD_SHA"
   if [ -z "$(find "$CACHE" -mmin "-$CACHE_EDGE_MIN" 2>/dev/null)" ]; then
-    echo "  só edge em ${BASE:0:8}..${HEAD_SHA:0:8} (ar=${AR:0:8}); ledger sem leitura válida (< ${CACHE_EDGE_MIN} min) para ${HEAD_SHA:0:8}"
+    echo "  só edge em ${BASE_E:0:8}..${HEAD_SHA:0:8} (ar=${AR:0:8}); ledger sem leitura válida (< ${CACHE_EDGE_MIN} min) para ${HEAD_SHA:0:8}"
     fim 11 PRECISA_LEDGER
   fi
   case "$(head -1 "$CACHE")" in
