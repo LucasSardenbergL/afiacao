@@ -176,6 +176,17 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
     GRAVOU no pedido.
 - **Lacuna declarada (L6 do harness):** `contato_cliente_operacional('pedido', …)` trata o pedido de titular staff
   como leitura PRÓPRIA (`cid = v_uid`) e entrega sem ledger. Entra na 4b.
+- **No ar (2026-11-26):** PR #4225 mergeado (`566bccce3`).
+  - `20261126160000` aplicada pelo envelope (recibo #1484).
+  - O Publish já servia `__BUILD_SHA__=566bccce` antes do corte.
+  - `20261126170000` aplicada (recibo #1486).
+  - Validação por fora (psql-ro):
+    - view `invoker=off`/`barrier`, só `authenticated=r`;
+    - `customer_metrics_mv.document` fechado e `faturamento_90d` aberto;
+    - as 3 colunas de snapshot de `sales_orders` com `authenticated` sel=f e upd=t;
+    - contatos: PII sel=f e upd=t; `customer_user_id`/`created_by` sel=t e upd=f;
+    - `service_role` intacto.
+  - `audit:migrations` e `deriva:corpo:prod` rc=0.
 
 ## Fatia 4b — o que falta (não entra na 4a)
 - `contato_cliente_operacional`: o ramo "próprio" não pode valer para titular staff.
@@ -192,3 +203,5 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 - Unicidade de documento mediada no servidor (oráculo do UPDATE do próprio perfil) e `cliente_por_documento`.
 - Flag de equipe que sobrevive ao desligamento.
 - Troca de contato principal em 2 requisições, não atômica (Codex P1, pré-existente; 0 linhas hoje).
+- `customer_contacts`: `anon` ainda tem INSERT/DELETE de tabela (ACL `arwdDxtm` herdada; medido 2026-11-26).
+  Hoje só a RLS de escrita (exige staff) segura isso → revogar de `anon`.
