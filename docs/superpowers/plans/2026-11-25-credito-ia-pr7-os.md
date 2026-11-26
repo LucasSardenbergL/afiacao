@@ -74,3 +74,7 @@ Leitura do flag falhou → trata como **desligado** para o bloqueio (premissa 3:
 | P2 | método legado: decisão diz ilegível, Omie recebe à vista | resolvedor único para calendário e prazo máximo; sombra registra método recebido e condição aplicada |
 
 **Escopo resultante.** Este PR entrega a **sombra** da OS. O **bloqueio** só entra com P0-2/P0-3/P0-4 resolvidos (revisão server-side, RPC que resolve modo+decisão, transferência OS→título) — código de efetivo com P0 conhecido **não** vai para a main nem dormente.
+
+## 6. Decisão (2026-11-26): caminho B — só documento
+
+O banco de prod mostrou o canal de OS do app parado: 0 OS em 180 d, 0 linhas em `afiacao_os_envio`, 7 OS na vida. Os títulos da Colacor SC nascem no Omie e já entram na sombra do PR 5. As entregas 1–5 acima **não** são feitas agora. Registro, números, condição de retomada (query) e a alternativa C estão em `docs/historico/credito-os-afiacao-2026-11.md`.
