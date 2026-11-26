@@ -15,7 +15,7 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
   - Alerta: `credito_fila_alerta` + `private.credito_fila_alertar()` (pg_cron 15 min) reusando `public._push_enviar` → edge `enviar-push`. Estado verdadeiro: `sem_canal` ≠ `enfileirado`.
 - **Edge nova** `credito-fila-recomendar` (Anthropic direto, `MODELO_PADRAO`, prompt caching, tool-use não forçado, 5 itens por invocação, pg_cron 10 min, disparo só cron).
 - **Tela** `/credito/fila` (abas Pedidos reais · Sombra · Ligar por empresa), item "Fila de crédito" no menu Financeiro com contador, Cmd-K.
-- **Prova PG17** `db/test-credito-fila.sh`: 188 asserts (inclui 16 falsificações com controle verde), em `C` e `pt_BR.UTF-8`. O ledger do PR 5 entra como stub com as colunas lidas — trocar pela migration real quando o PR 5 mergear.
+- **Prova PG17** `db/test-credito-fila.sh`: 190 asserts (inclui 16 falsificações com controle verde), em `C` e `pt_BR.UTF-8`, aplicadas sobre as migrations REAIS do PR 5 (`20261125195900` + `20261125200000`).
 - **Codex** em duas rodadas (desenho e diff, gpt-6.2-astra high): o diff achou 1 P0 (a conta DECLARADA escolhia o flag) e 7 P1 (retry do mesmo 🟡 tornava o item indecidível; r2 registrada deixava r1 aprovável; a sombra do PR 5 mora em outra tabela; o front fabricava fila vazia/flag desligado; "IA aprovar com prazo menor" autorizava o prazo integral; orçamento da IA só por invocação; cron 401 sem `verify_jwt=false`). Todos corrigidos e provados (F14–F16).
 
 ## Lições
