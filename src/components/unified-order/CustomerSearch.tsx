@@ -22,7 +22,7 @@ interface CustomerSearchProps {
   loadingCustomer: boolean;
   validatingVendedor: boolean;
   vendedorDivergencias: string[];
-  /** 8.1: 'indisponivel' mostra o aviso com "Tentar de novo" (o envio fica bloqueado). */
+  /** 8.1: 'indisponivel' mostra "Tentar de novo"; 'divergente' (com ou sem lista) mostra "Revalidar". O envio fica bloqueado nos dois. */
   estadoVendedor?: EstadoVendedor;
   onRevalidarVendedor?: () => void;
   onSelectCustomer: (c: OmieCustomer) => void;
@@ -125,19 +125,29 @@ export function CustomerSearch({
                 </div>
               </div>
             )}
-            {vendedorDivergencias.length > 0 && (
-              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+            {(vendedorDivergencias.length > 0 || estadoVendedor === 'divergente') && (
+              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3" data-testid="vendedor-divergente">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                  <div>
+                  <div className="flex-1">
                     <p className="text-xs font-semibold text-destructive">Vendedor divergente entre contas Omie</p>
-                    <p className="text-xs text-muted-foreground mt-1">Corrija no Omie antes de prosseguir:</p>
-                    <ul className="text-xs mt-1 space-y-0.5">
-                      {vendedorDivergencias.map((d, i) => (
-                        <li key={i} className="text-destructive font-medium">• {d}</li>
-                      ))}
-                    </ul>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {vendedorDivergencias.length > 0
+                        ? 'Corrija no Omie antes de prosseguir:'
+                        : 'O Omie apontou divergência sem detalhar as contas. Corrija no Omie antes de prosseguir.'}
+                    </p>
+                    {vendedorDivergencias.length > 0 && (
+                      <ul className="text-xs mt-1 space-y-0.5">
+                        {vendedorDivergencias.map((d, i) => (
+                          <li key={i} className="text-destructive font-medium">• {d}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
+                  {/* r2 do Codex: corrigido no Omie, revalida sem descartar o carrinho (antes só "Trocar"). */}
+                  {onRevalidarVendedor && (
+                    <Button variant="outline" size="sm" onClick={onRevalidarVendedor}>Revalidar</Button>
+                  )}
                 </div>
               </div>
             )}
