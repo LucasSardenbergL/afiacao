@@ -103,12 +103,24 @@ const Auth = () => {
       if (signUpData.user) {
         const shouldAutoApprove = opts.isEmployee || !!opts.omieCliente;
 
-        await supabase.from('profiles').upsert({
+        // Onda D fatia 3: com o grant de COLUNA em profiles, `upsert` (ON CONFLICT DO UPDATE … EXCLUDED.email)
+        // exige SELECT nas colunas de contato e dá 42501 (provado em db/test-clientes-pii-fatia3-corte.sh).
+        // Cria se faltar (DO NOTHING) e preenche por UPDATE — o perfil pode já ter nascido pelo AuthContext.
+        const perfil = {
           user_id: signUpData.user.id, name: formData.name, email: formData.email,
           phone: formData.phone.replace(/\D/g, ''), document: normalizarDocumento(formData.document),
           customer_type: opts.isIndustrial ? 'industrial' : 'domestic',
           cnae: opts.cnae, is_employee: opts.isEmployee, is_approved: shouldAutoApprove,
-        }, { onConflict: 'user_id' });
+        };
+        const { error: erroCriarPerfil } = await supabase
+          .from('profiles').upsert(perfil, { onConflict: 'user_id', ignoreDuplicates: true });
+        const { error: erroPerfil } = erroCriarPerfil
+          ? { error: erroCriarPerfil }
+          : await supabase.from('profiles').update(perfil).eq('user_id', signUpData.user.id);
+        if (erroPerfil) {
+          toast.error('Conta criada, mas o cadastro não foi salvo', { description: erroPerfil.message });
+          return;
+        }
 
         await supabase.from('addresses').insert({
           user_id: signUpData.user.id, label: 'Principal', street: formData.street,

@@ -151,6 +151,7 @@ export function montarFilaCaca(
       rankFinal: i + 1,
       nome: linha?.nome ?? null,
       telefone: linha?.telefone ?? null,
+      telefoneOculto: linha?.contato_visivel === false,
       clienteUserId: linha?.cliente_user_id ?? null,
     };
   });

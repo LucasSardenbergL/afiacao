@@ -24344,6 +24344,7 @@ export type Database = {
           cidade_uf: string | null
           cliente_user_id: string | null
           compra_em_outra_empresa: boolean | null
+          contato_visivel: boolean | null
           documento: string | null
           empresa_alvo: string | null
           familias: string[] | null
@@ -24980,6 +24981,7 @@ export type Database = {
       v_grupo_contatos: {
         Row: {
           cidade: string | null
+          contato_visivel: boolean | null
           documento: string | null
           email: string | null
           empresa_omie: string | null
@@ -25232,6 +25234,16 @@ export type Database = {
           eh_pj: boolean | null
           email: string | null
           phone: string | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
+      v_perfil_equipe: {
+        Row: {
+          email: string | null
+          is_approved: boolean | null
+          is_employee: boolean | null
+          name: string | null
           user_id: string | null
         }
         Relationships: []
@@ -27002,6 +27014,10 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      cliente_por_documento: {
+        Args: { p_documentos: string[] }
+        Returns: string
+      }
       cliente_declarar_sucessao: {
         Args: {
           p_antigo_documento: string

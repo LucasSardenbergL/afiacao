@@ -32,6 +32,10 @@ emite() { if [ -n "$out" ]; then printf '%s' "$2" > "$out"; else printf '%s' "$2
 case "$url" in
   https://app.test/) [ -f "$F/fora" ] && exit 22; emite 200 '<script src="/assets/index-AbC123.js"></script>' ;;
   https://app.test/assets/index-AbC123.js)
+    # $F/vira_em: o ar vira depois de N leituras do entry SEM POST (o Publish do vigia, visto de fora)
+    if [ -f "$F/vira_em" ]; then
+      n=$(cat "$F/vira_em"); if [ "$n" -le 0 ]; then cp "$F/vira" "$F/ar"; else echo $((n - 1)) > "$F/vira_em"; fi
+    fi
     if [ -f "$F/atraso" ] && grep -q '^POST' "$F/log"; then
       n=$(cat "$F/atraso"); if [ "$n" -le 0 ]; then cp "$F/vira" "$F/ar"; else echo $((n - 1)) > "$F/atraso"; fi
     fi
@@ -66,7 +70,7 @@ roda() {
   if [ "$rc" = "$esp" ] && printf '%s' "$out" | tail -1 | grep -qx "VEREDITO=$ver"; then return 0; fi
   echo "FALHOU [$CENARIO]: esperado rc=$esp $ver, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; fail=1; return 1
 }
-semeia() { rm -f "$F"/*; echo "$1" > "$F/ar"; echo "$2" > "$F/ws"; echo 202 > "$F/post_code"; echo completed > "$F/dep_status"; }
+semeia() { rm -rf "${F:?}"/*; echo "$1" > "$F/ar"; echo "$2" > "$F/ws"; echo 202 > "$F/post_code"; echo completed > "$F/dep_status"; }
 sem_post() { if grep -q '^POST' "$F/log"; then echo "FALHOU [$CENARIO]: fez POST"; fail=1; fi; }
 
 # --julgar: o tick do vigia local — sem chave e sem tocar a API; PUBLICAR só onde o modo cheio publicaria
@@ -118,6 +122,81 @@ else
   # subshell: o `fail=1` que o roda grava ao divergir não pode vazar para o placar deste controle
   if ( roda 10 RETIDO "$FRONT2" "$sab" ) >/dev/null 2>&1; then echo "FALHOU [$CENARIO]: sabotado ainda reteve"; fail=1; fi
 fi
+
+# ── --esperar <sha>: observa o ar, nunca publica nem toca a API ─────────────────────────────────
+# espera <rc> <última-linha (regex -x)> <sha> [alvo] — origin/main = FRONT2 aqui (restaurado acima)
+espera() { local esp="$1" ult="$2" sha="$3" alvo="${4:-$ALVO}" out rc; : > "$F/log"
+  out=$(PATH="$BIN:$PATH" LP_FAKE="$F" APP_URL=https://app.test LOVABLE_API_BASE=https://api.test \
+    LP_SLEEP=true LP_ESPERAR_PRAZO=50 LP_ESPERAR_INTERVALO=10 LP_VIGIA_ESTADO="$F/vigia" \
+    env -u LOVABLE_API_KEY bash "$alvo" --esperar "$sha" 2>&1); rc=$?
+  if [ "$rc" = "$esp" ] && printf '%s' "$out" | tail -1 | grep -qxE "$ult"; then
+    if grep -qE '^POST|api\.test' "$F/log"; then echo "FALHOU [$CENARIO]: --esperar tocou a API"; fail=1; return 1; fi
+    return 0; fi
+  echo "FALHOU [$CENARIO]: esperado rc=$esp /$ult/, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; fail=1; return 1; }
+leituras() { grep -c 'index-AbC123.js' "$F/log"; }
+vigia() { mkdir -p "$F/vigia"; }
+
+# ar já contém (ancestralidade, não igualdade): ar=FRONT2 ⊇ FRONT
+CENARIO=esperar_ja;      semeia "$FRONT2" x; espera 0 "NO_AR=$FRONT2" "$FRONT"
+# passa a conter após N leituras: migration liberada à mão no vigia → espera, o ar vira, sai 0
+CENARIO=esperar_vira;    semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/liberar"
+                         echo "$FRONT2" > "$F/vira"; echo 4 > "$F/vira_em"
+                         espera 0 "NO_AR=$FRONT2" "$FRONT" \
+                           && { [ "$(leituras)" -ge 5 ] || { echo "FALHOU [$CENARIO]: saiu sem esperar ($(leituras) leituras)"; fail=1; }; }
+# timeout: liberado, mas o ar nunca vira
+CENARIO=esperar_timeout; semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/liberar"; espera 30 TIMEOUT "$FRONT"
+# RETIDO por migration de OUTRO PR no intervalo ar..main (FRONT não tem migration; a main tem)
+CENARIO=esperar_retido_mig;  semeia "$BASE" x; espera 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT"
+# só edge: ledger diz não servida → RETIDO; diz servida → espera (o vigia libera) até o prazo
+git checkout -q -b edge "$FRONT2"; EDGE=$(c supabase/functions/f/index.ts edge); git checkout -q main
+git push -q origin "$EDGE:refs/heads/main" -f 2>/dev/null
+CENARIO=esperar_retido_edge; semeia "$MIG" x; vigia; echo 1 > "$F/vigia/pendencias-$EDGE"
+                             espera 10 'RETIDO=edge:supabase/functions/f/index\.ts' "$FRONT2"
+CENARIO=esperar_edge_servida; semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendencias-$EDGE"; espera 30 TIMEOUT "$FRONT2"
+# main só com inerte além do ar → não haverá Publish: sai 0 sem esperar o prazo
+git push -q origin "$DOC:refs/heads/main" -f 2>/dev/null
+CENARIO=esperar_inerte;  semeia "$FRONT" x; espera 0 "NADA_A_PUBLICAR=$FRONT" "$DOC"
+git push -q origin "$FRONT2:refs/heads/main" -f 2>/dev/null
+CENARIO=esperar_fora_main; semeia "$BASE" x; espera 6 'MECANICA=FORA_DA_MAIN:.*' "$EDGE"
+CENARIO=esperar_sha_ruim;  semeia "$BASE" x; espera 6 'MECANICA=SHA_NAO_RESOLVE:.*' deadbeef
+CENARIO=esperar_ar_fora;   semeia "$BASE" x; touch "$F/fora"; espera 6 'MECANICA=AR_ILEGIVEL:.*' "$FRONT"
+# carimbo de um commit que este clone não tem (merge recente): fetch e resolve
+# `-b main`: o HEAD do bare segue o init.defaultBranch da máquina (master no CI) — sem isto o r2
+# commita num ramo órfão e o push para main é recusado (non-ff)
+git clone -q -b main "$base/origin.git" "$base/r2" 2>/dev/null
+NOVO=$(cd "$base/r2" && git config user.email t@t && git config user.name t && c src/n.ts novo)
+(cd "$base/r2" && git push -q origin HEAD:refs/heads/main 2>/dev/null) \
+  || { echo "FALHOU [esperar_fetch]: o push do NOVO para o origin falhou"; fail=1; }
+git rev-parse -q --verify "$NOVO^{commit}" >/dev/null && { echo "FALHOU [esperar_fetch]: o clone já tinha o NOVO"; fail=1; }
+CENARIO=esperar_fetch;   semeia "$NOVO" x; espera 0 "NO_AR=$NOVO" "$FRONT2"
+
+# Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
+# numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.
+sabota() { # sabota <nome> <sed> <semeador> <rc> <regex> <sha> — o semeador roda antes de CADA lado
+  local nome="$1" expr="$2" sem="$3" s="$base/sab-$1.sh"; shift 3
+  sed "$expr" "$ALVO" > "$s"
+  if cmp -s "$ALVO" "$s"; then echo "FALHOU [sab-$nome]: a sabotagem não pegou (o sed não casou)"; fail=1; return; fi
+  CENARIO="controle-$nome"; "$sem"; espera "$@" || return       # controle: alvo real, verde
+  "$sem"; if ( espera "$@" "$s" ) >/dev/null 2>&1; then echo "FALHOU [sab-$nome]: cópia sabotada ainda passou"; fail=1; fi
+}
+git push -q origin "$FRONT2:refs/heads/main" -f 2>/dev/null
+# shellcheck disable=SC2329  # semeadores chamados indiretamente pelo sabota
+s_contem() { semeia "$FRONT2" x; }
+# shellcheck disable=SC2329
+s_retido() { semeia "$BASE" x; }
+# shellcheck disable=SC2329
+s_vira()   { semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/liberar"; echo "$FRONT2" > "$F/vira"; echo 4 > "$F/vira_em"; }
+# ancestralidade → igualdade: ar=FRONT2 já contém FRONT, mas a cópia não vê
+# shellcheck disable=SC2016  # $PEDIDO/$AR/$MIG são LITERAIS do fonte sabotado
+sabota ancestral 's/git merge-base --is-ancestor "\$PEDIDO" "\$AR" 2>\/dev\/null \&\& sai 0/[ "$PEDIDO" = "$AR" ] \&\& sai 0/' \
+  s_contem 0 "NO_AR=$FRONT2" "$FRONT"
+# RETIDO por migration ignorado → a cópia espera até o TIMEOUT
+# shellcheck disable=SC2016
+sabota retido 's/|| sai 10 "RETIDO=migration:\$MIG"/|| true/' \
+  s_retido 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT"
+# o ar vira no meio da espera, mas a cópia lê o ar uma vez só → TIMEOUT
+# shellcheck disable=SC2016
+sabota rele 's/if AR=\$(ar_lido); then/if AR=${AR0:=$(ar_lido)}; then/' s_vira 0 "NO_AR=$FRONT2" "$FRONT"
 
 [ "$fail" = 0 ] && echo "test-lovable-publish: OK"
 exit "$fail"

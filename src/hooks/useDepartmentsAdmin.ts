@@ -18,9 +18,9 @@ export function useStaffUsersWithDept() {
   return useQuery<StaffUserRow[]>({
     queryKey: ['admin', 'departments', 'staff-users'],
     queryFn: async () => {
-      // 1. Pega profiles staff (não customer)
+      // 1. Pega profiles staff (não customer) — e-mail de colega só pelo diretório de equipe (onda D fatia 3)
       const { data: profiles, error } = await supabase
-        .from('profiles')
+        .from('v_perfil_equipe')
         .select('user_id, name, email, is_approved')
         .order('name', { ascending: true });
       if (error) throw error;

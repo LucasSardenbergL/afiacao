@@ -88,9 +88,11 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
       'public.get_defasagem_cliente': /^20261020233000_venda_cliente_repasse\.sql$/,
       // 20261020130000: as 3 views do universo recriadas com o corpo da prod + normalizar_documento() no documento
       // (CNPJ alfanumérico) — o filtro do universo é o MESMO; o juízo abaixo continua sobre o corpo novo.
-      'public.v_grupo_comercial': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
-      'public.v_caca_compradores': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
-      'public.v_caca_candidatos': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
+      // 20261125120000 (onda D fatia 3): as 3 recriadas de novo só para a chave fiscal/telefone sair de
+      // private.v_perfil_chaves_internas e o contato da v_perfil_contato — o filtro do universo é o MESMO.
+      'public.v_grupo_comercial': /^20261125120000_clientes_pii_fatia3_leitores_servidor\.sql$/,
+      'public.v_caca_compradores': /^20261125120000_clientes_pii_fatia3_leitores_servidor\.sql$/,
+      'public.v_caca_candidatos': /^20261125120000_clientes_pii_fatia3_leitores_servidor\.sql$/,
       // 20261104113000 (plano v5, lote 10): a régua foi para uma CTE e o UPDATE só escreve a linha que mudou — as
       // duas leituras de sales_orders seguem com o filtro do universo; o juízo abaixo continua sobre o corpo novo.
       'public.classificar_clientes_fornecedores': /^20261104113000_classificacao_diff_before_write\.sql$/,

@@ -204,6 +204,13 @@ export const DISPENSAS: Record<string, Dispensa> = {
   // `fin-valor-engine` e `fin-suggest-mapping` — saíram por decisão do founder: as quatro do
   // financeiro de leitura ganharam sonda. "Leitura pura" garante que chamar é barato, e é muda
   // sobre QUAL bundle responde — o argumento do `fin-valor-cockpit/versao.ts`.
+  mcp: {
+    motivo: 'leitura-pura',
+    porque:
+      'bundle AUTO-GERADO pelo @lovable.dev/mcp-js a partir de src/lib/mcp/ (versao.ts seria sobrescrito ' +
+      'pelo plugin no próximo build); as ferramentas só leem — zero escrita PostgREST e zero .rpc(). ' +
+      'Mexida na onda D fatia 3 (2026-11-25) só para ler contato pela v_perfil_contato.',
+  },
 };
 
 /**

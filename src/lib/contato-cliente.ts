@@ -98,6 +98,20 @@ export async function lerPerfisContato(ids: ReadonlyArray<string | null | undefi
   return new Map(linhas.map((l) => [l.user_id, l]));
 }
 
+/**
+ * Documento → user_id do cliente (IDENTIDADE), para staff — fatia 3. `profiles.document` não é mais
+ * legível pela API; quem tinha o documento em mãos (Omie, ligação) resolve o vínculo aqui. Recebe as
+ * variantes (limpa e crua), ignora vazias/repetidas; null = nenhum cadastro com esse documento.
+ * Erro LANÇA (nunca vira "cliente não vinculado").
+ */
+export async function clientePorDocumento(variantes: ReadonlyArray<string | null | undefined>): Promise<string | null> {
+  const docs = [...new Set(variantes.map((v) => (v ?? '').trim()).filter((v) => v !== ''))];
+  if (docs.length === 0) return null;
+  const { data, error } = await supabase.rpc('cliente_por_documento', { p_documentos: docs });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
 /** Contato mascarado de UM perfil (null = sem linha). */
 export async function lerPerfilContato(userId: string): Promise<PerfilContato | null> {
   const { data, error } = await supabase
