@@ -44,7 +44,7 @@
 | 4 | Edge `credito-ia-avaliar` (ficha → Claude tool-use → travas → proposta) + `/credito/limites` com aprovação em lote da 1ª leva | 1ª leva gerada para a carteira ativa; nada vigente sem aprovação | migration · edge · Publish |
 | 5 | Gate v2 em **modo sombra** (decisão + reserva simuladas) + sensores (concordância, faixa por motivo, tempo até decisão) + backtest IA × regra em safras vencidas | 2+ semanas de distribuição de faixas; backtest documentado | migration · edge · Publish |
 | 6 | Fila `/credito/fila` + recomendação assíncrona + alerta push ao Lucas (> 2 h) + enforcement da venda ligado | condições do spec §9.10 cumpridas e 1ª leva aprovada | migration · edge · Publish |
-| 7 | OS da Afiação no gate v2 (reserva no ponto de concessão, `submitOrder.ts:615`) | OS com prazo passa pelas 3 faixas | migration · edge · Publish |
+| 7 | OS da Afiação no gate v2 — **adiado até o canal ter uso** (2026-11-26: 0 OS do app em 180 d; o prazo da Colacor SC nasce no Omie e já entra na sombra do PR 5). Desenho, ponto de inserção (`omie-sync/index.ts` entre a resolução do cliente e `criarOrdemServicoOmie`) e condições de ligar em `docs/historico/credito-os-afiacao-2026-11.md` | retomar quando `db/medir-credito-os-canal.sql` §0 der `retomar_pr7 = t` (≥ 5 OS do app em 30 d) | só docs |
 | 8 | Painel de crédito (exposição, bloqueios, concordância, liberados que atrasaram) | leitura gestor/master | Publish |
 
 ---
