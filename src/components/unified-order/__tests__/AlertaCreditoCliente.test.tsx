@@ -49,6 +49,17 @@ describe('AlertaCreditoCliente', () => {
     expect(screen.queryByTestId('alerta-credito-cliente')).toBeNull();
     expect(screen.getByText(/Não foi possível consultar o crédito/)).toBeTruthy();
     expect(mockTrack).toHaveBeenCalledWith('venda.alerta_credito_erro', expect.objectContaining({ message: 'boom' }));
+    // Codex r1 (P0): a OS de Afiação não passa pelo gate de crédito — o aviso não promete conferência no envio.
+    expect(screen.queryByText(/servidor/)).toBeNull();
+  });
+
+  it('8.1: erro ao ATUALIZAR com saldo anterior → mantém o saldo e avisa a falha (Codex r1)', () => {
+    mockUseAlerta.mockReturnValue({ data: alerta(), error: new Error('refetch'), refetch: vi.fn() });
+    render(<AlertaCreditoCliente cliente={{ codigo_cliente: 111 }} />);
+    expect(screen.getByTestId('alerta-credito-cliente')).toBeTruthy();
+    expect(screen.getByText(/vencido há 60\+ dias/)).toBeTruthy();
+    expect(screen.getByTestId('alerta-credito-atualizacao-falhou')).toBeTruthy();
+    expect(screen.queryByTestId('alerta-credito-indisponivel')).toBeNull();
   });
 
   it('dado defasado mostra o aviso de sync velho', () => {

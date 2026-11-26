@@ -50,3 +50,9 @@ describe('8.1 — caminho de envio confere o vendedor ANTES da trava', () => {
     expect(pagina).toContain('estadoVendedor: h.estadoVendedor');
   });
 });
+
+describe('8.1 — a validação do vendedor tem prazo (Codex r1)', () => {
+  it('o invoke de validar_vendedor passa pelo comPrazo — pendurada não trava o envio em "validando"', () => {
+    expect(selecao).toMatch(/comPrazo\(supabase\.functions\.invoke\('omie-cliente', \{\s*body: \{ action: 'validar_vendedor'[\s\S]*?\}\), PRAZO_VALIDACAO_VENDEDOR_MS\)/);
+  });
+});

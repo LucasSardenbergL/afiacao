@@ -21,7 +21,7 @@ import {
 } from './ensure-helpers';
 import type { PrecosLocaisPorConta } from './precos-por-conta';
 import { resolverPrecosLocaisPorConta, type LinhaPrecoPraticado } from './precos-praticados';
-import { interpretarValidacaoVendedor, type EstadoVendedor } from './validacao-vendedor';
+import { comPrazo, interpretarValidacaoVendedor, PRAZO_VALIDACAO_VENDEDOR_MS, type EstadoVendedor } from './validacao-vendedor';
 import type {
   OmieCustomer,
   AddressData,
@@ -440,9 +440,10 @@ export function useCustomerSelection({
     let data: unknown = null;
     let error: unknown = null;
     try {
-      const r = await supabase.functions.invoke('omie-cliente', {
+      // Com prazo: pendurada, a chamada deixava `validando` para sempre (envio travado sem saída).
+      const r = await comPrazo(supabase.functions.invoke('omie-cliente', {
         body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
-      });
+      }), PRAZO_VALIDACAO_VENDEDOR_MS);
       data = r.data;
       error = r.error;
     } catch (err) {

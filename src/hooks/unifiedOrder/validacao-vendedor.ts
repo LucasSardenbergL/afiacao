@@ -43,3 +43,15 @@ export function mensagemBloqueioVendedor(estado: EstadoVendedor): string | null 
     default: return null;
   }
 }
+
+/** Prazo máximo da validação (Codex r1): uma chamada pendurada deixava o estado em `validando` — o envio
+ *  travado sem "Tentar de novo". Estourou → rejeita, e quem chama trata como `indisponivel`. */
+export const PRAZO_VALIDACAO_VENDEDOR_MS = 30_000;
+
+export function comPrazo<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const estouro = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`validação do vendedor sem resposta em ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([p, estouro]).finally(() => clearTimeout(timer));
+}

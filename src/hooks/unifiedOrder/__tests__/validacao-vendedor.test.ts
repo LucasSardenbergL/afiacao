@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
+  comPrazo,
   interpretarValidacaoVendedor,
   mensagemBloqueioVendedor,
   type EstadoVendedor,
@@ -44,5 +45,24 @@ describe('8.1 — validação do vendedor falha fechado (ausente ≠ consistente
     ['indisponivel', true],
   ])('%s bloqueia o envio? %s', (estado, bloqueia) => {
     expect(mensagemBloqueioVendedor(estado) !== null).toBe(bloqueia);
+  });
+});
+
+describe('8.1 — validação com prazo (Codex r1: pendurada travava o envio em "validando")', () => {
+  it('estoura o prazo → rejeita (vira indisponível em quem chama)', async () => {
+    vi.useFakeTimers();
+    try {
+      const nunca = new Promise<string>(() => {});
+      const p = comPrazo(nunca, 30_000);
+      const pega = expect(p).rejects.toThrow('sem resposta em 30s');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await pega;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resposta a tempo passa intacta', async () => {
+    await expect(comPrazo(Promise.resolve('ok'), 30_000)).resolves.toBe('ok');
   });
 });
