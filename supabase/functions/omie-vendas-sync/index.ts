@@ -20,12 +20,16 @@ import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
 import {
+  avisoPrevisaoEntregaPv,
   avisoPvReconciliado,
   classificarConsultaExclusao,
   classificarErroConsultaExclusao,
   compararCarrinhoPv,
+  compararPrevisaoEntregaPv,
+  type ComparacaoPrevisao,
   type ConsultaExclusao,
   edicaoBloqueadaPorPvDivergente,
+  payloadDoPvReconciliado,
   vereditoExclusaoNoOmie,
 } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
@@ -2330,6 +2334,10 @@ async function criarPedidoVenda(
   let omie_numero_pedido: string | number;
   let omie_response: unknown = null;
   let comparacaoPv: "igual" | "divergente" | "ilegivel" | null = null;
+  let comparacaoPrevisao: ComparacaoPrevisao | null = null;
+  // O que `sales_orders.omie_payload` guarda: o que FOI ao Omie. Reconciliado ⇒ o PV que o Omie TEM
+  // (PR 2.5): o payload deste envio foi recusado como duplicata e gravá-lo faria o local mentir.
+  let payloadGravado: Record<string, unknown> | null = payload;
   try {
     const result = await callOmieVendasApi(
       "produtos/pedido/",
@@ -2382,6 +2390,15 @@ async function criarPedidoVenda(
     omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
     omie_response = { reconciled: true, consulta };
     comparacaoPv = compararCarrinhoPv(items, consulta);
+    comparacaoPrevisao = compararPrevisaoEntregaPv(previsaoEntrega, consulta);
+    payloadGravado = payloadDoPvReconciliado(consulta);
+  }
+
+  // PR 2.5: previsão de entrega do PV reconciliado — só AVISA (não lança: lançar pulava a OP da
+  // Colacor). Vai no resultado do criar_pedido; a verdade fica no omie_payload (o PV do Omie).
+  const avisoPrevisao = avisoPrevisaoEntregaPv(comparacaoPrevisao, omie_pedido_id);
+  if (comparacaoPrevisao !== null && comparacaoPrevisao.estado !== "igual" && previsaoEntrega) {
+    console.warn(`[Omie Vendas][${account}] PV ${omie_pedido_id} reconciliado: previsão de entrega ${comparacaoPrevisao.estado} (enviada ${previsaoEntrega})`);
   }
 
   // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
@@ -2398,7 +2415,7 @@ async function criarPedidoVenda(
     p_account: account,
     p_omie_pedido_id: omie_pedido_id,
     p_omie_numero_pedido: String(omie_numero_pedido),
-    p_omie_payload: payload,
+    p_omie_payload: payloadGravado,
     p_omie_response: omie_response,
   });
   if (wbError?.code === "PGRST202") {
@@ -2414,7 +2431,7 @@ async function criarPedidoVenda(
       .update({
         omie_pedido_id,
         omie_numero_pedido: String(omie_numero_pedido),
-        omie_payload: payload,
+        omie_payload: payloadGravado,
         omie_response,
         status: "enviado",
       })
@@ -2427,7 +2444,7 @@ async function criarPedidoVenda(
     if (!wbRows || wbRows.length !== 1) {
       throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
     }
-    return { omie_pedido_id, omie_numero_pedido };
+    return { omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao };
   }
   if (wbError?.code === "P0002") {
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
@@ -2446,7 +2463,7 @@ async function criarPedidoVenda(
     if (aviso) throw new Error(aviso);
   }
 
-  return { omie_pedido_id, omie_numero_pedido };
+  return { omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao };
 }
 
 // ─── Observabilidade do sync em fin_sync_log (best-effort) ───

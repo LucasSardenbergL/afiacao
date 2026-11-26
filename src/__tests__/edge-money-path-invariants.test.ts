@@ -5137,6 +5137,36 @@ describe('guardrail money-path: erro sem override do gate ATP nunca segue para o
 // #3: excluir pedido Oben sem PID consulta o Omie pela chave PV_<id> ANTES do DELETE; PV achado ⇒
 // vínculo recuperado e exclusão RECUSADA (nenhuma mutação nova no Omie). Comportamento puro:
 // _shared/atp-pv-omie_test.ts; RPC: zona 11 do harness PG17.
+// ── PR 2.5 (rodada 3, "reenvio honesto"): endereço/turno no reenvio que reconcilia a OS ──
+// O upsert de `orders` é ignoreDuplicates. O reenvio reconciliado só AVISA que o endereço/turno deste
+// envio não entrou — NÃO regrava (2 rodadas do Codex no #4174 acharam P0 na regravação: null do front
+// antigo/consulta falha apagava o endereço, e reenvios concorrentes se desfaziam). Endereço/turno seguem
+// FORA da assinatura da OS (o id da OS não muda).
+describe('guardrail money-path: reenvio da OS só avisa endereço/turno, sem regravar (PR 2.5)', () => {
+  const src = removerComentarios(read(OMIE_SYNC));
+  const chave = removerComentarios(read('supabase/functions/omie-sync/chave-os.ts'));
+  const ini = src.indexOf('if (osResult.reconciliada) {');
+  const passo = src.slice(ini, src.indexOf('if (osResult.primeiro)', ini));
+
+  it('sentinela: recortou o passo 3b', () => {
+    expect(ini).toBeGreaterThan(0);
+    expect(passo).toContain('avisoEnderecoTurnoOs(');
+  });
+  it('o passo 3b NÃO escreve em orders', () => {
+    expect(passo, 'REGRESSÃO: o reenvio volta a regravar orders (P0s do Codex no #4174)').not.toMatch(/\.(update|upsert|insert|delete)\(/);
+  });
+  it('só compara com a modalidade DECLARADA, lida junto da linha', () => {
+    expect(passo).toMatch(/modalidade\.valor === MODALIDADE_LEGADA \? null : modalidade\.valor,/);
+    expect(passo).toContain('.select("address, time_slot, delivery_option")');
+  });
+  it('o aviso volta no resultado de sucesso', () => {
+    expect(src).toContain('aviso_local: avisoLocal,');
+  });
+  it('endereço/turno NÃO entram na assinatura da OS (o id da OS do #4138 não muda)', () => {
+    expect(chave, 'REGRESSÃO: endereço/turno na assinatura mudariam o id da OS').not.toMatch(/address|time_slot|endereco|turno/i);
+  });
+});
+
 describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', () => {
   const src = read('supabase/functions/omie-vendas-sync/index.ts');
   const ini = src.indexOf('async function criarPedidoVenda(');
@@ -5159,6 +5189,21 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(aviso, 'REGRESSÃO: PV reconciliado divergente volta a ser sucesso silencioso').toBeGreaterThan(rpc);
     expect(fn.slice(aviso, aviso + 120)).toMatch(/if \(aviso\) throw new Error\(aviso\)/);
     expect(fn).toMatch(/reconciled: true, consulta \};\s*comparacaoPv = compararCarrinhoPv\(items, consulta\);/);
+  });
+
+  // PR 2.5 (rodada 3, "reenvio honesto"): a data prometida do PV reconciliado é conferida, e o
+  // `omie_payload` local grava o PV que o Omie TEM — não o payload que ele recusou como duplicata.
+  it('o PV reconciliado confere a previsão de entrega e grava o PV do Omie como payload', () => {
+    expect(fn, 'REGRESSÃO: data prometida trocada no reenvio volta a ser sucesso calado')
+      .toMatch(/comparacaoPv = compararCarrinhoPv\(items, consulta\);\s*comparacaoPrevisao = compararPrevisaoEntregaPv\(previsaoEntrega, consulta\);\s*payloadGravado = payloadDoPvReconciliado\(consulta\);/);
+    expect(fn, 'REGRESSÃO: o write-back atômico volta a gravar o payload recusado').toContain('p_omie_payload: payloadGravado,');
+    expect(fn, 'REGRESSÃO: o write-back legado volta a gravar o payload recusado').toContain('omie_payload: payloadGravado,');
+    expect(fn).not.toMatch(/omie_payload: payload,|p_omie_payload: payload,/);
+  });
+  it('a data divergente só AVISA (não lança: lançar pulava a OP da Colacor) e o aviso sai nos 2 retornos', () => {
+    expect(fn).toContain('const avisoPrevisao = avisoPrevisaoEntregaPv(comparacaoPrevisao, omie_pedido_id);');
+    expect(fn, 'REGRESSÃO: data divergente volta a lançar e pular a OP').not.toMatch(/throw new Error\(avisoPrevisao\)/);
+    expect(fn.match(/return \{ omie_pedido_id, omie_numero_pedido, aviso_previsao: avisoPrevisao \};/g) ?? []).toHaveLength(2);
   });
 
   it('a edição de pedido reconciliado divergente é recusada antes do gate de aumento', () => {

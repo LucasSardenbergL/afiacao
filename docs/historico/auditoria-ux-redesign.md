@@ -344,3 +344,26 @@ app entrava em rota; o front passa a enviar a modalidade (`modalidade-os.ts`; fr
 'retirada'). `orders` está vazia em prod. Falsificação 16/16 vermelha (8 sabotagens × `C` e
 `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna: a LIGAÇÃO no `index.ts` não tem teste
 Deno (a edge inteira não é importável no teste).
+
+**PR 2.5 — reenvio honesto, parte das edges** (edges `omie-vendas-sync` v1.48 e `omie-sync` v1.18;
+o front fica para a Onda 3, com o 2.2). Os dois reenvios que reconciliam (PV por duplicata, OS pela
+chave) passam a AVISAR o que deste envio não entrou, e o `omie_payload` passa a dizer a verdade.
+(A) O PV vinculado só era comparado por SKU e quantidade: a data prometida trocada saía como sucesso.
+`compararPrevisaoEntregaPv` (`_shared/atp-pv-omie.ts`) confere `frete.previsao_entrega` (na doc do Omie,
+string10 SEM formato documentado; 0 ConsultarPedido real em prod). Só a divergência PROVADA conta —
+envio com data legível × PV com outra data legível ou o campo presente e vazio; ausente, ilegível, envio
+sem data ou objeto sem `cabecalho` = não conferível, nunca "igual". Ela volta como `aviso_previsao` no
+resultado do `criar_pedido` (e log), SEM lançar. O `omie_payload` gravava o payload que o Omie RECUSOU
+como duplicata; passa a gravar o PV que o Omie tem (`pedido_venda_produto` da consulta, mesmo objeto da
+comparação; `null` sem `cabecalho`), no write-back atômico e no legado. (B) No reenvio que reconcilia a
+OS, o upsert `ignoreDuplicates` de `orders` mantinha o endereço/turno da tentativa anterior em silêncio;
+`avisoEnderecoTurnoOs` (`omie-sync/reenvio-os-local.ts`) devolve `aviso_local` quando o deste envio
+difere (só com a modalidade declarada e igual à gravada), SEM regravar. Endereço/turno seguem FORA da
+assinatura da OS. **Por que só avisar** (decisão do founder, 2026-11-25): 2 rodadas do Codex, 3 P0 cada,
+todos nas BORDAS da própria correção. Lançar na data pulava a OP da Colacor (o front não cria a OP num
+envio com erro, e o clique seguinte cai em "já enviado"); regravar `orders` apagava o endereço quando
+o front mandava `null` (bundle antigo ou consulta de endereço que falhou) e dois reenvios concorrentes
+se desfaziam mesmo gravando só o campo que mudou. Sem lançar e sem escrever, os 6 somem por construção.
+Lacuna: o front ainda não mostra `aviso_previsao`/`aviso_local` (Onda 3); até lá, a trilha é o log e o
+`omie_payload`. Falsificação 26/26 vermelha (13 sabotagens, uma por camada e uma por P0/P1 do Codex, × `C`
+e `pt_BR.UTF-8`), controle verde na mesma invocação.
