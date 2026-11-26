@@ -421,3 +421,19 @@ tela ("confira antes de repetir", "Tente novamente em 1799 segundos") ao lado de
 escrito por nós chega ao vendedor; o cru vai ao log. Teto de 6 rodadas, sem r7. Falsificação 66/66 vermelha
 (33 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação; a ligação no `index.ts` tem teste Deno
 de fiação.
+
+**PR 8.1 — vendedor e crédito falham fechado** (só front · Publish). A validação do vendedor nos
+Omies (`omie-cliente` → `validar_vendedor`) só bloqueava com `consistente === false` E lista
+não vazia; rede/4xx/corpo sem `consistente` caíam em "sem divergência" e o envio seguia — e o
+caminho de envio nem conferia o vendedor (só o `disabled` do botão). Agora 4 estados
+(`validacao-vendedor.ts`: validando · consistente · divergente · indisponível + `nao_verificado`
+para autoatendimento/sem documento, que não bloqueia); só `consistente === true` libera; o guard
+também roda no `submitOrder` antes da trava; "indisponível" e "divergente" só saem por "Trocar" (seleção nova; sem revalidar — r3/r4). O
+alerta de crédito que falhava calado agora diz "não foi possível consultar" (não trava a venda: a
+trava de crédito no servidor, `gate-credito.ts`, já é fail-closed). Codex: r1 1 P0 (o alerta prometia "o envio confere no servidor", e a OS de Afiação não passa
+pelo gate de crédito) + 2 P1 (validação sem prazo travava em `validando`; erro escondia o saldo já lido), todos
+corrigidos; r2 0 P0. Lição (r3, 2 P0): "Revalidar" na DIVERGÊNCIA é armadilha — a revalidação não recarrega os
+códigos de vendedor da seleção (a OS sairia com o antigo) e a conta que falha some da comparação; a saída é
+"Trocar". Falsificação 36/36 vermelha (18 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna conhecida: a
+EDGE trata conta Omie que falhou como "não encontrada" (fica fora da comparação) — 3 contas
+falhando devolvem `consistente: true`; corrigir exige deploy da `omie-cliente` (Onda 3).

@@ -17,6 +17,7 @@ import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection'
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoDeNascimento } from '@/lib/pricing/precoDeNascimento';
+import { mensagemBloqueioVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
@@ -263,7 +264,7 @@ export function useUnifiedOrder() {
     addresses,
     selectedAddress, setSelectedAddress,
     customerPurchaseHistory,
-    vendedorDivergencias, validatingVendedor,
+    vendedorDivergencias, validatingVendedor, estadoVendedor,
     selectCustomer, clearCustomer: clearCustomerInternal,
     waitForAccountEnsure,
   } = customerSel;
@@ -942,6 +943,13 @@ export function useUnifiedOrder() {
       toast.info('Aguarde — ainda carregando os dados do cliente.');
       return;
     }
+    // 8.1: vendedor falha FECHADO também no CAMINHO DE ENVIO, não só no `disabled` do botão
+    // (atalho, reenvio do ATP e "Enviar agora" da reconexão chegam aqui sem passar pelo botão).
+    const bloqueioVendedor = mensagemBloqueioVendedor(estadoVendedor);
+    if (bloqueioVendedor) {
+      toast.error(bloqueioVendedor);
+      return;
+    }
     // Guard money-path da condição de pagamento: a listagem do Omie degradou para as 8
     // genéricas E este cliente usa condição que não está entre elas (prova pelo histórico
     // real de pedidos). Enviar gravaria um prazo diferente do combinado — DSO errado, ou
@@ -1170,7 +1178,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra, limparCamposDoPedido,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
-    waitForAccountEnsure, loadingCustomer, searchParams,
+    waitForAccountEnsure, loadingCustomer, estadoVendedor, searchParams,
     estadoFormasOben, estadoFormasColacor,
   ]);
 
@@ -1221,7 +1229,7 @@ export function useUnifiedOrder() {
     addToolDialogOpen, setAddToolDialogOpen, creatingLocalProfile,
     toolCategories, getFilteredServicos,
     // Vendedor
-    vendedorDivergencias, validatingVendedor,
+    vendedorDivergencias, validatingVendedor, estadoVendedor,
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,

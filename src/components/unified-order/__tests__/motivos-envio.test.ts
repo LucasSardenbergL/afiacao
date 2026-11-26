@@ -18,7 +18,7 @@ function base(over: Partial<EntradaMotivosEnvio> = {}): EntradaMotivosEnvio {
   return {
     temCliente: true, carregandoCliente: false,
     obenProductItems: [prod('oben')], colacorProductItems: [], serviceItems: [],
-    vendedorDivergencias: [], loadingFormas: false, exigeCondicao: true,
+    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', loadingFormas: false, exigeCondicao: true,
     selectedParcelaOben: '999', selectedParcelaColacor: '999',
     ...over,
   };
@@ -42,6 +42,9 @@ describe('motivosEnvioBloqueado — o porquê do Enviar cinza', () => {
     ['carrinho vazio', { obenProductItems: [] }, 'carrinho_vazio', 'Carrinho vazio'],
     ['serviço sem tipo', { obenProductItems: [], serviceItems: [servico(false)] }, 'servico_sem_tipo', 'Escolha o serviço de cada ferramenta'],
     ['vendedor divergente', { vendedorDivergencias: ['oben'] }, 'vendedor_divergente', 'Vendedor divergente'],
+    ['8.1: divergente sem lista', { estadoVendedor: 'divergente' }, 'vendedor_divergente', 'Vendedor divergente'],
+    ['8.1: validando vendedor', { estadoVendedor: 'validando' }, 'validando_vendedor', 'Validando vendedor…'],
+    ['8.1: validação falhou', { estadoVendedor: 'indisponivel' }, 'vendedor_indisponivel', 'Não foi possível validar o vendedor — use “Trocar”'],
     ['preço zerado', { obenProductItems: [prod('oben', 0)] }, 'preco_invalido', 'Item com preço zerado'],
     ['condição sumiu do Omie', { estadoFormasOben: COM_PROVA }, 'condicoes_indisponiveis', 'Condição de pagamento indisponível'],
     ['condições carregando', { loadingFormas: true }, 'carregando_condicoes', 'Carregando condições…'],

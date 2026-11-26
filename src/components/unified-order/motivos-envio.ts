@@ -5,6 +5,7 @@ import {
   ESTADO_FORMAS_UI_OK,
   type EstadoFormasUI,
 } from '@/services/orderSubmission/formasDegradacao';
+import type { EstadoVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
 
 /**
  * C5 (rodada 2): POR QUE o "Enviar pedido" está cinza. A lista sai da MESMA função que desabilita
@@ -19,6 +20,8 @@ type CodigoMotivoEnvio =
   | 'carrinho_vazio'
   | 'servico_sem_tipo'
   | 'vendedor_divergente'
+  | 'validando_vendedor'
+  | 'vendedor_indisponivel'
   | 'preco_invalido'
   | 'condicoes_indisponiveis'
   | 'carregando_condicoes'
@@ -36,6 +39,8 @@ export interface EntradaMotivosEnvio {
   colacorProductItems: ProductCartItem[];
   serviceItems: ServiceCartItem[];
   vendedorDivergencias: string[];
+  /** 8.1: falha da validação bloqueia (ausente ≠ consistente). Obrigatório de propósito. */
+  estadoVendedor: EstadoVendedor;
   estadoFormasOben?: EstadoFormasUI;
   estadoFormasColacor?: EstadoFormasUI;
   loadingFormas: boolean;
@@ -59,8 +64,12 @@ export function motivosEnvioBloqueado(e: EntradaMotivosEnvio): MotivoEnvio[] {
   if (e.serviceItems.some(s => !s.servico)) {
     motivos.push({ codigo: 'servico_sem_tipo', texto: 'Escolha o serviço de cada ferramenta' });
   }
-  if (e.vendedorDivergencias.length > 0) {
+  if (e.vendedorDivergencias.length > 0 || e.estadoVendedor === 'divergente') {
     motivos.push({ codigo: 'vendedor_divergente', texto: 'Vendedor divergente' });
+  } else if (e.estadoVendedor === 'validando') {
+    motivos.push({ codigo: 'validando_vendedor', texto: 'Validando vendedor…' });
+  } else if (e.estadoVendedor === 'indisponivel') {
+    motivos.push({ codigo: 'vendedor_indisponivel', texto: 'Não foi possível validar o vendedor — use “Trocar”' });
   }
   if (findInvalidPricedProductItems([...e.obenProductItems, ...e.colacorProductItems]).length > 0) {
     motivos.push({ codigo: 'preco_invalido', texto: 'Item com preço zerado' });

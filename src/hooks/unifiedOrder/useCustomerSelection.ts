@@ -21,6 +21,7 @@ import {
 } from './ensure-helpers';
 import type { PrecosLocaisPorConta } from './precos-por-conta';
 import { resolverPrecosLocaisPorConta, type LinhaPrecoPraticado } from './precos-praticados';
+import { comPrazo, interpretarValidacaoVendedor, PRAZO_VALIDACAO_VENDEDOR_MS, type EstadoVendedor } from './validacao-vendedor';
 import type {
   OmieCustomer,
   AddressData,
@@ -235,7 +236,9 @@ export function useCustomerSelection({
   });
 
   const [vendedorDivergencias, setVendedorDivergencias] = useState<string[]>([]);
-  const [validatingVendedor, setValidatingVendedor] = useState(false);
+  // 8.1: 4 estados em vez de um booleano — falha da validação NÃO é "sem divergência".
+  const [estadoVendedor, setEstadoVendedor] = useState<EstadoVendedor>('nao_verificado');
+  const validatingVendedor = estadoVendedor === 'validando';
 
   /* ─── Customer search (debounced) ─── */
   useEffect(() => {
@@ -427,6 +430,39 @@ export function useCustomerSelection({
 
   /* ─── Public actions ─── */
 
+  /** 8.1: valida o vendedor nos Omies e grava o estado FECHADO (falha → indisponível, bloqueia). */
+  const validarVendedor = useCallback(async (
+    cust: Pick<OmieCustomer, 'cnpj_cpf' | 'codigo_cliente'>,
+    isStale: () => boolean,
+  ) => {
+    setEstadoVendedor('validando');
+    setVendedorDivergencias([]);
+    let data: unknown = null;
+    let error: unknown = null;
+    try {
+      // Com prazo: pendurada, a chamada deixava `validando` para sempre (envio travado sem saída).
+      const r = await comPrazo(supabase.functions.invoke('omie-cliente', {
+        body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
+      }), PRAZO_VALIDACAO_VENDEDOR_MS);
+      data = r.data;
+      error = r.error;
+    } catch (err) {
+      error = err;
+    }
+    if (isStale()) return;
+    const resultado = interpretarValidacaoVendedor(data, error);
+    if (resultado.estado === 'indisponivel') {
+      logger.error('Vendedor validation unavailable', {
+        stage: 'validate_vendedor',
+        customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+        codigoCliente: cust.codigo_cliente,
+        error,
+      });
+    }
+    setVendedorDivergencias(resultado.divergencias);
+    setEstadoVendedor(resultado.estado);
+  }, []);
+
   const selectCustomer = useCallback(async (cust: OmieCustomer) => {
     // Token desta seleção. Se o usuário trocar de cliente no meio, conclusões
     // atrasadas desta chamada são descartadas (não sobrescrevem o cliente novo).
@@ -443,6 +479,7 @@ export function useCustomerSelection({
     setCustomerSearch('');
     setCustomers([]);
     setVendedorDivergencias([]);
+    setEstadoVendedor('nao_verificado');
     setSelectedAddress('');
     setRequiresPo(false);
     // Limpa estado do cliente ANTERIOR — não deve aparecer preço/parcela/vínculo
@@ -682,30 +719,10 @@ export function useCustomerSelection({
     }
 
     if (isStale()) return;
-    if (cust.cnpj_cpf) {
-      setValidatingVendedor(true);
-      try {
-        const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
-          body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
-        });
-        if (isStale()) return;
-        if (!error && validacao && !validacao.consistente) {
-          setVendedorDivergencias(validacao.divergencias || []);
-        }
-      } catch (err) {
-        logger.error('Vendedor validation call failed', {
-          stage: 'validate_vendedor',
-          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
-          codigoCliente: cust.codigo_cliente,
-          error: err,
-        });
-      } finally {
-        if (!isStale()) setValidatingVendedor(false);
-      }
-    }
+    if (cust.cnpj_cpf) await validarVendedor(cust, isStale);
   }, [
     resolveLocalUserId, autoCreateInMissingAccounts, resolveLocalPricesByOmieCode,
-    onLocalUserResolved, reloadPriceHistory,
+    onLocalUserResolved, reloadPriceHistory, validarVendedor,
   ]);
 
   /** Join da Etapa 3: o submit espera o ensure em background terminar e
@@ -726,7 +743,7 @@ export function useCustomerSelection({
     ensureAccountsRef.current = { token: selectionTokenRef.current, promise: Promise.resolve(null) };
     setSelectedCustomer(null);
     setLoadingCustomer(false);
-    setValidatingVendedor(false);
+    setEstadoVendedor('nao_verificado');
     setCustomerUserId(null);
     setCustomerPricesOben({});
     setCustomerPricesColacor({});
@@ -771,7 +788,7 @@ export function useCustomerSelection({
     // History (vem do useQuery; sem setter público)
     customerPurchaseHistory,
     // Vendedor
-    vendedorDivergencias, validatingVendedor,
+    vendedorDivergencias, validatingVendedor, estadoVendedor,
     // Actions
     selectCustomer, clearCustomer, waitForAccountEnsure,
   };

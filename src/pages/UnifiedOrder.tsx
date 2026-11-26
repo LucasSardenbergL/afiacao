@@ -533,6 +533,7 @@ const UnifiedOrder = () => {
     temCliente: !!h.selectedCustomer, carregandoCliente: h.loadingCustomer,
     obenProductItems: h.obenProductItems, colacorProductItems: h.colacorProductItems,
     serviceItems: h.serviceItems, vendedorDivergencias: h.vendedorDivergencias,
+    estadoVendedor: h.estadoVendedor,
     estadoFormasOben: isCustomerMode ? undefined : h.estadoFormasOben,
     estadoFormasColacor: isCustomerMode ? undefined : h.estadoFormasColacor,
     loadingFormas: h.loadingFormas, exigeCondicao: !isCustomerMode,
@@ -589,6 +590,7 @@ const UnifiedOrder = () => {
               customers={h.customers} searchingCustomers={h.searchingCustomers}
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
+              estadoVendedor={h.estadoVendedor}
               onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />

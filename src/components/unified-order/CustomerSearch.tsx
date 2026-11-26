@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn, decodeHtmlEntities } from '@/lib/utils';
 import type { OmieCustomer } from '@/hooks/useUnifiedOrder';
+import type { EstadoVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
 
 interface CustomerSearchProps {
   selectedCustomer: OmieCustomer | null;
@@ -21,6 +22,8 @@ interface CustomerSearchProps {
   loadingCustomer: boolean;
   validatingVendedor: boolean;
   vendedorDivergencias: string[];
+  /** 8.1: 'indisponivel' e 'divergente' (com ou sem lista) avisam e bloqueiam o envio; a única saída é "Trocar" (sem revalidar). */
+  estadoVendedor?: EstadoVendedor;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -33,7 +36,7 @@ interface CustomerSearchProps {
 export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
-  validatingVendedor, vendedorDivergencias,
+  validatingVendedor, vendedorDivergencias, estadoVendedor,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -107,18 +110,43 @@ export function CustomerSearch({
                 <p className="text-xs text-muted-foreground">Validando vendedor nos 3 Omies...</p>
               </div>
             )}
-            {vendedorDivergencias.length > 0 && (
-              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+            {estadoVendedor === 'indisponivel' && (
+              <div className="bg-status-warning/10 border border-status-warning/30 rounded-lg p-3" role="alert">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold">Não foi possível validar o vendedor</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado. Use “Trocar” e selecione o cliente de novo.</p>
+                    {/* SEM "Tentar de novo" (4ª rodada do Codex, P0; decisão do founder: só Trocar): a resposta que chega
+                        depois do prazo é descartada, e na 2ª consulta a conta divergente que falha some da comparação
+                        (lacuna da edge, Onda 3) → liberaria divergência real; e revalidar não recarrega os códigos de
+                        vendedor da seleção. Só a seleção nova recarrega tudo. */}
+                  </div>
+                </div>
+              </div>
+            )}
+            {(vendedorDivergencias.length > 0 || estadoVendedor === 'divergente') && (
+              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3" data-testid="vendedor-divergente">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                  <div>
+                  <div className="flex-1">
                     <p className="text-xs font-semibold text-destructive">Vendedor divergente entre contas Omie</p>
-                    <p className="text-xs text-muted-foreground mt-1">Corrija no Omie antes de prosseguir:</p>
-                    <ul className="text-xs mt-1 space-y-0.5">
-                      {vendedorDivergencias.map((d, i) => (
-                        <li key={i} className="text-destructive font-medium">• {d}</li>
-                      ))}
-                    </ul>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {vendedorDivergencias.length > 0
+                        ? 'Corrija no Omie antes de prosseguir:'
+                        : 'O Omie apontou divergência sem detalhar as contas. Corrija no Omie antes de prosseguir.'}
+                    </p>
+                    {vendedorDivergencias.length > 0 && (
+                      <ul className="text-xs mt-1 space-y-0.5">
+                        {vendedorDivergencias.map((d, i) => (
+                          <li key={i} className="text-destructive font-medium">• {d}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {/* SEM "Revalidar" aqui (3ª rodada do Codex, 2 P0): a revalidação não recarrega os códigos de
+                        vendedor da seleção (a OS sairia com o antigo) e uma conta que falha some da comparação
+                        (lacuna da edge, Onda 3) — liberaria divergência real. Só a seleção nova recarrega tudo. */}
+                    <p className="text-xs text-muted-foreground mt-1">Depois de corrigir, use “Trocar” e selecione o cliente de novo.</p>
                   </div>
                 </div>
               </div>
