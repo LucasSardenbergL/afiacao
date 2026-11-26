@@ -74,54 +74,71 @@ VELHOS='[{"omie_codigo_produto":555,"quantidade":2,"valor_unitario":10,"descrica
 NOVOS='[{"omie_codigo_produto":555,"quantidade":3,"valor_unitario":10,"descricao":"Lixa"}]'
 DOIS='[{"omie_codigo_produto":1,"quantidade":1,"valor_unitario":5},{"omie_codigo_produto":2,"quantidade":1,"valor_unitario":7}]'
 DOIS_TROCADO='[{"omie_codigo_produto":2,"quantidade":1,"valor_unitario":7},{"omie_codigo_produto":1,"quantidade":1,"valor_unitario":5}]'
+BRANCO='[{"omie_codigo_produto":9,"quantidade":1,"valor_unitario":80,"tint_cor_id":"branco"}]'
+AZUL='[{"omie_codigo_produto":9,"quantidade":1,"valor_unitario":80,"tint_cor_id":"azul"}]'
+ATUAL="(SELECT updated_at FROM public.sales_orders WHERE id='$A')"
 
 reset() { # $1 = items da linha (literal SQL) · $2 = deleted_at
   Pq -c "TRUNCATE public.sales_orders; INSERT INTO public.sales_orders(id, items, deleted_at) VALUES ('$A', $1, ${2:-NULL});" >/dev/null
 }
-claim()   { Pq -c "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$1'::jsonb);"; }
+versao()  { Pq -c "SELECT updated_at FROM public.sales_orders WHERE id='$A';"; }
+claim()   { # $1 = itens do envio · $2 = versão (literal SQL; default: a ATUAL da linha)
+  Pq -c "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$1'::jsonb, ${2:-$ATUAL});"
+}
 carimbo() { Pq -c "SELECT (envio_omie_reivindicado_em IS NOT NULL)::text FROM public.sales_orders WHERE id='$A';"; }
-sqlstate() { # devolve a SQLSTATE do erro (ou "sem_erro") — captura a ESPERADA, não "qualquer erro"
-  P -q -tA -c "DO \$\$ BEGIN PERFORM public.sales_order_reivindicar_envio_conferido('$A', '$1'::jsonb); RAISE NOTICE 'sem_erro'; EXCEPTION WHEN invalid_parameter_value THEN RAISE NOTICE 'SQLSTATE_22023'; END \$\$;" 2>&1 \
+sqlstate() { # $1 = itens · $2 = versão — devolve a SQLSTATE ESPERADA (22023) ou "sem_erro"; outra re-lança
+  P -q -tA -c "DO \$\$ BEGIN PERFORM public.sales_order_reivindicar_envio_conferido('$A', '$1'::jsonb, ${2:-$ATUAL}); RAISE NOTICE 'sem_erro'; EXCEPTION WHEN invalid_parameter_value THEN RAISE NOTICE 'SQLSTATE_22023'; END \$\$;" 2>&1 \
     | grep -oE 'SQLSTATE_22023|sem_erro' | head -1
 }
+salva_a() { Pq -c "UPDATE public.sales_orders SET items='$1'::jsonb WHERE id='$A';" >/dev/null; }
 
 echo "── unitários"
 reset "'$VELHOS'"
-eq "U1 itens da linha = itens do envio → reivindica" "$(claim "$VELHOS")" "reivindicado"
+eq "U1 itens da linha = itens do envio, linha não mudou → reivindica" "$(claim "$VELHOS")" "reivindicado"
 eq "U1b e carimba" "$(carimbo)" "true"
 reset "'$VELHOS'"
-eq "U2 mesmo item com número em outro formato e campo extra → reivindica" \
-  "$(claim '[{"omie_codigo_produto":"555","quantidade":2.0,"valor_unitario":10.00,"tint_cor_id":"x"}]')" "reivindicado"
+eq "U2 mesmo item com número em outro formato e campo cosmético extra → reivindica" \
+  "$(claim '[{"omie_codigo_produto":"555","quantidade":2.0,"valor_unitario":10.00,"descricao":"outra"}]')" "reivindicado"
 reset "'$NOVOS'"
-eq "U3 linha editada (quantidade 3) × envio com a foto velha (2) → recusa" "$(claim "$VELHOS")" "itens_divergentes"
+eq "U3 linha editada (qtd 3) × envio com a foto velha (2), versão atual → recusa (camada dos itens)" "$(claim "$VELHOS")" "pedido_alterado"
 eq "U3b e NÃO carimba" "$(carimbo)" "false"
 reset "'$DOIS'"
-eq "U4 mesma lista em outra ordem → recusa" "$(claim "$DOIS_TROCADO")" "itens_divergentes"
+eq "U4 mesma lista noutra ordem (retry do pedido programado) → reivindica" "$(claim "$DOIS_TROCADO")" "reivindicado"
 reset "'$DOIS'"
-eq "U5 linha com item a mais → recusa" "$(claim '[{"omie_codigo_produto":1,"quantidade":1,"valor_unitario":5}]')" "itens_divergentes"
+eq "U5 linha com item a mais → recusa" "$(claim '[{"omie_codigo_produto":1,"quantidade":1,"valor_unitario":5}]')" "pedido_alterado"
+reset "'[{\"omie_codigo_produto\":1,\"quantidade\":1,\"valor_unitario\":5},{\"omie_codigo_produto\":1,\"quantidade\":1,\"valor_unitario\":5}]'"
+eq "U5b item repetido conta 2× (multiconjunto) → recusa o envio de 1" "$(claim '[{"omie_codigo_produto":1,"quantidade":1,"valor_unitario":5}]')" "pedido_alterado"
 reset "'[{\"omie_codigo_produto\":555,\"quantidade\":2,\"valor_unitario\":11}]'"
-eq "U6 preço diferente → recusa" "$(claim "$VELHOS")" "itens_divergentes"
+eq "U6 preço diferente → recusa" "$(claim "$VELHOS")" "pedido_alterado"
+reset "'$BRANCO'"
+eq "U7 cor da tinta trocada (branco na linha, azul no envio) → recusa" "$(claim "$AZUL")" "pedido_alterado"
 reset "NULL"
-eq "U7 linha sem items → recusa (nunca vale como igual)" "$(claim "$VELHOS")" "itens_divergentes"
+eq "U8 linha sem items → recusa (nunca vale como igual)" "$(claim "$VELHOS")" "pedido_alterado"
 reset "'[{\"omie_codigo_produto\":555,\"quantidade\":2}]'"
-eq "U8 item da linha sem valor_unitario → recusa" "$(claim '[{"omie_codigo_produto":555,"quantidade":2,"valor_unitario":10}]')" "itens_divergentes"
+eq "U9 item da linha sem valor_unitario → recusa" "$(claim '[{"omie_codigo_produto":555,"quantidade":2,"valor_unitario":10}]')" "pedido_alterado"
 reset "'$VELHOS'" "now()"
-eq "U9 pedido marcado para exclusão → excluido" "$(claim "$VELHOS")" "excluido"
-eq "U9b e não carimba" "$(carimbo)" "false"
+eq "U10 pedido marcado para exclusão → excluido" "$(claim "$VELHOS")" "excluido"
+eq "U10b e não carimba" "$(carimbo)" "false"
 Pq -c "TRUNCATE public.sales_orders;" >/dev/null
-eq "U10 pedido inexistente → ausente" "$(claim "$VELHOS")" "ausente"
+eq "U11 pedido inexistente → ausente" "$(claim "$VELHOS" "now()")" "ausente"
 reset "'$VELHOS'"
-eq "U11 envio com lista vazia → 22023" "$(sqlstate '[]')" "SQLSTATE_22023"
-eq "U12 envio com item sem valor → 22023" "$(sqlstate '[{"omie_codigo_produto":555,"quantidade":2}]')" "SQLSTATE_22023"
-eq "U13 envio que não é lista → 22023" "$(sqlstate '{"a":1}')" "SQLSTATE_22023"
-eq "U13b e nada foi carimbado" "$(carimbo)" "false"
+eq "U12 envio com lista vazia → 22023" "$(sqlstate '[]')" "SQLSTATE_22023"
+eq "U13 envio com item sem valor → 22023" "$(sqlstate '[{"omie_codigo_produto":555,"quantidade":2}]')" "SQLSTATE_22023"
+eq "U14 envio que não é lista → 22023" "$(sqlstate '{"a":1}')" "SQLSTATE_22023"
+eq "U15 versão ausente → 22023" "$(sqlstate "$VELHOS" "NULL")" "SQLSTATE_22023"
+eq "U15b e nada foi carimbado" "$(carimbo)" "false"
 
-# A outra ordem da corrida: o claim é UPDATE ⇒ o trigger move updated_at ⇒ o salvar local da aba
-# aberta antes (UPDATE … WHERE updated_at = <o da abertura>) não casa nenhuma linha.
+echo "── a versão (achado 1 do Codex): a linha mudou e VOLTOU entre a reserva ATP e o claim"
 reset "'$VELHOS'"
-V0="$(Pq -c "SELECT updated_at FROM public.sales_orders WHERE id='$A';")"
-claim "$VELHOS" >/dev/null
-eq "U14 depois do claim, o salvar local com a versão da abertura atinge 0 linhas" \
+V0="$(versao)"                       # o que a edge leu ANTES do gate ATP
+salva_a "$NOVOS"; salva_a "$VELHOS"  # A muda 2→3 e volta a 2: os itens batem de novo, a versão não
+eq "V1 itens iguais aos do envio, mas a linha mudou desde a leitura → recusa (camada da versão)" \
+  "$(claim "$VELHOS" "'$V0'")" "pedido_alterado"
+eq "V1b e não carimba" "$(carimbo)" "false"
+reset "'$VELHOS'"
+V0="$(versao)"
+claim "$VELHOS" "'$V0'" >/dev/null
+eq "V2 depois do claim, o salvar local com a versão da abertura atinge 0 linhas" \
   "$(Pq -c "WITH u AS (UPDATE public.sales_orders SET items='$NOVOS'::jsonb WHERE id='$A' AND omie_pedido_id IS NULL AND updated_at='$V0' RETURNING 1) SELECT count(*) FROM u;")" "0"
 
 echo "── concorrência (duas sessões reais)"
@@ -144,69 +161,86 @@ corrida() { # $1 = SQL da sessão 1 (segura o lock) · $2 = SQL da sessão 2 (es
 }
 SALVA_A="UPDATE public.sales_orders SET items='$NOVOS'::jsonb WHERE id='$A'"
 reset "'$VELHOS'"
-eq "C1 aba A salva (segura o lock) → o claim da aba B com a foto velha ESPEROU e recusa" \
-  "$(corrida "$SALVA_A" "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$VELHOS'::jsonb)")" "1:itens_divergentes"
+V0="$(versao)"
+eq "C1 aba A salva (segura o lock) → o claim da aba B (foto velha, versão lida antes) ESPEROU e recusa" \
+  "$(corrida "$SALVA_A" "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$VELHOS'::jsonb, '$V0')")" "1:pedido_alterado"
 eq "C1b e não carimbou" "$(carimbo)" "false"
-# C2: a ordem inversa — o claim de B segura o lock; o salvar local de A (versão da abertura) ESPERA,
-# re-avalia na versão nova (updated_at movido pelo claim) e atinge 0 linhas.
 reset "'$VELHOS'"
-V0="$(Pq -c "SELECT updated_at FROM public.sales_orders WHERE id='$A';")"
+V0="$(versao)"
 eq "C2 claim de B segura o lock → o salvar local de A ESPEROU e não grava nada" \
-  "$(corrida "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$VELHOS'::jsonb)" \
+  "$(corrida "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$VELHOS'::jsonb, '$V0')" \
      "WITH u AS (UPDATE public.sales_orders SET items='$NOVOS'::jsonb WHERE id='$A' AND omie_pedido_id IS NULL AND updated_at='$V0' RETURNING 1) SELECT count(*) FROM u")" "1:0"
 eq "C2b a linha manteve os itens que foram ao Omie" \
   "$(Pq -c "SELECT (items->0->>'quantidade') FROM public.sales_orders WHERE id='$A';")" "2"
-# C3 controle: A salva e COMMITA, depois B envia os itens novos (o checkout grava a linha e chama a edge).
+# C3 controle: A salva e COMMITA; a edge lê a linha DEPOIS e envia os itens novos (o checkout grava e chama).
 reset "'$VELHOS'"
-Pq -c "$SALVA_A" >/dev/null
-eq "C3 controle: salvar commitado e envio com os itens novos → reivindica" "$(claim "$NOVOS")" "reivindicado"
-# Limite medido (precisão > recall): com o salvar de A AINDA aberto, um envio com os itens NOVOS
-# enxerga a versão velha, não casa o WHERE e não espera o lock — recusa. Não há caminho real assim
-# (submitOrder commita a linha antes de chamar a edge); fica provado para ninguém ler como bug.
+salva_a "$NOVOS"
+eq "C3 controle: salvar commitado, leitura depois, envio com os itens novos → reivindica" "$(claim "$NOVOS")" "reivindicado"
+# Limite medido (precisão > recall): com o salvar de A AINDA aberto, o envio enxerga a versão velha,
+# não casa o WHERE e não espera o lock — recusa. Sem caminho real (o checkout commita antes).
 reset "'$VELHOS'"
+V0="$(versao)"
 eq "C4 salvar de A não commitado × envio com os itens novos → recusa sem esperar" \
-  "$(corrida "$SALVA_A" "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$NOVOS'::jsonb)")" "0:itens_divergentes"
+  "$(corrida "$SALVA_A" "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$NOVOS'::jsonb, '$V0')")" "0:pedido_alterado"
 
 echo "── grants e compatibilidade"
-eq "G1 service_role executa o claim conferido" \
-  "$(Pq -c "SELECT has_function_privilege('service_role','public.sales_order_reivindicar_envio_conferido(uuid, jsonb)','EXECUTE');")" "t"
-eq "G2 authenticated NÃO executa" \
-  "$(Pq -c "SELECT has_function_privilege('authenticated','public.sales_order_reivindicar_envio_conferido(uuid, jsonb)','EXECUTE');")" "f"
-eq "G3 anon NÃO executa" \
-  "$(Pq -c "SELECT has_function_privilege('anon','public.sales_order_reivindicar_envio_conferido(uuid, jsonb)','EXECUTE');")" "f"
+FN="public.sales_order_reivindicar_envio_conferido(uuid, jsonb, timestamptz)"
+eq "G1 service_role executa o claim conferido" "$(Pq -c "SELECT has_function_privilege('service_role','$FN','EXECUTE');")" "t"
+eq "G2 authenticated NÃO executa" "$(Pq -c "SELECT has_function_privilege('authenticated','$FN','EXECUTE');")" "f"
+eq "G3 anon NÃO executa" "$(Pq -c "SELECT has_function_privilege('anon','$FN','EXECUTE');")" "f"
 reset "'$NOVOS'"
-eq "G4 o claim antigo (edge v1.51 no ar) segue funcionando" \
-  "$(Pq -c "SELECT public.sales_order_reivindicar_envio('$A');")" "t"
+eq "G4 o claim antigo (edge v1.52 no ar) segue funcionando" "$(Pq -c "SELECT public.sales_order_reivindicar_envio('$A');")" "t"
 
 echo "── falsificação (sabota UMA camada por vez; o controle verde é a bateria acima, nesta invocação)"
 [ "$FAIL" = "0" ] || { echo "❌ controle vermelho antes de sabotar — falsificação não vale"; exit 1; }
-# F1: sem a condição dos itens o claim volta ao de antes — U3 e C1 têm de ficar VERMELHOS.
-sed 's/^     AND public\.sales_order_itens_projecao_envio(items) = v_proj;$/     ;/' "$MIG" > "$SAB/f1.sql"
-if cmp -s "$MIG" "$SAB/f1.sql"; then bad "F1 sabotagem não aplicou (sed não casou)"; else
+sabota() { # $1 saída · $2 trecho EXATO a trocar · $3 troca — falha ruidosa se o trecho não existir 1×
+  python3 - "$MIG" "$1" "$2" "$3" <<'PY'
+import sys
+src, out, a, b = sys.argv[1:]
+s = open(src, encoding="utf-8").read()
+if s.count(a) != 1:
+    sys.exit(f"trecho não casou 1x: {a!r}")
+open(out, "w", encoding="utf-8").write(s.replace(a, b))
+PY
+}
+# F1: sem a camada dos ITENS — U3 (linha editada antes da leitura) tem de reivindicar.
+if sabota "$SAB/f1.sql" "     AND public.sales_order_itens_projecao_envio(items) = v_proj;" "     ;"; then
   P -q -f "$SAB/f1.sql" >/dev/null
-  reset "'$NOVOS'"
-  r="$(claim "$VELHOS")"
-  if [ "$r" = "reivindicado" ]; then ok "F1 sem a condição dos itens, a foto velha reivindica (o bug volta — o U3 pega)"; else bad "F1 sabotagem inócua: veio [$r]"; fi
-  reset "'$VELHOS'"
-  r="$(corrida "$SALVA_A" "SELECT public.sales_order_reivindicar_envio_conferido('$A', '$VELHOS'::jsonb)")"
-  if [ "$r" = "1:reivindicado" ]; then ok "F1b e na corrida real também (o C1 pega)"; else bad "F1b sabotagem inócua na corrida: veio [$r]"; fi
+  reset "'$NOVOS'"; r="$(claim "$VELHOS")"
+  if [ "$r" = "reivindicado" ]; then ok "F1 sem a camada dos itens, a foto velha reivindica (o U3 pega)"; else bad "F1 sabotagem inócua: veio [$r]"; fi
+else bad "F1 sabotagem não aplicou"; fi
+P -q -f "$MIG" >/dev/null
+# F2: sem a camada da VERSÃO — V1 (2→3→2 entre a leitura e o claim) tem de reivindicar.
+if sabota "$SAB/f2.sql" "     AND updated_at = p_versao
+" ""; then
+  P -q -f "$SAB/f2.sql" >/dev/null
+  reset "'$VELHOS'"; V0="$(versao)"; salva_a "$NOVOS"; salva_a "$VELHOS"
+  r="$(claim "$VELHOS" "'$V0'")"
+  if [ "$r" = "reivindicado" ]; then ok "F2 sem a camada da versão, a linha que mudou e voltou reivindica (o V1 pega)"; else bad "F2 sabotagem inócua: veio [$r]"; fi
+else bad "F2 sabotagem não aplicou"; fi
+P -q -f "$MIG" >/dev/null
+# F3: projeção por TEXTO (sem ::numeric) — a postcondição A5 tem de abortar a migration.
+sed 's/)::numeric/)/g' "$MIG" > "$SAB/f3.sql"
+if cmp -s "$MIG" "$SAB/f3.sql"; then bad "F3 sabotagem não aplicou"; else
+  if P -q -f "$SAB/f3.sql" >/dev/null 2>&1; then bad "F3 projeção por texto passou pela postcondição"
+  else ok "F3 projeção por texto aborta a migration (postcondição A5)"; fi
 fi
-# F2: projeção por TEXTO (sem ::numeric) — a postcondição A5 tem de abortar a migration.
-sed 's/)::numeric/)/g' "$MIG" > "$SAB/f2.sql"
-if cmp -s "$MIG" "$SAB/f2.sql"; then bad "F2 sabotagem não aplicou (sed não casou)"; else
-  if P -q -f "$SAB/f2.sql" >/dev/null 2>&1; then bad "F2 projeção por texto passou pela postcondição"
-  else ok "F2 projeção por texto aborta a migration (postcondição A5)"; fi
-fi
-# F3: projeção que ignora a ORDEM (ordena pelo conteúdo, não pela posição) — a A6 tem de abortar.
-sed 's/ORDER BY o)/ORDER BY e::text)/' "$MIG" > "$SAB/f3.sql"
-if cmp -s "$MIG" "$SAB/f3.sql"; then bad "F3 sabotagem não aplicou (sed não casou)"; else
-  if P -q -f "$SAB/f3.sql" >/dev/null 2>&1; then bad "F3 projeção sem ordem passou pela postcondição"
-  else ok "F3 projeção que ignora a ordem aborta a migration (postcondição A6)"; fi
-fi
+# F4: projeção na ordem da LISTA (sem ordenar pelo conteúdo) — a A6 tem de abortar.
+if sabota "$SAB/f4.sql" "ORDER BY (e->>'omie_codigo_produto')::numeric, (e->>'quantidade')::numeric,
+                        (e->>'valor_unitario')::numeric, e->>'tint_cor_id')" "ORDER BY 1)"; then
+  if P -q -f "$SAB/f4.sql" >/dev/null 2>&1; then bad "F4 projeção dependente da ordem passou pela postcondição"
+  else ok "F4 projeção dependente da ordem aborta a migration (postcondição A6)"; fi
+else bad "F4 sabotagem não aplicou"; fi
+# F5: projeção sem a COR — a A7 tem de abortar.
+if sabota "$SAB/f5.sql" "                 (e->>'valor_unitario')::numeric,
+                 e->>'tint_cor_id')" "                 (e->>'valor_unitario')::numeric)"; then
+  if P -q -f "$SAB/f5.sql" >/dev/null 2>&1; then bad "F5 projeção sem a cor passou pela postcondição"
+  else ok "F5 projeção sem a cor aborta a migration (postcondição A7)"; fi
+else bad "F5 sabotagem não aplicou"; fi
 # Restaura e prova que fecha de novo.
 P -q -f "$MIG" >/dev/null
 reset "'$NOVOS'"
-eq "F4 migration reaplicada fecha de novo" "$(claim "$VELHOS")" "itens_divergentes"
+eq "F6 migration reaplicada fecha de novo" "$(claim "$VELHOS")" "pedido_alterado"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

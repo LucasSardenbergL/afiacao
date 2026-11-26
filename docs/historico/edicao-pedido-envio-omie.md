@@ -53,12 +53,24 @@
   preço) foi removida porque sabotá-la ficava verde.
 - ~~Fora (Codex r4)~~ **Fechado na edge v1.53 + migration 20261126190127:** edição local salva ANTES do
   claim de uma conversão aberta em outra aba com os itens velhos → PV com o total antigo. O claim passou a
-  ser CONFERIDO (`sales_order_reivindicar_envio_conferido`): só carimba se a projeção
-  [código, qtd, valor] dos itens da LINHA for igual à dos itens que vão ao Omie; senão
-  `blocked: "itens_divergentes"`. Não depende do front (nenhum bundle manda versão). Denominador: 27/27
-  pedidos do app com PV têm a linha igual ao `det` enviado. Prova PG17 `db/test-claim-envio-conferido.sh`
-  (34 asserts, 2 sessões reais nas duas ordens da corrida, `LC_ALL=C` e `pt_BR.UTF-8`); falsificação
-  3 (SQL) + 4 (edge/tela), todas vermelhas com controle verde. Limite medido (C4): salvar NÃO commitado ×
-  envio com os itens novos recusa sem esperar o lock — sem caminho real (o checkout commita a linha antes).
+  ser CONFERIDO (`sales_order_reivindicar_envio_conferido`, `./claim-conferido.ts`): a edge lê o
+  `updated_at` da linha ANTES do gate ATP e o claim só carimba se (a) a linha não mudou desde então e (b) a
+  projeção [código, qtd, valor, cor da tinta] dos itens da LINHA — como multiconjunto — for igual à dos
+  itens que vão ao Omie. A pré-checagem recusa a foto velha antes de reservar estoque. A recusa LANÇA com
+  `[pedido_alterado]` (caller antigo lê `blocked` desconhecido como sucesso); a tela de orçamentos
+  reconhece a marca e recarrega a lista. Não depende do front (nenhum bundle manda versão).
+  Denominador: 27/27 pedidos do app com PV têm a linha igual ao `det` enviado. Nenhum escritor legítimo
+  toca a linha entre a leitura e o claim (medido em prod: só `atp_confirmar_pv`, depois do IncluirPedido).
+  Prova PG17 `db/test-claim-envio-conferido.sh` (40 asserts; 2 sessões reais nas duas ordens; o caso
+  2→3→2 entre a reserva e o claim; `LC_ALL=C` e `pt_BR.UTF-8`) com uma sabotagem por camada.
+  - Codex do claim (r1, BLOQUEANTE sim → corrigido): versão no claim (ATP × claim), multiconjunto (retry do
+    pedido programado relê sem `ORDER BY`), cor da tinta, recusa por `throw`.
+  - Residuais aceitos: (i) `ensureSalesOrderRow` (checkout/retry) regrava a linha sem versão — apaga a
+    edição de outra aba, pré-existente; (ii) editor aberto DEPOIS do claim salva com o `updated_at` novo
+    enquanto o PID é nulo; (iii) recusa depois do gate ATP deixa a reserva até o TTL (30 min), como todo
+    throw pós-ATP; (iv) dado sujo (`"10,50"`) lança 22P02 genérico; (v) salvar NÃO commitado × envio com
+    os itens novos recusa sem esperar o lock (sem caminho real).
+  - Fora, pré-existente e de outro caminho: a reconciliação por duplicata (`PV_<id>`) compara só SKU e
+    quantidade, então confirma um PV com preço antigo (Codex, achado 5).
 - Fora: concorrência entre dois editores / alteração no Omie entre abrir e salvar; vencimentos reais de
   `fin_contas_receber` no cupom (RLS de financeiro + vazio-por-RLS indistinguível de não faturado).

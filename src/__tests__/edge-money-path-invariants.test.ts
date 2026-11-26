@@ -5241,9 +5241,21 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     const entre = criar.slice(claim, envio);
     expect(entre, 'falha da RPC de claim RECUSA').toMatch(/if \(claimErr\) \{\s*throw new Error\(/);
     expect(entre, 'o claim confere os itens QUE VÃO ao Omie (itensEnvio), não os do body cru').toMatch(/p_itens: itensEnvio\.map\(/);
-    expect(entre, 'itens divergentes RECUSA estruturado, sem chegar ao IncluirPedido').toMatch(
-      /if \(claimVeredito === "itens_divergentes"\) \{\s*result = \{\s*success: false,\s*blocked: "itens_divergentes"[\s\S]{0,400}?break;\s*\}/,
+    expect(entre, 'pedido alterado LANÇA (caller antigo lê blocked desconhecido como sucesso)').toMatch(
+      /if \(claimVeredito === "pedido_alterado"\) \{\s*throw new Error\(mensagemPedidoAlterado\(sales_order_id\)\);\s*\}/,
     );
+    expect(entre, 'o claim exige a versão lida ANTES do gate ATP').toMatch(/p_versao: versaoLida,/);
+    expect(entre, 'a cor da tinta entra na conferência').toMatch(/tint_cor_id: \(it as \{ tint_cor_id\?: unknown \}\)\.tint_cor_id \?\? null,/);
+    // A versão e a pré-checagem vêm ANTES do gate ATP (que reserva sobre a linha) — Codex, achado 1.
+    const versao = criar.indexOf('const versaoLida = ');
+    const preCheca = criar.indexOf('if (!mesmosItensDeEnvio(');
+    const atp = criar.indexOf('"atp_gate_pedido"');
+    expect(versao, 'a versão é lida no criar_pedido').toBeGreaterThan(-1);
+    expect(atp, 'sentinela: achei o gate ATP').toBeGreaterThan(-1);
+    expect(versao, 'a versão é lida ANTES do gate ATP').toBeLessThan(atp);
+    expect(preCheca, 'a pré-checagem recusa ANTES de reservar estoque').toBeGreaterThan(versao);
+    expect(preCheca, 'a pré-checagem recusa ANTES de reservar estoque').toBeLessThan(atp);
+    expect(criar.slice(preCheca, preCheca + 160), 'pré-checagem divergente LANÇA').toMatch(/throw new Error\(mensagemPedidoAlterado\(sales_order_id\)\)/);
     expect(entre, 'qualquer outro veredito que não "reivindicado" RECUSA').toMatch(/if \(claimVeredito !== "reivindicado"\) \{\s*throw new Error\(/);
     expect(criar, 'REGRESSÃO: a v1.53 voltou ao claim sem conferência').not.toMatch(/\.rpc\("sales_order_reivindicar_envio",/);
   });

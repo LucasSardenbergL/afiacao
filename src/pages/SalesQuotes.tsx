@@ -141,6 +141,17 @@ const SalesQuotes = () => {
         // O texto da edge vem no CORPO: o `omieError.message` é o genérico "non-2xx" e escondia o
         // OMIE_ESCRITA_INDETERMINADA ("o Omie PODE ter gravado") — lido como "não foi" (M-33 p3).
         const doServidor = await mensagemDoErroEdge(omieError);
+        if (doServidor?.includes('[pedido_alterado]')) {
+          // Claim conferido (edge v1.53): este orçamento foi salvo em outra aba/por outra pessoa depois
+          // que esta lista o leu — converter mandaria ao Omie os itens VELHOS. Recarrega a lista para a
+          // próxima conversão já sair com os itens que estão no banco.
+          queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
+          toast.error('Conversão recusada: o orçamento mudou', {
+            description: 'Ele foi alterado depois que esta tela o abriu. A lista foi recarregada — confira os itens e converta de novo. O Omie NÃO foi atualizado.',
+            duration: 12000,
+          });
+          return;
+        }
         toast.error('Não foi possível confirmar o envio ao Omie: ' + (doServidor ?? omieError.message ?? 'erro desconhecido'));
         return;
       }
@@ -173,17 +184,6 @@ const SalesQuotes = () => {
           description: bloqueioAtp.tipo === 'verificacao_indisponivel'
             ? 'Não foi possível verificar a disponibilidade agora. Tente de novo; se persistir, envie pelo balcão (backorder explícito).'
             : `${mensagemRecusasAtp(bloqueioAtp.recusas)} Ajuste as quantidades do orçamento ou envie pelo balcão como backorder explícito.`,
-          duration: 12000,
-        });
-        return;
-      }
-      if ((omieData as { blocked?: string } | null)?.blocked === 'itens_divergentes') {
-        // Claim conferido (edge v1.53): este orçamento foi salvo em outra aba/por outra pessoa depois
-        // que esta lista o leu — converter mandaria ao Omie os itens VELHOS. Recarrega a lista para a
-        // próxima conversão já sair com os itens que estão no banco.
-        queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
-        toast.error('Conversão recusada: o orçamento mudou', {
-          description: 'Ele foi alterado depois que esta tela o abriu. A lista foi recarregada — confira os itens e converta de novo. O Omie NÃO foi atualizado.',
           duration: 12000,
         });
         return;
