@@ -62,7 +62,7 @@ O vigente **revisável** volta ao laço da edge `credito-ia-avaliar`: origem = r
 
 `db/test-credito-reducao-auto.sh` roda em PG17, com as migrations reais do PR 1, PR 2, PAGTO PARCIAL, fronteira-60 e PR 4, mais a 5b.
 
-**@ASSERTS@ asserts** com controle verde e **@SABS@ sabotagens** vermelhas pelo motivo certo, cada uma derrubando uma camada. Depois vem a re-prova estrita. Verde em `C` e `pt_BR.UTF-8`. Cobre:
+**81 asserts** com controle verde e **36 sabotagens** vermelhas pelo motivo certo, cada uma derrubando uma camada. Depois vem a re-prova estrita. Verde em `C` e `pt_BR.UTF-8`. Cobre:
 - inerte sem vigente;
 - E1, E2 (duas passadas, fronteira de 15 d, vencido já visto pelo Lucas, reservas efetivas × sombra, exposição NULL), E3;
 - nunca sobe;
@@ -85,7 +85,13 @@ Lições da falsificação:
   - 1ª: 0 P0, 6 P1, 5 P2. Os principais: K × e dado ausente virariam catraca permanente; R3 contava vencidos e perdia evento; o writer precisava amarrar cada escrita à proposta; a varredura precisava de transações curtas; o backtest misturava 3 datas.
   - 2ª: fechou P1-2, P1-4 e P1-6. Pediu a base do E2 em `vigente.ficha_calculada_em`, `grupo_mudou` no caminho de revisão e a substituição da fórmula registrada. Tudo acatado.
   - O ponto do cron com `CALL` + `COMMIT` sumiu: o lote é função curta (≤ 25 raízes), não procedure.
-- **Diff:** @CODEX_DIFF@
+- **Diff** (gpt-6.2-astra high): 0 P0, 4 P1, 4 P2, todos acatados.
+  - P1-1: E1/E2 exigem o espelho do CR em dia nas empresas do grupo. Título pago no Omie e aberto no espelho não pode virar corte permanente.
+  - P1-2: identidade, ficha, causador do E2, exposição e reservas saem de **um** comando, num snapshot só.
+  - P1-3: lock de **sessão** para ler, solto na hora quando não há corte; o lote para na 1ª redução, então há um corte por transação e é a última escrita.
+  - P1-4: o laço inclui os vigentes fora da carteira ativa.
+  - P2: trigger com piora estrita; INSERT automático exercitado; S26 numa raiz saudável; aprovação × redução nas duas ordens; `initdb` no locale da rodada; coorte prospectiva fixa na 1ª proposta; cobertura conta título sem mapa; piso em T indeterminado por falta de saldo ou emissão.
+  - A pós-condição por regex em `pg_proc` é complementar (Codex): a exclusividade do writer está provada pelos testes do trigger e do writer.
 
 ## Backtest IA × regra (prod, psql-ro, @BT_DATA@)
 
