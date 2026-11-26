@@ -28,9 +28,10 @@ Programa: spec `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano
   - `credito_gate_v2_efetivo` só para service_role; `credito_definir_enforcement` e `credito_decidir_fila` só para authenticated; `credito_autorizar_solicitacao` (PR 2) sem grant;
   - crons `credito-fila-alertar` (`*/15`) e `credito-fila-recomendar` (`*/10`) ativos como `postgres`;
   - prontidão `false` nas 3 empresas.
-- **Edge `credito-fila-recomendar`: NÃO deployada ainda.** O pacote `4a0053be1bc2` está pronto, com a pré-condição de banco satisfeita, mas o conector Lovable pediu reautenticação. Até subir, o cron bate num endpoint inexistente a cada 10 min. É inofensivo: nada escreve e não há item na fila. Depois do deploy, rodar `bun run sonda:sql credito-fila-recomendar` e `bun run pendencias:deploy`.
-- **Follow-up:** o `claude_ro` não lê `credito_fila_v`. O laço de ACL da view revogou o SELECT dele, que as tabelas mantêm. Não afeta o produto (o gestor lê pela RLS), só o diagnóstico pelo psql-ro, que hoje precisa ler as tabelas-base.
-- **Publish (founder):** só depois da edge **Active**. A tela `/credito/fila` e o item "Fila de crédito" no menu Financeiro só aparecem após o Publish.
+- **Edge `credito-fila-recomendar`: deployada e atestada (2026-11-26).** Pacote `9fb1c38c6842` (contra a main `9efe21ae2`) enviado ao Lovable às 10:31:13Z. O agente conferiu 9/9 hashes e deployou (`source_sha256 df155533…`). A sonda, disparada pelo envelope (recibo **#1456**), deu **DEPLOY CONFIRMADO** `v1.0-fila-recomendacao`; o `pendencias:deploy` lista a edge em "confere".
+  - O sensor de edição deu `EDICAO_DETECTADA`, mas é o falso positivo já documentado (`agente-lovable-conserta-o-que-nao-pediram.md` §6): o `commit_sha` da resposta (`4015ad9d6`, "Work in progress") só regenera `src/integrations/supabase/types.ts` a partir do banco, e o transcript do agente não tem tool de escrita. Não havia nada a reverter.
+- **Follow-up `claude_ro` resolvido:** o laço de ACL da view tinha revogado o SELECT do `claude_ro` em `credito_fila_v` (as tabelas mantinham). A migration `20261126010000` (PR #4200) devolveu o SELECT, foi aplicada pelo envelope (recibo **#1453**) e a 2ª testemunha confirmou: SELECT `t`, INSERT `f`, `anon` sem SELECT, a view lida pelo psql-ro (44 linhas).
+- **Publish (founder): liberado** — a edge já está no ar. A tela `/credito/fila` e o item "Fila de crédito" no menu Financeiro só aparecem após o Publish.
 
 ## Lições
 
