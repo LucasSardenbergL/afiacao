@@ -59,3 +59,5 @@ A 5b (#4214) entregou o backtest como SQL re-rodável (`db/backtest-credito-ia-r
 - **Guarda de drift:** a migration aborta se o corpo em prod não for o de `20261125120000` (md5 `afae4546…`) nem já o novo.
 
 Prova: o mesmo harness, agora aplicando a cadeia base + nova. 64 asserts no controle e 21 sabotagens vermelhas, nos dois locales. A sabotagem do REVOKE da migration nova ficava **verde**: o `CREATE OR REPLACE` preserva o ACL da base, então o REVOKE é redundante por desenho. Ela foi trocada por um GRANT a mais, que a postcondição recusa.
+
+**Aplicado em prod (2026-11-26):** `db:aplicar` a partir da main (`799104c8f`, #4233), tentativa **#1488** `aplicada`, com o mesmo sha256 do ensaio (`3ef7439b…`). A guarda de drift passou. 2ª testemunha pelo psql-ro: md5 do corpo em prod = md5 do repo (`1df6581f…`), marca `painel-concordancia-ia-v2` presente, SECURITY DEFINER, STABLE, `search_path=public`, ACL `{postgres, authenticated}` (anon ✗, service_role ✗). Falta o Publish para a tela nova aparecer.
