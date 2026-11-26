@@ -11,7 +11,7 @@ import { montarPrecosLocaisPorConta, type PrecosLocaisPorConta } from './precos-
 
 export type LinhaPrecoPraticado = { product_id: string; unit_price: number; ultimo_praticado_em?: string | null };
 
-export const PRECOS_LOCAIS_VAZIOS: PrecosLocaisPorConta = { oben: {}, colacor: {}, datasOben: {}, datasColacor: {} };
+const PRECOS_LOCAIS_VAZIOS: PrecosLocaisPorConta = { oben: {}, colacor: {}, datasOben: {}, datasColacor: {} };
 
 /** Resolve as linhas da RPC em DOIS mapas account-aware (oben/colacor). Falha do mapeamento degrada
  *  para o preço de tabela (mapas vazios), com rastro — nunca R$ 0. */

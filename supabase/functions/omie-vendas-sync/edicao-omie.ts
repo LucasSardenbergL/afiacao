@@ -18,16 +18,16 @@
 /** Etapas do Omie em que o app ainda edita o pedido: 10 (pedido) e 20 (separar estoque). Restrição de
  *  PRODUTO assumida (o Omie aceita alterar em 50): em 50 o pedido já está em separação para faturar;
  *  60/70 faturado; 80 cancelado. Mesmo mapa de `_shared/omie-pedido.ts` (`omieEtapaToStatus`). */
-export const ETAPAS_EDITAVEIS: readonly string[] = ["10", "20"];
+const ETAPAS_EDITAVEIS: readonly string[] = ["10", "20"];
 
 /** Status do ESPELHO importado (o que o sync gravou a partir da etapa) em que o app ainda edita. */
-export const STATUS_GEMEO_EDITAVEIS: readonly string[] = ["importado", "enviado"];
+const STATUS_GEMEO_EDITAVEIS: readonly string[] = ["importado", "enviado"];
 
 /** Status do PRÓPRIO pedido em que a edge recusa — a mesma lista do front (`BLOCKED_STATUSES` em
  *  `src/components/salesOrderEdit/types.ts`); a trava do React não protege uma tela antiga aberta. */
-export const STATUS_PEDIDO_NAO_EDITAVEIS: readonly string[] = ["cancelado", "entregue", "faturado", "importado"];
+const STATUS_PEDIDO_NAO_EDITAVEIS: readonly string[] = ["cancelado", "entregue", "faturado", "importado"];
 
-export type BloqueioEdicao =
+type BloqueioEdicao =
   | "conta_desconhecida"
   | "origem_omie"
   | "status_pedido"

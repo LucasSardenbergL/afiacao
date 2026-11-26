@@ -7,7 +7,7 @@
  */
 import { precoPartida, type Tier } from './precoPartida';
 
-export type ContaPreco = 'oben' | 'colacor';
+type ContaPreco = 'oben' | 'colacor';
 
 export interface InsumosDoNascimento {
   /** Último preço praticado por `omie_codigo_produto`, separado por conta (códigos colidem entre contas). */
