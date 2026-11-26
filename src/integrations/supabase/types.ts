@@ -2741,6 +2741,30 @@ export type Database = {
         }
         Relationships: []
       }
+      credito_reducao_verificacao: {
+        Row: {
+          detalhes: Json | null
+          erro: string | null
+          raiz: string
+          resultado: string
+          verificada_em: string
+        }
+        Insert: {
+          detalhes?: Json | null
+          erro?: string | null
+          raiz: string
+          resultado: string
+          verificada_em: string
+        }
+        Update: {
+          detalhes?: Json | null
+          erro?: string | null
+          raiz?: string
+          resultado?: string
+          verificada_em?: string
+        }
+        Relationships: []
+      }
       credito_reserva: {
         Row: {
           company: string
