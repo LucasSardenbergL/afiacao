@@ -42,6 +42,20 @@ Fecha o programa crédito-IA (plano `docs/superpowers/plans/2026-11-20-credito-i
 
 ## Pendências
 - **Sombra (PR 5, #4192):** a sombra NÃO grava em `credito_decisao_pedido` (P0 do Codex: não tocar o gate efetivo); o estado atual por PV fica em `public.credito_sombra_pv_atual` (faixa, motivo, …). O bloco já está **plugado por SQL dinâmico**: sem a view → "PR 5 não aplicado"; com ela → distribuição faixa × motivo; forma diferente (coluna/permissão) → só o bloco degrada para "sem dado" + motivo, o painel segue. Quando o PR 5 for aplicado, o bloco acende sozinho — sem follow-up. Distribuição só de `NOT carga_inicial` (orientação do dono do PR 5) + **concordância gate v2 × piso atual** (`faixa` × `(piso->>'bloqueado')::boolean`; piso sem a chave = NULL, não "liberou").
-- **Concordância IA × regra:** não existe ainda — a IA não decide pedido; o backtest IA × regra é a fatia 5b (depois do PR 4). O bloco diz isso, e mostra a v2 × piso no lugar.
+- ~~**Concordância IA × regra**~~ → **feito em 2026-11-26** (seção abaixo).
+- **Sombra em prod (2026-11-26):** a view existe; 100 decisões, todas `carga_inicial` → o bloco mostra 0 PVs (zero medido) até chegarem pedidos.
 
 Prova: `db/test-credito-painel-leitura.sh` roda em PG17 com as migrations reais do PR 1/2, nos dois locales. Tem 9 sabotagens, controle verde e restauração verde na mesma invocação.
+
+## Concordância IA × regra ao vivo (2026-11-26, migration `20261126180000`)
+
+A 5b (#4214) entregou o backtest como SQL re-rodável (`db/backtest-credito-ia-regra.sql`) e o PR 4 gravou propostas da IA em prod (501 `pendente`). A migration leva para a RPC as seções **risco da IA**, **IA × piso de hoje** e **prospectivo**; o resto do corpo é byte a byte o de `20261125120000`.
+
+- **IA** = proposta mais recente do grupo, fora a redução automática (`aplicada_auto_reducao`). `ia_restringe` = limite 0 ou risco alto/sem evidência. Prospectivo = 1ª proposta (coorte fixa).
+- **Safra** = CR de venda (1.01.*) com vencimento em (hoje − período, hoje − 15]. Em dia = baixa ≤ venc + 5; "> 15 d" = ainda aberto ou baixa > venc + 15. Sem desfecho sai da conta e é contado.
+- **Concordância com o piso** = grupos em que a IA restringe e o piso de hoje (`ficha.piso_estado`) bloqueia, ou ambos liberam. Ficha sem piso = fora da comparação, contada; sem comparável, % = null.
+- **In-sample:** a ficha já viu essas baixas — é coerência, não predição. O out-of-time é o prospectivo, que começa vazio.
+- Diferença do arquivo da 5b: o grupo vem da função canônica `credito_grupo_raiz` (não da réplica do psql-ro) e o piso é o de **hoje** da ficha (a reconstrução em T fica só no arquivo).
+- **Guarda de drift:** a migration aborta se o corpo em prod não for o de `20261125120000` (md5 `afae4546…`) nem já o novo.
+
+Prova: o mesmo harness, agora aplicando a cadeia base + nova. 64 asserts no controle e 21 sabotagens vermelhas, nos dois locales. A sabotagem do REVOKE da migration nova ficava **verde**: o `CREATE OR REPLACE` preserva o ACL da base, então o REVOKE é redundante por desenho. Ela foi trocada por um GRANT a mais, que a postcondição recusa.

@@ -38,6 +38,74 @@ function bloco<T>(v: unknown, ler: (o: Obj) => T): Bloco<T> {
   return { disponivel: true, ...ler(o) };
 }
 
+type LinhaIA = {
+  grupos: number | null;
+  titulos: number | null;
+  valor: number | null;
+  atrasoPct: number | null;
+  atrasoGravePct: number | null;
+};
+/** Backtest IA × regra (fatia 5b) ao vivo — DESCRITIVO (in-sample); o out-of-time é o `prospectivo`. */
+type ConcordanciaIA = {
+  aviso: string | null;
+  janela: { de: string | null; ate: string | null; toleranciaDias: number | null };
+  gruposComProposta: number | null;
+  gruposComDesfecho: number | null;
+  titulosSemDesfecho: number | null;
+  concordanciaPiso: { comparaveis: number | null; concordam: number | null; fora: number | null; pct: number | null };
+  porRisco: ({ risco: string } & LinhaIA)[];
+  iaXPiso: ({ iaRestringe: boolean | null; pisoHoje: string | null } & LinhaIA)[];
+  prospectivo: {
+    titulosMaduros: number | null;
+    porIa: { iaRestringe: boolean | null; titulos: number | null; valor: number | null; atrasoPct: number | null }[];
+  };
+};
+
+const linhaIA = (v: Obj): LinhaIA => ({
+  grupos: num(v.grupos),
+  titulos: num(v.titulos),
+  valor: num(v.valor),
+  atrasoPct: num(v.atraso_pct),
+  atrasoGravePct: num(v.atraso_grave_pct),
+});
+
+function lerConcordanciaIA(o: Obj): ConcordanciaIA {
+  const jan = obj(o.janela);
+  const cp = obj(o.concordancia_piso);
+  const pr = obj(o.prospectivo);
+  return {
+    aviso: str(o.aviso),
+    janela: { de: str(jan?.vencimento_de), ate: str(jan?.vencimento_ate), toleranciaDias: num(jan?.tolerancia_dias) },
+    gruposComProposta: num(o.grupos_com_proposta),
+    gruposComDesfecho: num(o.grupos_com_desfecho),
+    titulosSemDesfecho: num(o.titulos_sem_desfecho),
+    concordanciaPiso: {
+      comparaveis: num(cp?.comparaveis),
+      concordam: num(cp?.concordam),
+      fora: num(cp?.fora_da_comparacao),
+      pct: num(cp?.concordancia_pct),
+    },
+    porRisco: arr(o.por_risco).flatMap((x) => {
+      const v = obj(x);
+      const risco = str(v?.risco);
+      return v && risco ? [{ risco, ...linhaIA(v) }] : [];
+    }),
+    iaXPiso: arr(o.ia_x_piso).flatMap((x) => {
+      const v = obj(x);
+      return v ? [{ iaRestringe: bool(v.ia_restringe), pisoHoje: str(v.piso_hoje), ...linhaIA(v) }] : [];
+    }),
+    prospectivo: {
+      titulosMaduros: num(pr?.titulos_maduros),
+      porIa: arr(pr?.por_ia).flatMap((x) => {
+        const v = obj(x);
+        return v
+          ? [{ iaRestringe: bool(v.ia_restringe), titulos: num(v.titulos), valor: num(v.valor), atrasoPct: num(v.atraso_pct) }]
+          : [];
+      }),
+    },
+  };
+}
+
 type GrupoExposicao = {
   grupoUserId: string;
   nome: string | null;
@@ -122,7 +190,7 @@ export type PainelCredito = {
     propostasPendentes: number | null;
   };
   concordancia: {
-    concordancia: Indisponivel | { disponivel: true };
+    concordancia: Bloco<ConcordanciaIA>;
     sombra: Bloco<{ pvs: number | null; porFaixa: FaixaMotivo[]; v2XPiso: V2XPiso[] }>;
   };
   fila: Bloco<{ abertas: number | null; abertaMaisAntiga: string | null; decididasPeriodo: number | null }>;
@@ -251,9 +319,7 @@ export function lerPainelCredito(raw: Json | null): PainelCredito {
     },
     limites: { ...limBloco, propostasPendentes: propostas.pendente ?? (Object.keys(propostas).length ? 0 : null) },
     concordancia: {
-      concordancia: conc.disponivel === true
-        ? { disponivel: true }
-        : { disponivel: false, motivo: str(conc.motivo) ?? 'fonte não informou o motivo' },
+      concordancia: bloco(conc, lerConcordanciaIA),
       sombra: bloco(conc.sombra, (o) => ({
         pvs: num(o.pvs),
         porFaixa: faixas(o.por_faixa),
