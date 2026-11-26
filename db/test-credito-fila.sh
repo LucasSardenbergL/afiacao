@@ -636,6 +636,25 @@ eq "E12.7 master lê as 3 empresas do flag" "$(Pq -c "SELECT pg_catalog.set_conf
 eq "E12.8 RLS segue FECHADA: vendedor não-gestor lê 0 empresas" "$(Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$V\",\"role\":\"authenticated\"}', false);" -c "SET ROLE authenticated;" -c "SELECT count(*) FROM public.credito_enforcement;" | tail -1)" "0"
 eq "E12.9 nenhuma policy de crédito chama mais a public" "$(Pq -c "SELECT count(*) FROM pg_policy WHERE pg_get_expr(polqual, polrelid) ~ '(^|[^._a-z])pode_ver_carteira_completa\('")" "0"
 
+# ── E13: prontidão pós-6b — sai o item 6b, entram m (front da fila/retomada) e n (fail-closed antes de ligar).
+MIG5="$REPO_ROOT/supabase/migrations/20261126150000_credito_prontidao_pos_6b.sql"
+python3 - "$MIG5" "$SAB/m5.sql" <<'PY5'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+n = t.replace("    'n_gate_v2_volta_a_fail_closed_antes_de_ligar'];", "    'n_gate_v2_volta_a_fail_closed_antes_de_ligar',\n    '6b_edge_omie_vendas_sync_chama_o_gate_efetivo'];", 1)
+assert n != t, "sabotagem não alterou o texto"
+open(sys.argv[2], "w", encoding="utf-8").write(n)
+PY5
+if P -1 -q -f "$SAB/m5.sql" > "$SAB/pos5.log" 2>&1; then bad "F20 com o 6b de volta a migration APLICOU (postcondição sem dente)"
+elif grep -q 'POS FALHOU: o item 6b continua pendente' "$SAB/pos5.log"; then ok "F20 6b de volta na lista → postcondição abortou"
+else bad "F20 falhou por OUTRO motivo: $(head -c 300 "$SAB/pos5.log")"; fi
+P -1 -q -f "$MIG5" 2>"$SAB/apl6.log" || { echo "MIG5 falhou:"; head -c 1200 "$SAB/apl6.log"; }
+P -1 -q -f "$MIG5" 2>>"$SAB/apl6.log" || { echo "MIG5 (2ª) falhou:"; tail -c 600 "$SAB/apl6.log"; }
+eq "E13.1 POS OK da 20261126150000 (2×)" "$(grep -c 'POS OK: prontidão sem o 6b' "$SAB/apl6.log")" "2"
+eq "E13.2 pendentes: sem 6b, com m e n, 13 itens" "$(Pq -c "SELECT ((c->'valor'->'pendentes') ? '6b_edge_omie_vendas_sync_chama_o_gate_efetivo')::text || '/' || ((c->'valor'->'pendentes') ? 'n_gate_v2_volta_a_fail_closed_antes_de_ligar')::text || '/' || jsonb_array_length(c->'valor'->'pendentes') FROM jsonb_array_elements(public.credito_enforcement_prontidao('oben')->'condicoes') c WHERE c->>'chave' = 'prereq_codigo'")" "false/true/13"
+eq "E13.3 prontidão segue recusando nas 3 empresas" "$(Pq -c "SELECT count(*) FILTER (WHERE (public.credito_enforcement_prontidao(e)->>'pronto')::boolean) FROM unnest(ARRAY['oben','colacor','colacor_sc']) e")" "0"
+eq "E13.4 ligar continua recusado (prontidão)" "$(como "$L" "SELECT public.credito_definir_enforcement('oben', true, 'teste pós-6b')")" "P0001"
+
 echo "RESULTADO: $PASS ok / $FAIL fail"
 if [ "$FAIL" -ne 0 ]; then echo "❌ HARNESS VERMELHO"; exit 1; fi
 echo "✅ HARNESS VERDE — prova PG17 do PR 6a (locale ${LC_ALL})"
