@@ -98,6 +98,7 @@
     --company-colacor: 0 0% 9%;          /* preto industrial */
     --company-oben: 212 80% 35%;         /* azul distribuidor */
     --company-sc: 142 50% 32%;           /* verde serviços */
+    --company-monograma-texto: 0 0% 100%; /* letra do monograma: fundo escuro no claro */
     --status-pending: 35 80% 45%;
     --status-progress: 212 80% 50%;
     --status-danger: 0 65% 48%;
@@ -139,7 +140,7 @@
     --sidebar-accent-foreground: 0 0% 9%;
     --sidebar-border: 0 0% 92%;
     --sidebar-ring: 0 0% 9%;
-    --sidebar-muted: 0 0% 60%;
+    --sidebar-muted: 0 0% 45%;         /* 4,66:1 sobre o fundo do menu (60% dava 2,79:1 — WCAG AA pede 4,5) */
 
     /* ── Motion ── */
     --duration-fast: 150ms;
@@ -172,7 +173,7 @@
     --primary-foreground: 0 0% 9%;
 
     --destructive: 0 70% 60%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive-foreground: 0 0% 6%;   /* texto ESCURO no vermelho claro do dark: 5,01:1 (branco dava 3,82:1) */
 
     --border: 0 0% 14%;
     --input: 0 0% 14%;
@@ -201,6 +202,7 @@
     --company-colacor: 0 0% 95%;
     --company-oben: 212 80% 60%;
     --company-sc: 142 50% 55%;
+    --company-monograma-texto: 0 0% 9%;   /* dark: fundos claros (95/60/55%) — branco dava 1,12–2,x:1 */
     --status-pending: 35 80% 60%;
     --status-progress: 212 80% 65%;
     --status-danger: 0 70% 60%;

@@ -30,7 +30,7 @@ function CompanyMonogram({
   return (
     <div
       className={cn(
-        'rounded-md flex items-center justify-center font-semibold text-white shrink-0 transition-all',
+        'rounded-md flex items-center justify-center font-semibold shrink-0 transition-all',
         'shadow-[inset_0_1px_0_hsl(0_0%_100%/0.18),0_1px_2px_hsl(0_0%_0%/0.06)]',
         withRingOnHover && 'group-hover:ring-2 group-hover:ring-offset-1 group-hover:ring-offset-background',
       )}
@@ -38,6 +38,8 @@ function CompanyMonogram({
         width: size,
         height: size,
         backgroundColor: `hsl(var(${v.tokenVar}))`,
+        // letra clara no tema claro e escura no dark: os fundos do dark são claros (95/60/55%)
+        color: 'hsl(var(--company-monograma-texto))',
         fontSize: size <= 20 ? 11 : 13,
         letterSpacing: '-0.02em',
         // @ts-expect-error CSS var inline
