@@ -35,6 +35,7 @@ Fecha o programa crédito-IA (plano `docs/superpowers/plans/2026-11-20-credito-i
 - Pedidos criados no app são poucos: 27 em 365 d, quase todos de abril. O bloco de liberados já tem sinal real (o PV 10710 tem título ATRASADO sem baixa), mas o denominador ainda é pequeno.
 
 ## Pendências
+- **Sombra (PR 5, #4192):** a sombra NÃO grava em `credito_decisao_pedido` (P0 do Codex: não tocar o gate efetivo); o estado atual por PV fica em `public.credito_sombra_pv_atual` (faixa, motivo, …). O bloco já está **plugado por SQL dinâmico**: sem a view → "PR 5 não aplicado"; com ela → distribuição faixa × motivo; forma diferente (coluna/permissão) → só o bloco degrada para "sem dado" + motivo, o painel segue. Quando o PR 5 for aplicado, o bloco acende sozinho — sem follow-up.
 - **Concordância IA × regra:** o sensor é do PR 5 e não está na main. O bloco declara a ausência em vez de inventar a forma da tabela. Quando o PR 5 mergear, é um `CREATE OR REPLACE` desta RPC (repetindo o ACL) para plugar a tabela real.
 
 Prova: `db/test-credito-painel-leitura.sh` roda em PG17 com as migrations reais do PR 1/2, nos dois locales. Tem 9 sabotagens, controle verde e restauração verde na mesma invocação.

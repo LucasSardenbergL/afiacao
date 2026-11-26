@@ -221,9 +221,9 @@ function BlocoConcordancia({ p }: { p: PainelCredito }) {
         {ind(c.concordancia) && <SemDado motivo={c.concordancia.motivo} />}
         {ind(c.sombra) ? <SemDado motivo={c.sombra.motivo} /> : (
           <div className="text-sm">
-            <div className="font-medium">Faixas em sombra no período</div>
+            <div className="font-medium">Faixas em sombra (estado atual por pedido)</div>
             {c.sombra.porFaixa.length === 0
-              ? <p className="text-muted-foreground">Nenhuma decisão em sombra no período.</p>
+              ? <p className="text-muted-foreground">Nenhum pedido avaliado em sombra ainda.</p>
               : c.sombra.porFaixa.map((m) => <div key={`${m.faixa}-${m.motivo}`}>{m.faixa} · {m.motivo}: {int(m.decisoes)}</div>)}
           </div>
         )}

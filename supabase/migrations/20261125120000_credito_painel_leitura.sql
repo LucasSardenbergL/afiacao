@@ -42,7 +42,7 @@ DECLARE
   v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   v_desde_ts timestamptz;
   v_tem_efetivo boolean;
-  v_tem_sombra boolean;
+  v_sombra jsonb;
   v_exposicao jsonb;
   v_bloqueios jsonb;
   v_limites jsonb;
@@ -61,7 +61,6 @@ BEGIN
   v_desde_ts := ((v_hoje - p_dias)::timestamp AT TIME ZONE 'America/Sao_Paulo');
 
   v_tem_efetivo := EXISTS (SELECT 1 FROM public.credito_decisao_pedido d WHERE d.modo = 'efetivo');
-  v_tem_sombra  := EXISTS (SELECT 1 FROM public.credito_decisao_pedido d WHERE d.modo = 'sombra');
 
   -- ── frescor do espelho de CR por empresa (a exposição é tão boa quanto o sync) ──────────────
   SELECT COALESCE(jsonb_object_agg(x.company, x.ultimo), '{}'::jsonb) INTO v_frescor
@@ -229,19 +228,34 @@ BEGIN
   ) INTO v_limites;
 
   -- ── 4. concordância IA × regra (sensores do PR 5) + distribuição da sombra ──────────────────
-  -- O sensor de concordância é do PR 5 e não está na main: o bloco declara a ausência em vez de
-  -- inventar a forma da tabela. A distribuição de faixas da SOMBRA já é lida (tabela do PR 2).
+  -- A sombra do PR 5 NÃO grava em credito_decisao_pedido (por desenho: não toca o gate efetivo); o
+  -- estado atual por PV fica em public.credito_sombra_pv_atual (PR 5, #4192 — migration
+  -- 20261125200000). Bloco PREPARADO: enquanto a view não existe → "PR 5 não aplicado"; existindo,
+  -- lê faixa/motivo; forma diferente da esperada → degrada só o bloco (sem dado + motivo), nunca o painel.
+  -- SQL dinâmico de propósito: a view não existe na prod hoje e o corpo não pode depender dela.
+  IF to_regclass('public.credito_sombra_pv_atual') IS NULL THEN
+    v_sombra := jsonb_build_object('disponivel', false, 'motivo',
+      'gate v2 em sombra (PR 5) ainda não aplicado em produção: a distribuição de faixas não existe');
+  ELSE
+    BEGIN
+      EXECUTE $q$
+        SELECT jsonb_build_object('disponivel', true,
+                 'pvs', (SELECT count(*) FROM public.credito_sombra_pv_atual),
+                 'por_faixa', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                     'faixa', z.faixa, 'motivo', z.motivo, 'decisoes', z.n) ORDER BY z.faixa, z.n DESC)
+                   FROM (SELECT a.faixa::text AS faixa, a.motivo::text AS motivo, count(*) AS n
+                           FROM public.credito_sombra_pv_atual a GROUP BY 1, 2) z), '[]'::jsonb))
+      $q$ INTO v_sombra;
+    EXCEPTION WHEN undefined_column OR undefined_table OR insufficient_privilege THEN
+      v_sombra := jsonb_build_object('disponivel', false, 'motivo',
+        'credito_sombra_pv_atual existe mas não tem a forma esperada (faixa, motivo): o painel precisa ser ajustado');
+    END;
+  END IF;
+
   SELECT jsonb_build_object(
     'disponivel', false,
-    'motivo', 'sensor de concordância IA × regra nasce no PR 5 (gate v2 em sombra) e ainda não está em produção',
-    'sombra', CASE WHEN v_tem_sombra THEN jsonb_build_object('disponivel', true, 'por_faixa',
-        COALESCE((SELECT jsonb_agg(jsonb_build_object('faixa', z.faixa, 'motivo', z.motivo, 'decisoes', z.n)
-                    ORDER BY z.faixa, z.n DESC) FROM (
-          SELECT d.faixa, d.motivo, count(*) AS n FROM public.credito_decisao_pedido d
-           WHERE d.modo = 'sombra' AND d.created_at >= v_desde_ts
-           GROUP BY d.faixa, d.motivo) z), '[]'::jsonb))
-      ELSE jsonb_build_object('disponivel', false, 'motivo',
-        'nenhuma decisão em sombra gravada ainda (PR 5)') END
+    'motivo', 'sensor de concordância IA × regra (PR 5) ainda não está em produção',
+    'sombra', v_sombra
   ) INTO v_concordancia;
 
   -- ── 5. fila de aprovação (PR 6) ─────────────────────────────────────────────────────────────

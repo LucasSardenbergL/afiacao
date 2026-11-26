@@ -151,6 +151,13 @@ J() { # $1 = expressão jsonb sobre r (o resultado do painel como o Lucas, 90 d)
          ROLLBACK;" | sed -n 2p
 }
 
+Jv() { # $1 = DDL como postgres (desfeito no ROLLBACK), $2 = expressão jsonb sobre r
+  Pq -c "BEGIN; $1; SET LOCAL ROLE authenticated;
+         SELECT set_config('request.jwt.claims', '{\"sub\":\"$L\"}', true);
+         WITH x AS (SELECT public.credito_painel_resumo(90) AS r) SELECT $2 FROM x;
+         ROLLBACK;" | sed -n 2p
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED
 # grupo C: canônico C oben 101 + alias A1 ACTIVE colacor_sc 202 (soma das empresas, parcial SC)
@@ -226,7 +233,17 @@ asserts() {
   eq "reservado do grupo = null (não 0)" "$(J "(SELECT g->'reservado' FROM jsonb_array_elements(r->'exposicao'->'grupos') g WHERE g->>'grupo_user_id'='$C')")" "null"
   eq "fila indisponível" "$(J "r->'fila'->>'disponivel'")" "false"
   eq "concordância indisponível" "$(J "r->'concordancia'->>'disponivel'")" "false"
-  eq "sombra indisponível (sem decisão)" "$(J "r->'concordancia'->'sombra'->>'disponivel'")" "false"
+  eq "sombra indisponível sem a view do PR 5" "$(J "r->'concordancia'->'sombra'->>'disponivel'")" "false"
+  eq "motivo = PR 5 não aplicado" "$(J "(r->'concordancia'->'sombra'->>'motivo') LIKE '%(PR 5) ainda n%o aplicado%'")" "t"
+
+  echo "── sombra do PR 5 (view credito_sombra_pv_atual criada e desfeita na transação) ──"
+  local VOK="CREATE VIEW public.credito_sombra_pv_atual AS SELECT * FROM (VALUES ('amarelo','sem_limite'),('amarelo','sem_limite'),('verde','dentro_limite')) v(faixa, motivo)"
+  eq "com a view: sombra disponível" "$(Jv "$VOK" "r->'concordancia'->'sombra'->>'disponivel'")" "true"
+  eq "com a view: 3 PVs" "$(Jv "$VOK" "r->'concordancia'->'sombra'->>'pvs'")" "3"
+  eq "com a view: amarelo/sem_limite = 2" "$(Jv "$VOK" "(SELECT f->>'decisoes' FROM jsonb_array_elements(r->'concordancia'->'sombra'->'por_faixa') f WHERE f->>'faixa'='amarelo' AND f->>'motivo'='sem_limite')")" "2"
+  local VRUIM="CREATE VIEW public.credito_sombra_pv_atual AS SELECT 'verde'::text AS faixa"
+  eq "view com outra forma: só o bloco degrada" "$(Jv "$VRUIM" "r->'concordancia'->'sombra'->>'disponivel'")" "false"
+  eq "view com outra forma: o resto do painel segue" "$(Jv "$VRUIM" "r->'exposicao'->'totais'->>'grupos'")" "1"
   eq "gate v2 efetivo indisponível" "$(J "r->'bloqueios'->'gate_v2'->>'disponivel'")" "false"
 
   echo "── exposição do grupo (3 empresas somadas) ──"
@@ -284,7 +301,6 @@ SQL
   eq "reservas medidas" "$(J "r->'exposicao'->'reservas'->>'disponivel'")" "true"
   eq "reservado C = 600" "$(J "$g->>'reservado'")" "600"
   eq "uso_pct C = (6300+600)/12000 = 57.5" "$(J "$g->>'uso_pct'")" "57.5"
-  eq "sombra disponível" "$(J "r->'concordancia'->'sombra'->>'disponivel'")" "true"
   eq "concordância segue indisponível (sensor do PR 5)" "$(J "r->'concordancia'->>'disponivel'")" "false"
   eq "gate v2 disponível (só não-verde listado)" "$(J "jsonb_array_length(r->'bloqueios'->'gate_v2'->'por_motivo')")" "0"
 }
@@ -327,6 +343,8 @@ sabota reserva_zero 's/CASE WHEN v_tem_efetivo THEN COALESCE(rs.reservado, 0) EN
 sabota sem_grupo_sc "s/OR x.limite_brl IS NOT NULL), '\[\]'::jsonb)/AND 'colacor_sc' <> ALL (x.empresas)), '[]'::jsonb)/"
 sabota pv_cru       "s/ltrim(f.numero_pedido, '0') = ltrim(l.pv, '0')/f.numero_pedido = l.pv/"
 sabota gemeo_ignora "s/WHERE g.id = so.gemeo_importado_id AND g.status = 'cancelado')/WHERE false)/"
+sabota sombra_sem_guarda "s/IF to_regclass('public.credito_sombra_pv_atual') IS NULL THEN/IF false THEN/"
+sabota sombra_sem_excecao "s/EXCEPTION WHEN undefined_column OR undefined_table OR insufficient_privilege THEN/EXCEPTION WHEN division_by_zero THEN/"
 sabota acl_aberta   's/EXECUTE format(.REVOKE ALL ON FUNCTION public.credito_painel_resumo(integer) FROM %s., r.papel);/NULL;/'
 
 echo "══ RESTAURAÇÃO (original de novo) ══"
