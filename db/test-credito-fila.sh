@@ -566,6 +566,32 @@ eq "E10.2 POS OK da 20261126010000" "$(grep -c 'POS OK: credito_fila_v legível'
 eq "E10.3 claude_ro lê a view (query real, sem erro)" "$(Pq -c "SET ROLE claude_ro;" -c "SELECT count(*) >= 0 FROM public.credito_fila_v;" | tail -1)" "t"
 eq "E10.4 claude_ro continua sem escrever" "$(Pq -c "SELECT has_table_privilege('claude_ro','public.credito_fila_v','INSERT')")" "f"
 
+# ── E11: incidente 2026-11-26 — na prod o authenticated tem SELECT em sales_orders só POR COLUNA
+#    (vendedor_user_id fechada, #d7a15546d). View security_invoker que toca a coluna fechada → 42501 (403).
+echo "md5 viewdef local (6a): $(Pq -c "SELECT md5(pg_get_viewdef('public.credito_fila_v'::regclass))") · prod: 18d4ea7126101ace96e77649cc2d366e"
+Pq -c "REVOKE SELECT ON public.sales_orders FROM authenticated;" \
+   -c "GRANT SELECT (id, account, customer_user_id, created_by, omie_numero_pedido, status, deleted_at, total, items, created_at) ON public.sales_orders TO authenticated;" >/dev/null
+eq "E11.1 reproduz o 403: com grant por coluna, a view da 6a nega (42501)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v WHERE origem = 'efetivo' AND status = 'aberta'")" "42501"
+MIG3="$REPO_ROOT/supabase/migrations/20261126120000_credito_fila_v_sem_coluna_fechada.sql"
+python3 - "$MIG3" "$SAB/m3.sql" <<'PY3'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+n = t.replace("NULL::uuid AS vendedor_user_id, so.created_by", "so.vendedor_user_id, so.created_by", 1)
+assert n != t, "sabotagem não alterou o texto"
+open(sys.argv[2], "w", encoding="utf-8").write(n)
+PY3
+if P -1 -q -f "$SAB/m3.sql" > "$SAB/pos3.log" 2>&1; then bad "F18 com a coluna fechada a migration APLICOU (postcondição sem dente)"
+elif grep -q 'POS FALHOU: authenticated sem SELECT em coluna lida pela view: sales_orders.vendedor_user_id' "$SAB/pos3.log"; then ok "F18 coluna fechada de volta → postcondição abortou nomeando a coluna"
+else bad "F18 falhou por OUTRO motivo: $(head -c 300 "$SAB/pos3.log")"; fi
+eq "E11.2 a sabotagem fez ROLLBACK (view segue negando)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v")" "42501"
+P -1 -q -f "$MIG3" 2>"$SAB/apl4.log"; P -1 -q -f "$MIG3" 2>>"$SAB/apl4.log"   # 2×: idempotente
+eq "E11.3 POS OK da 20261126120000 (2×)" "$(grep -c 'POS OK: credito_fila_v sem coluna fechada' "$SAB/apl4.log")" "2"
+eq "E11.4 o contador do menu lê (query exata do front)" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v WHERE origem = 'efetivo' AND status = 'aberta'")" "OK"
+eq "E11.5 a tela lê a view inteira" "$(como "$L" "SELECT count(*) FROM public.credito_fila_v")" "OK"
+eq "E11.6 security_invoker segue ligado" "$(Pq -c "SELECT 'security_invoker=on' = ANY (reloptions) FROM pg_class WHERE oid = 'public.credito_fila_v'::regclass")" "t"
+eq "E11.7 anon segue sem ler; claude_ro segue lendo" "$(Pq -c "SELECT has_table_privilege('anon','public.credito_fila_v','SELECT') || '/' || has_table_privilege('claude_ro','public.credito_fila_v','SELECT')")" "false/true"
+eq "E11.8 vendedor_user_id vem NULL (nunca o valor da coluna fechada)" "$(Pq -c "SELECT count(*) FILTER (WHERE vendedor_user_id IS NOT NULL) FROM public.credito_fila_v")" "0"
+
 echo "RESULTADO: $PASS ok / $FAIL fail"
 if [ "$FAIL" -ne 0 ]; then echo "❌ HARNESS VERMELHO"; exit 1; fi
 echo "✅ HARNESS VERDE — prova PG17 do PR 6a (locale ${LC_ALL})"
