@@ -404,7 +404,6 @@ dig_cc_view() { como "$1" "SELECT md5(coalesce(string_agg(t::text, '§' ORDER BY
 cc_view()   { como "$1" "SELECT coalesce(string_agg(phone, ',' ORDER BY phone),'(vazio)') FROM public.v_cliente_contatos WHERE customer_user_id='$2';"; }
 
 # linha de base: estado de PROD de hoje (antes da 4a)
-BASE_DIG_COMPR4="$(dig_compr)"; BASE_DIG_CAND4_F="$(dig_cand $F)"; BASE_DIG_GRUPO4_F="$(dig_grupo $F)"
 BASE_DIG_METR_SRV="$(dig_metr_srv)"
 for _q in F B G M C1; do
   printf -v "BASE_METR_$_q" '%s' "$(dig_metr "${!_q}")"
