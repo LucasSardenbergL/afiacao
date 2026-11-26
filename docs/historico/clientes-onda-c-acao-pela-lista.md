@@ -76,4 +76,10 @@ ids duplicados, `lang`, `h1` e `alt`. O contraste reprovou em 5 pontos, e 3 dele
 
 O "0 violações no escuro" da rodada anterior mediu só o conteúdo da tela, não o topo e o menu. O
 `html.legacy-visual` tem o mesmo defeito no `--sidebar-muted` (4,02:1), mas ficou de fora por ser o visual
-antigo. A conta das razões está no PR, e a re-medição em prod espera o Publish.
+antigo. A conta das razões está no #4209.
+
+**Re-medição em prod depois do Publish** (build `94d09707`, 1280 px, logado como master), mesma leitura do DOM:
+- lista: 0 falhas em 183 textos no claro (eram 15) e 0 em 183 no escuro (eram 3);
+- 360: 0 em 247 no claro (eram 13) e 0 em 251 no escuro (eram 5).
+
+As células de 35, 37 e 50 dias, o "0–100" e os selos "63" e "448" estavam na tela, então o zero não é falta de dado. A largura conta: no painel estreito (533 px) o menu some e a medição pula os títulos das seções.
