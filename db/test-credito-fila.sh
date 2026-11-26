@@ -46,6 +46,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authentic
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
 -- … e o builder do Lovable (sandbox_exec_<ref>, BYPASSRLS), medido em prod no PR 2
 CREATE ROLE sandbox_exec_teste BYPASSRLS;
+-- papel de diagnóstico read-only de prod (psql-ro): SELECT por default, como lá
+CREATE ROLE claude_ro;
+GRANT USAGE ON SCHEMA public TO claude_ro;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO claude_ro;
 GRANT USAGE ON SCHEMA public TO sandbox_exec_teste;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO sandbox_exec_teste;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO sandbox_exec_teste;
@@ -542,6 +546,26 @@ aborta "F13 REVOKE de escrita esquecido (builder com INSERT)" \
 
 echo "── re-controle (migration real reaplicada) ──"
 asserts
+
+# ══ E10 — follow-up 20261126010000: claude_ro volta a ler a view (bug medido na 2ª testemunha) ══
+MIG2="$REPO_ROOT/supabase/migrations/20261126010000_credito_fila_v_select_claude_ro.sql"
+echo "E10 claude_ro lê credito_fila_v"
+eq "E10.1 reproduz o bug: depois da 6a, claude_ro NÃO lê a view (mas lê as tabelas)" "$(Pq -c "SELECT has_table_privilege('claude_ro','public.credito_fila_v','SELECT') || '/' || has_table_privilege('claude_ro','public.credito_enforcement','SELECT')")" "false/true"
+python3 - "$MIG2" "$SAB/m2.sql" <<'PY2'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+n = t.replace("    GRANT SELECT ON public.credito_fila_v TO claude_ro;\n", "")
+assert n != t, "sabotagem não alterou o texto"
+open(sys.argv[2], "w", encoding="utf-8").write(n)
+PY2
+if P -1 -q -f "$SAB/m2.sql" > "$SAB/pos2.log" 2>&1; then bad "F17 sem o GRANT a migration APLICOU (postcondição sem dente)"
+elif grep -q 'POS FALHOU: claude_ro sem SELECT' "$SAB/pos2.log"; then ok "F17 sem o GRANT → postcondição abortou"
+else bad "F17 falhou por OUTRO motivo: $(head -c 200 "$SAB/pos2.log")"; fi
+P -1 -q -f "$MIG2" 2>"$SAB/apl3.log"; P -1 -q -f "$MIG2" 2>>"$SAB/apl3.log"   # 2×: idempotente
+eq "E10.2 POS OK da 20261126010000" "$(grep -c 'POS OK: credito_fila_v legível' "$SAB/apl3.log")" "2"
+eq "E10.3 claude_ro lê a view (query real, sem erro)" "$(Pq -c "SET ROLE claude_ro;" -c "SELECT count(*) >= 0 FROM public.credito_fila_v;" | tail -1)" "t"
+eq "E10.4 claude_ro continua sem escrever" "$(Pq -c "SELECT has_table_privilege('claude_ro','public.credito_fila_v','INSERT')")" "f"
+
 echo "RESULTADO: $PASS ok / $FAIL fail"
 if [ "$FAIL" -ne 0 ]; then echo "❌ HARNESS VERMELHO"; exit 1; fi
 echo "✅ HARNESS VERDE — prova PG17 do PR 6a (locale ${LC_ALL})"
