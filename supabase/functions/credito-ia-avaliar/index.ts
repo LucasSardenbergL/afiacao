@@ -52,7 +52,8 @@ async function avaliarRaiz(db: Db, apiKey: string, token: string, raiz: string, 
     const cliente = criarClienteAnthropic(apiKey, { timeoutMs: Math.min(resta, TIMEOUT_ANTHROPIC_MS), maxRetries: 0 });
     const resp = await cliente.messages.create({
       model: MODELO_PADRAO,
-      max_tokens: 1024,
+      // 4096: com tool_choice auto o modelo pode raciocinar em texto antes da tool — 1024 truncou 1 grupo em 59 (2026-11-26)
+      max_tokens: 4096,
       temperature: 0,
       system: [{ type: "text", text: SYSTEM_POLITICA, cache_control: { type: "ephemeral" } }],
       tools: [{ ...TOOL_PROPOR, cache_control: { type: "ephemeral" } }],
