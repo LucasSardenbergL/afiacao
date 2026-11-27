@@ -94,7 +94,7 @@ export function useSalesOrderEdit() {
   // #30: o salvar falhou DEPOIS de mexer no Omie (ou outra edição ganhou a vez). O formulário na tela
   // é um retrato velho — reenviá-lo regravaria itens que o Omie já não tem. Só recarregar destrava.
   const [precisaRecarregar, setPrecisaRecarregar] = useState<TravaDoEnvio | null>(null);
-  // Divergência gravada no banco (posse por conta+PV, migration 20261127100200): sobrevive à recarga e a outra aba.
+  // Divergência gravada no banco (posse por conta+PV, migration 20261127120100): sobrevive à recarga e a outra aba.
   const [divergenciaDuravel, setDivergenciaDuravel] = useState<DivergenciaDuravel | null>(null);
   // A página remonta a cada `:id` (SalesOrderEdit.tsx): a instância é de UM pedido. Depois de um `await`,
   // se ela desmontou (o vendedor abriu outro pedido), o salvar não publica toast, navegação nem estado — só
@@ -607,7 +607,7 @@ export function useSalesOrderEdit() {
     const pedidoEnviado = order.id;
     const naTela = () => montadoRef.current;
     // Token DESTE salvamento: a edge reivindica a posse por ele, e é por ele que a tela pergunta ao banco o que
-    // houve quando a resposta se perde (migration 20261127100200).
+    // houve quando a resposta se perde (migration 20261127120100).
     // PENDENTE desde ANTES do despacho (Codex r4): um F5 no meio do envio deixa o token no aparelho, e reabrir o
     // encerra no banco. Só sai com desfecho PROVADO (sucesso, recusa conhecida antes do Omie, banco decidido).
     let manterPendente = true;

@@ -4391,7 +4391,7 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
 
   it('a edição NÃO volta a gravar o pedido por .update() do PostgREST', () => {
     // Desde a v1.55 nem a reserva é `.update()`: a versão se move dentro da RPC de despacho (posse durável,
-    // migration 20261127100200), sob FOR UPDATE.
+    // migration 20261127120100), sob FOR UPDATE.
     expect(bloco, 'alterar_pedido voltou a escrever sales_orders por PostgREST — o cabeçalho iria sem as linhas')
       .not.toContain('.update(');
     expect(bloco, 'alterar_pedido escrevendo order_items solto: fora da transação do cabeçalho')

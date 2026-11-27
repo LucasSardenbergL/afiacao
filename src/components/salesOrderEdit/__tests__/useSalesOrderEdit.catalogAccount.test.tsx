@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 
-// Posse durável (migration 20261127100200): as 3 RPCs da posse respondem por `posseMock` (padrão: PV livre);
+// Posse durável (migration 20261127120100): as 3 RPCs da posse respondem por `posseMock` (padrão: PV livre);
 // o resto vai ao mock de sempre (`mockedRpc`). Sem isto o estado viria "ilegível" e a tela travaria (fail-closed).
 const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
   const rpcInterno = vi.fn();

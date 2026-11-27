@@ -397,7 +397,7 @@ export function observacaoParaOmie(input: {
   return input.viva ?? local ?? input.padraoDaConta;
 }
 
-// ── Posse DURÁVEL da edição (leva 1 PR 2, migration 20261127100200) ──────────────────────────────────────
+// ── Posse DURÁVEL da edição (leva 1 PR 2, migration 20261127120100) ──────────────────────────────────────
 // Uma tentativa por token no banco (`pedido_edicao_omie_tentativa`), no máximo uma viva por (conta, PV).
 // A tela gera o token e o manda; com ele, depois de perder a resposta, ela pergunta ao banco o que houve
 // (`pedido_edicao_omie_encerrar_envio`). Tela antiga (sem token) → a edge gera um: a posse vale igual,

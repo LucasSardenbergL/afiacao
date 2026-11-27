@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════
-# Prova PG17 da migration 20261127100200_pedido_edicao_omie_posse_duravel.sql
+# Prova PG17 da migration 20261127120100_pedido_edicao_omie_posse_duravel.sql
 # (posse durável da edição de pedido com PV no Omie — revisão /sales, leva 1, PR 2).
 #
 #   bash db/test-pedido-edicao-posse.sh                       → suíte (locale C)
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIG_REAL="$REPO_ROOT/supabase/migrations/20261127100200_pedido_edicao_omie_posse_duravel.sql"
+MIG_REAL="$REPO_ROOT/supabase/migrations/20261127120100_pedido_edicao_omie_posse_duravel.sql"
 FIX_8ARGS="$REPO_ROOT/db/fixtures/aplicar-edicao-pedido-omie-8args-prod.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then

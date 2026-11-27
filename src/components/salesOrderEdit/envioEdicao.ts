@@ -67,7 +67,7 @@ export const TRAVA_POSSE_ILEGIVEL: TravaDoEnvio = {
   mensagem: 'Não consegui conferir se este pedido está sendo salvo em outro lugar. Recarregue o pedido antes de editar.',
 };
 
-/** Divergência durável no banco (migration 20261127100200): o token é o que o master precisa para liberar. */
+/** Divergência durável no banco (migration 20261127120100): o token é o que o master precisa para liberar. */
 export type DivergenciaDuravel = { token: string; motivo: string | null };
 
 /**

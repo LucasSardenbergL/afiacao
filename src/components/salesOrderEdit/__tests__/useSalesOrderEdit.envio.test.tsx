@@ -8,7 +8,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 const navigateSpy = vi.fn();
 const rota = { id: 'ord-1' };
-// Posse durável (migration 20261127100200): as 3 RPCs da posse respondem por `posseMock` (padrão: PV livre);
+// Posse durável (migration 20261127120100): as 3 RPCs da posse respondem por `posseMock` (padrão: PV livre);
 // o resto vai ao mock de sempre (`mockedRpc`). Sem isto o estado viria "ilegível" e a tela travaria (fail-closed).
 const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
   const rpcInterno = vi.fn();
@@ -779,7 +779,7 @@ describe('leva 1 — Codex no diff (2026-11-26)', () => {
   });
 });
 
-describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', () => {
+describe('leva 1 PR 2 — posse durável no banco (migration 20261127120100)', () => {
   let reconsultaOriginal = 0;
   beforeEach(async () => {
     const { PRAZOS } = await import('../envioEdicao');

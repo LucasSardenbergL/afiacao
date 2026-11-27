@@ -2687,7 +2687,7 @@ Deno.serve(async (req) => {
   // o formulário dela é um retrato velho (#30, ./edicao-omie.ts `corpoDoErro`).
   let edicaoReservada = false;
   let emAlterarPedido = false;
-  // Posse DURÁVEL da edição (migration 20261127100200, ./edicao-omie.ts `tokenDaEdicao`): em TODA saída da
+  // Posse DURÁVEL da edição (migration 20261127120100, ./edicao-omie.ts `tokenDaEdicao`): em TODA saída da
   // action — `break` com recusa ou erro — `encerrarPosseEdicao` libera a reserva que não chegou ao Omie, ou
   // marca DIVERGENTE a que chegou e não concluiu. Concluída (write-back com posse) não é tocada.
   const posseEdicao: { token: string | null; fase: "nenhuma" | "reservada" | "despachada" | "concluida" } = {
@@ -3813,7 +3813,7 @@ Deno.serve(async (req) => {
         });
         if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);
 
-        // DESPACHO da edição (RPC `pedido_edicao_omie_despachar`, migration 20261127100200): na fronteira da 1ª
+        // DESPACHO da edição (RPC `pedido_edicao_omie_despachar`, migration 20261127120100): na fronteira da 1ª
         // mutação no Omie, sob FOR UPDATE do pedido, prova que ele AINDA é o que a tela e as checagens acima
         // leram — mesma versão (o trigger a move em TODO UPDATE: status, PV, conta e origem iguais), não
         // excluído, o gêmeo importado do PV como lido (o sync o avança sem mexer na versão do recibo — Codex
@@ -4292,7 +4292,7 @@ Deno.serve(async (req) => {
         // pedido nos últimos 10 min. É o ponto ATÔMICO da corrida envio × exclusão — a consulta ao
         // Omie acima pode dizer "ausente" porque o IncluirPedido ainda não gravou (Colacor não tem
         // rastro ATP); o lock de linha faz o envio e a exclusão disputarem o MESMO pedido.
-        // Conferida (migration 20261127100200): sob o MESMO lock, a conta e o PV ainda são os que a prova de
+        // Conferida (migration 20261127120100): sob o MESMO lock, a conta e o PV ainda são os que a prova de
         // cancelamento acima leu (o DELETE só por UUID apagaria o recibo de outro PV se a linha trocasse de
         // identidade no meio — Codex), e nenhuma edição deste pedido está reservada ou em voo.
         const { data: desfechoDel, error: delError } = await supabaseAdmin.rpc("sales_order_excluir_conferido", {

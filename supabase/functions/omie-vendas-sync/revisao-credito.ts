@@ -73,7 +73,7 @@ export async function registrarRevisao<T extends ItemPayload>(
     parcela: { codigo: string; origem: OrigemParcela };
     items: T[];
     userId: string | null;
-    /** Edição com posse durável (migration 20261127100200): a revisão só grava se ESTA tentativa ainda está
+    /** Edição com posse durável (migration 20261127120100): a revisão só grava se ESTA tentativa ainda está
      *  reservada, na mesma transação (`pedido_edicao_omie_registrar_revisao`). Sem token, a RPC de sempre. */
     tokenEdicao?: string | null;
   },

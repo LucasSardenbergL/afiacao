@@ -5,7 +5,7 @@
 // estiver aberto: (1) o envio de A ainda está voando — uma tela nova de A não pode mandar outro por cima;
 // (2) A ficou divergente do Omie — reabrir A (mesmo depois de ir e voltar) relê o app, não o Omie, e não
 // pode reabilitar o carrinho velho. Desde o PR 2 da leva 1 a verdade é do BANCO (posse por conta+PV, migration
-// 20261127100200: outra aba/aparelho, recarga e desfecho pelo token); este registro é só o bloqueio síncrono da
+// 20261127120100: outra aba/aparelho, recarga e desfecho pelo token); este registro é só o bloqueio síncrono da
 // mesma aba (duplo clique, A→B→A) e o cache do divergente até a tela reler o banco.
 
 const emVoo = new Set<string>();

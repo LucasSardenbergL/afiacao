@@ -36,7 +36,7 @@
 - Falsificação: 33 sabotagens × 2 locales (C e pt_BR.UTF-8), controle verde na mesma invocação, + S38 dirigida.
 - Bateria em `ce73ad443`: 6 gates de edge, lint, typecheck, suíte completa (17.293 testes) — exit 0.
 
-## PR 2 — posse durável no banco (migration `20261127100200`, edge v1.55)
+## PR 2 — posse durável no banco (migration `20261127120100`, edge v1.55)
 
 | residual do PR 1 | como fechou |
 |---|---|

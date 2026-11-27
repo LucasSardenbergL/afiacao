@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS public.pedido_edicao_omie_tentativa (
 
 COMMENT ON TABLE public.pedido_edicao_omie_tentativa IS
   'Uma linha por tentativa de edição de pedido com PV no Omie (token da tela). Escrita só pelas RPCs '
-  'pedido_edicao_omie_* e aplicar_edicao_pedido_omie (9 args). Migration 20261127100200.';
+  'pedido_edicao_omie_* e aplicar_edicao_pedido_omie (9 args). Migration 20261127120100.';
 
 -- A exclusão mútua por PV.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_pedido_edicao_omie_tentativa_viva_por_pv
@@ -654,13 +654,13 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid) IS
-  'Tentativa de edição por (conta, PV): reivindicado | ausente | excluido | sem_pv | pedido_alterado | token_encerrado | em_edicao | divergente. Só service_role. Migration 20261127100200.';
+  'Tentativa de edição por (conta, PV): reivindicado | ausente | excluido | sem_pv | pedido_alterado | token_encerrado | em_edicao | divergente. Só service_role. Migration 20261127120100.';
 COMMENT ON FUNCTION public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text) IS
-  'Grava o despacho (antes da 1ª mutação no Omie) e move a versão do pedido: despachado | ausente | excluido | pedido_alterado | gemeo_alterado | perdeu_posse. Só service_role. Migration 20261127100200.';
+  'Grava o despacho (antes da 1ª mutação no Omie) e move a versão do pedido: despachado | ausente | excluido | pedido_alterado | gemeo_alterado | perdeu_posse. Só service_role. Migration 20261127120100.';
 COMMENT ON FUNCTION public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid) IS
-  'Write-back da edição com posse: confere deleted_at e a tentativa despachada deste token sob FOR UPDATE, grava pela versão de 8 args e conclui a tentativa na mesma transação. Só service_role. Migration 20261127100200.';
+  'Write-back da edição com posse: confere deleted_at e a tentativa despachada deste token sob FOR UPDATE, grava pela versão de 8 args e conclui a tentativa na mesma transação. Só service_role. Migration 20261127120100.';
 COMMENT ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text) IS
-  'Exclusão do pedido com identidade (conta, PV) e status do gêmeo conferidos sob lock, respeitando edição em curso: excluido | ausente | pedido_alterado | gemeo_alterado | edicao_em_curso | envio_em_curso | nao_e_orcamento. Só service_role. Migration 20261127100200.';
+  'Exclusão do pedido com identidade (conta, PV) e status do gêmeo conferidos sob lock, respeitando edição em curso: excluido | ausente | pedido_alterado | gemeo_alterado | edicao_em_curso | envio_em_curso | nao_e_orcamento. Só service_role. Migration 20261127120100.';
 
 -- ── Privilégios: o default do Supabase concede EXECUTE a anon/authenticated em função nova. ──
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_situacao(timestamptz, timestamptz, text) FROM PUBLIC, anon, authenticated;

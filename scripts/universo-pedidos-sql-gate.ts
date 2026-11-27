@@ -46,7 +46,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.atp_gate_pedido': { tipo: 'lookup', motivo: 'ATP: gate de UM pedido (por id)' },
   'public.sales_order_reivindicar_envio_conferido': { tipo: 'lookup', motivo: 'claim conferido do envio: relê UM pedido (por id) para dizer por que o claim não carimbou (ausente/excluído/alterado)' },
   'public.sales_order_excluir_sem_envio': { tipo: 'lookup', motivo: 'claim envio × exclusão: apaga UM pedido (por id) se nenhum envio o reivindicou; relê o status dele' },
-  // Posse durável da edição (leva 1 PR 2, migration 20261127100200): todas leem UM pedido por id (e o gêmeo pelo hash).
+  // Posse durável da edição (leva 1 PR 2, migration 20261127120100): todas leem UM pedido por id (e o gêmeo pelo hash).
   'public.pedido_edicao_omie_reivindicar': { tipo: 'lookup', motivo: 'posse da edição: trava UM pedido (por id) e confere versão/exclusão/PV antes de reivindicar' },
   'public.pedido_edicao_omie_despachar': { tipo: 'lookup', motivo: 'despacho da edição: trava UM pedido (por id) e relê o gêmeo do mesmo PV pelo hash antes de mover a versão' },
   'public.pedido_edicao_omie_estado': { tipo: 'lookup', motivo: 'estado da posse para a tela: lê conta e PV de UM pedido (por id)' },
