@@ -202,3 +202,52 @@ mesma invocação (ancestral→igualdade, piso ignorado, filtro de teste de edge
 RETIDO do `--esperar`), mais 4 sabotagens externas da suíte inteira (filtro, piso, linha `PISO=`, gravação
 do `--liberar`) — todas vermelhas no cenário certo. `scripts/test-lovable-vigia.sh`: ledger renovado pelo
 vigia + piso gravado, e o roteiro do episódio RETIDO (falsificado: vigia que re-avisa a cada tick reprova).
+
+## PR 2 (2026-11-26): liberação automática pelo recibo do `db:aplicar`
+
+**Incidente que justifica a máquina (regra de máquina meta):** o mesmo do PR 1 — `vigia.log` 22–26/11,
+36 RETIDO por migration × 2 liberações manuais, mediana ~5 h retido (pior 42,7 h). Mesmo com o
+`liberar` consertado, toda migration ainda dependia de um humano lembrar de liberar, e quem aplica
+pelo `db:aplicar` JÁ deixa a prova: recibo `aplicada` em `public.db_aplicacoes`, pelo SHA-256 dos
+bytes commitados.
+
+- `scripts/lovable-recibos.sh <ar> <head>` (psql-ro, só leitura): por migration de `ar..head`
+  (`--no-renames`), SHA-256 de `git show <head>:<arq>` contra o ledger → `aplicada` · `adiada` ·
+  `desconhecido` (`tentativa`/`desconhecido` sem `aplicada`) · `sem_recibo` (nada, ou só `falhou`) ·
+  `removida`. Veredito 0/1/2; ler falhou = 2. **Nunca** `schema_migrations`
+  (docs/historico/schema-migrations-fail-open.md).
+- `--decidir`: migration sem atestação → cache `recibos-<ar>-<head>` (o vigia grava; válido
+  `LP_CACHE_RECIBO_MIN`=5 min; o ar entra na chave porque muda o conjunto). 0 = `LIBERADO=recibos`;
+  1 = RETIDO; 2 = RETIDO com "recibo DESCONHECIDO" (não libera o que pode ter rodado pela metade);
+  ausente/vencido = `PRECISA_RECIBOS` (exit 12). Recibo **não** grava piso: `adiada` é revogável e o
+  recibo se relê a cada decisão.
+- **Status `adiada`**: tabela `public.db_migracoes_adiadas` (migration `20261126230001`, aplicada pelo
+  `db:aplicar`: ensaio → apply #1507 → validação por psql-ro). RLS, ACL por allowlist (dono, claude_rw
+  INSERT/UPDATE/SELECT, claude_ro SELECT — uma linha forjada liberaria o Publish; o default ACL dava
+  escrita a service_role/sandbox_exec_*), sem DELETE (desfazer = `revogada_em`). Escrita:
+  `bash scripts/db-adiar.sh <arq> "<motivo>"` / `--revogar <arq>`, com releitura. Prova PG17:
+  `db/test-db-migracoes-adiadas.sh` (falsificação: sem o bloco de allowlist, a postcondição A3 aborta),
+  em `LC_ALL=C` e `pt_BR.UTF-8`.
+- **Edge que o ledger não prova** (`supabase/functions/_shared/**`, ou função sem `versao.ts` em HEAD):
+  `pendencias:deploy=0` não libera; exige `liberar` sem mudança nela depois. Instrumentar as 11 edges
+  sem `versao.ts` ficou fora.
+- Vigia: laço de até 3 renovações (`PRECISA_RECIBOS` → recibos, `PRECISA_LEDGER` → ledger) e nova
+  decisão; loga `recibos ar=… main=…: <resultado>` só quando muda.
+
+Testes: `scripts/test-lovable-recibos.sh` (psql-ro/psql-rw falsos; falsificação: `tentativa` tratada
+como sem recibo, e `db-adiar` sem releitura), `scripts/test-lovable-publish.sh` (+recibos 0/1/2,
+ausente, vencido, de outro ar, ilegível; edge sem versão/_shared; sabotagens `rec_desc` e `semv`),
+`scripts/test-lovable-vigia.sh` OK (13).
+
+**Challenge Codex do PR 2 (gpt-6.2-astra/high) — 9 achados, todos tratados:** recibo casa CAMINHO + SHA
+(os mesmos bytes noutro arquivo não provam este); `tentativa`/`desconhecido` vencem `adiada` (apply em
+curso não se esconde atrás do adiamento); a base dos recibos é a atestação humana válida (liberar/piso),
+não só o ar — migration do SQL Editor liberada à mão não volta a travar quando chega outra com recibo
+(`RECIBOS_DE=` na decisão); edge sem `versao.ts` compara o DIRETÓRIO inteiro da função contra o liberar
+(um helper revertido sumia do intervalo); `core.quotePath=false` (nome com acento saía entre aspas e
+escapava do gate); `db-adiar.sh` com nome estrito e valores por variável do psql (`:'x'`, SQL pela
+entrada — o nome do arquivo entrava como SQL na conexão `claude_rw`) e recusa `--revogar` de migration já
+atrás do ar (o gate não a olharia de novo: o caminho é aplicar); e, liberado por recibo, o vigia RELÊ os
+recibos imediatamente antes do disparo (uma revogação durante o ledger perdia para o cache de 5 min).
+Grant por COLUNA (`attacl`) e membro herdando `claude_rw`: medidos em PROD em 26/11 — zero `attacl` na
+tabela, único membro do `claude_rw` é o dono `postgres`; sem migration nova, fica registrado.

@@ -119,7 +119,7 @@ CENARIO=sem_chave;     semeia "$BASE" "$FRONT"
 CENARIO=controle_sabotado
 sab="$base/sabotado.sh"
 # shellcheck disable=SC2016  # o `$PEND` é LITERAL do fonte sabotado, não para expandir aqui
-sed 's/^if \[ -n "\$PEND" \]; then$/if false; then/' "$ALVO" > "$sab"
+sed -e 's/^if \[ -n "\$PEND" \]; then$/if false; then/' -e 's/^if \[ -n "\$MIG" \]; then$/if false; then/' "$ALVO" > "$sab"
 if cmp -s "$ALVO" "$sab"; then echo "FALHOU [$CENARIO]: a sabotagem não pegou (o sed não casou)"; fail=1
 else
   semeia "$BASE" "$FRONT2"; echo "$FRONT2" > "$F/vira"
@@ -139,6 +139,8 @@ espera() { local esp="$1" ult="$2" sha="$3" alvo="${4:-$ALVO}" out rc; : > "$F/l
   echo "FALHOU [$CENARIO]: esperado rc=$esp /$ult/, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; fail=1; return 1; }
 leituras() { grep -c 'index-AbC123.js' "$F/log"; }
 vigia() { mkdir -p "$F/vigia"; }
+# rec <ar> <head> [veredito] — o cache de recibos que o vigia grava (scripts/lovable-recibos.sh)
+rec() { mkdir -p "$F/vigia"; printf '%s\nsem_recibo supabase/migrations/1_x.sql 000000000000\n' "${3:-1}" > "$F/vigia/recibos-$1-$2"; }
 
 # ar já contém (ancestralidade, não igualdade): ar=FRONT2 ⊇ FRONT
 CENARIO=esperar_ja;      semeia "$FRONT2" x; espera 0 "NO_AR=$FRONT2" "$FRONT"
@@ -150,17 +152,17 @@ CENARIO=esperar_vira;    semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/lib
 # timeout: liberado, mas o ar nunca vira
 CENARIO=esperar_timeout; semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/liberar"; espera 30 TIMEOUT "$FRONT"
 # RETIDO por migration de OUTRO PR no intervalo ar..main (FRONT não tem migration; a main tem)
-CENARIO=esperar_retido_mig;  semeia "$BASE" x; espera 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT" \
+CENARIO=esperar_retido_mig;  semeia "$BASE" x; rec "$BASE" "$FRONT2"; espera 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT" \
   && { printf '%s' "$ESP_OUT" | grep -qF -- "--liberar $FRONT2" || { echo "FALHOU [$CENARIO]: não imprimiu o comando de liberação da main"; fail=1; }; }
 # liberado para um SHA ANTERIOR à migration: segue RETIDO e diz que a liberação é velha
-CENARIO=esperar_lib_antiga;  semeia "$BASE" x; vigia; echo "$FRONT" > "$F/vigia/liberar"
+CENARIO=esperar_lib_antiga;  semeia "$BASE" x; vigia; rec "$FRONT" "$FRONT2"; echo "$FRONT" > "$F/vigia/liberar"
                              espera 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT" \
   && { printf '%s' "$ESP_OUT" | grep -qF "liberado para SHA antigo ${FRONT:0:8}" || { echo "FALHOU [$CENARIO]: não distinguiu liberação antiga"; fail=1; }; }
 # caso real 26/11 08:36: liberou 39ea6374 (a main), a main foi a 8ca02e51 (só front) 2 min depois
 CENARIO=esperar_caso_2611;   semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"
                              echo "$FRONT2" > "$F/vira"; echo 4 > "$F/vira_em"; espera 0 "NO_AR=$FRONT2" "$FRONT2"
 # só edge: ledger diz não servida → RETIDO; diz servida → espera (o vigia libera) até o prazo
-git checkout -q -b edge "$FRONT2"; EDGE=$(c supabase/functions/f/index.ts edge); git checkout -q main
+git checkout -q -b edge "$FRONT2"; mkdir -p supabase/functions/f && echo 1 > supabase/functions/f/versao.ts; EDGE=$(c supabase/functions/f/index.ts edge); git checkout -q main
 git push -q origin "$EDGE:refs/heads/main" -f 2>/dev/null
 CENARIO=esperar_retido_edge; semeia "$MIG" x; vigia; echo 1 > "$F/vigia/pendencias-$EDGE"
                              espera 10 'RETIDO=edge:supabase/functions/f/index\.ts' "$FRONT2"
@@ -201,12 +203,12 @@ sem_dec() { printf '%s' "$DEC_OUT" | grep -qF -- "$1" && { echo "FALHOU [$CENARI
 # caso real 25/11 23:04: liberou 3bda3e02 (= a main), a main foi a c39f1f5a (só front) 3 min depois
 CENARIO=dec_caso_2511;   semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"
                          decide 0 PUBLICAR "$FRONT2" && { tem_dec "LIBERADO=liberar ${MIG:0:8} ar=${BASE:0:8}"; tem_dec "PISO=$FRONT2"; }
-CENARIO=dec_sem_liberar; semeia "$BASE" x; vigia; decide 10 RETIDO "$FRONT2" && { tem_dec "RETIDO=migration:supabase/migrations/1_x.sql"; tem_dec "--liberar $FRONT2"; sem_dec PISO=; }
-CENARIO=dec_lib_curto;   semeia "$BASE" x; vigia; echo "${MIG:0:12}" > "$F/vigia/liberar"; decide 10 RETIDO "$FRONT2" && tem_dec "ignorado"
-CENARIO=dec_lib_HEAD;    semeia "$BASE" x; vigia; echo HEAD > "$F/vigia/liberar"; decide 10 RETIDO "$FRONT2" && tem_dec "ignorado"
+CENARIO=dec_sem_liberar; semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; decide 10 RETIDO "$FRONT2" && { tem_dec "RETIDO=migration:supabase/migrations/1_x.sql"; tem_dec "--liberar $FRONT2"; sem_dec PISO=; }
+CENARIO=dec_lib_curto;   semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; echo "${MIG:0:12}" > "$F/vigia/liberar"; decide 10 RETIDO "$FRONT2" && tem_dec "ignorado"
+CENARIO=dec_lib_HEAD;    semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; echo HEAD > "$F/vigia/liberar"; decide 10 RETIDO "$FRONT2" && tem_dec "ignorado"
 # piso: camadas atestadas numa decisão anterior não re-travam o próximo PR (sem liberar)
 CENARIO=dec_piso;        semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/piso"; decide 0 PUBLICAR "$FRONT2" && tem_dec "LIBERADO=piso"
-CENARIO=dec_piso_fora;   semeia "$BASE" x; vigia; echo "$EDGE" > "$F/vigia/piso"; decide 10 RETIDO "$FRONT2" && tem_dec "não é ancestral"
+CENARIO=dec_piso_fora;   semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; echo "$EDGE" > "$F/vigia/piso"; decide 10 RETIDO "$FRONT2" && tem_dec "não é ancestral"
 # só migration + inerte: nada publicável → NADA_A_PUBLICAR (ninguém retido), mas SEM avançar o piso
 CENARIO=dec_so_mig;      semeia "$FRONT" x; vigia; decide 0 NADA_A_PUBLICAR "$MIG" && { sem_dec PISO=; tem_dec "camadas pendentes"; }
 CENARIO=dec_ja;          semeia "$FRONT2" x; vigia; decide 0 JA_NO_AR "$FRONT2" && sem_dec PISO=   # carimbo igual não atesta migration (Codex #4)
@@ -218,18 +220,37 @@ CENARIO=dec_edge_velho;  semeia "$MIG" x; vigia; echo 0 > "$F/vigia/pendencias-$
                          decide 11 PRECISA_LEDGER "$EDGE"
 CENARIO=dec_edge_mec;    semeia "$MIG" x; vigia; echo 2 > "$F/vigia/pendencias-$EDGE"; decide 6 MECANICA "$EDGE"
 # liberar atesta SÓ migration: edge entre o ar e o liberado continua exigindo o ledger
-git checkout -q -b libedge "$FRONT2"; c supabase/functions/g/index.ts e2 >/dev/null; M2=$(c supabase/migrations/2_y.sql m2)
+git checkout -q -b libedge "$FRONT2"; mkdir -p supabase/functions/g && echo 1 > supabase/functions/g/versao.ts; c supabase/functions/g/index.ts e2 >/dev/null; M2=$(c supabase/migrations/2_y.sql m2)
 F3=$(c src/z.ts f3); git checkout -q main
 CENARIO=dec_lib_nao_cobre_edge; semeia "$FRONT2" x; vigia; echo "$M2" > "$F/vigia/liberar"; decide 11 PRECISA_LEDGER "$F3"
 CENARIO=dec_lib_edge_ledger0;   semeia "$FRONT2" x; vigia; echo "$M2" > "$F/vigia/liberar"; echo 0 > "$F/vigia/pendencias-$F3"
-                                decide 0 PUBLICAR "$F3" && tem_dec "LIBERADO=ledger"
+                                decide 0 PUBLICAR "$F3" && tem_dec "+ledger ar="
+# ── recibos do db:aplicar: migration liberada sem `liberar` (PR 2) ─────────────────────────────
+CENARIO=dec_recibo_0;      semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2" 0
+                           decide 0 PUBLICAR "$FRONT2" && { tem_dec "LIBERADO=recibos"; sem_dec PISO=; }   # adiada é revogável
+CENARIO=dec_recibo_desc;   semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2" 2; decide 10 RETIDO "$FRONT2" && tem_dec "DESCONHECIDO"
+CENARIO=dec_recibo_sem;    semeia "$BASE" x; vigia; decide 12 PRECISA_RECIBOS "$FRONT2"
+CENARIO=dec_recibo_velho;  semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2" 0; touch -t 202001010000 "$F/vigia/recibos-$BASE-$FRONT2"
+                           decide 12 PRECISA_RECIBOS "$FRONT2"
+CENARIO=dec_recibo_outro_ar; semeia "$BASE" x; vigia; rec "$FRONT" "$FRONT2" 0; decide 12 PRECISA_RECIBOS "$FRONT2"
+CENARIO=dec_recibo_lixo;   semeia "$BASE" x; vigia; : > "$F/vigia/recibos-$BASE-$FRONT2"; decide 6 MECANICA "$FRONT2"
+# Codex PR2 #6: o que o liberar cobre não volta a exigir recibo — a base dos recibos é o liberar
+CENARIO=dec_recibo_base_lib; semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"; rec "$MIG" "$F3" 0; echo 0 > "$F/vigia/pendencias-$F3"
+                           decide 0 PUBLICAR "$F3" && { tem_dec "RECIBOS_DE=$MIG"; tem_dec "LIBERADO=recibos+ledger"; }
+# edge que o ledger não prova: sem versao.ts, ou _shared → ledger=0 NÃO libera; liberar sem mudança depois libera
+git checkout -q -b semv "$FRONT2"; c supabase/functions/h/index.ts sv >/dev/null; SV=$(c src/sv.ts svf); git checkout -q main
+git checkout -q -b shared "$FRONT2"; c supabase/functions/_shared/x.ts sh >/dev/null; SH=$(c src/sh.ts shf); git checkout -q main
+CENARIO=dec_semv_ledger0;  semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SV"; decide 10 RETIDO "$SV" && tem_dec "RETIDO=edge:supabase/functions/h/index.ts"
+CENARIO=dec_shared_ledger0; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SH"; decide 10 RETIDO "$SH" && tem_dec "--liberar $SH"
+CENARIO=dec_semv_liberado; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SV"; echo "$SV" > "$F/vigia/liberar"
+                           decide 0 PUBLICAR "$SV" && tem_dec "edge sem versao.ts"
 # Codex #6: piso e liberar em ramos IRMÃOS (incomparáveis) — o liberar vale sozinho
 git checkout -q -b p6 "$FRONT2"; P6=$(c docs/p.md p6); git checkout -q -b l6 "$FRONT2"; L6=$(c supabase/migrations/3_z.sql l6)
 git checkout -q p6; git merge -q --no-edit l6 >/dev/null 2>&1; H6=$(c src/h.ts h6); git checkout -q main
 CENARIO=dec_irmaos; semeia "$FRONT2" x; vigia; echo "$P6" > "$F/vigia/piso"; echo "$L6" > "$F/vigia/liberar"
                     decide 0 PUBLICAR "$H6" && tem_dec "LIBERADO=liberar ${L6:0:8}"
 # Codex #5: mover a edge para *_test.ts REMOVE o caminho de produção — tem de reter
-git checkout -q -b rn "$FRONT2"; R0=$(c supabase/functions/r/index.ts r0)
+git checkout -q -b rn "$FRONT2"; mkdir -p supabase/functions/r && echo 1 > supabase/functions/r/versao.ts; R0=$(c supabase/functions/r/index.ts r0)
 git mv supabase/functions/r/index.ts supabase/functions/r/index_test.ts; RN=$(c src/rn.ts rn); git checkout -q main
 CENARIO=julgar_rename_teste; semeia "$R0" x; julga 10 RETIDO "$RN"
 # teste e doc de edge não são camada: só _test.ts/.md em supabase/functions + front → PUBLICAR
@@ -277,6 +298,15 @@ s_rn() { semeia "$R0" x; vigia; rm -f "$F/vigia"/*; }
 # renames de volta → mover a edge para *_test.ts some do gate
 # shellcheck disable=SC2016
 sabota_dec renames 's/git diff --no-renames --name-only "\$1" "\$2"/git diff --name-only "$1" "$2"/' s_rn 11 PRECISA_LEDGER "$RN"
+# shellcheck disable=SC2329
+s_rec2() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; rec "$BASE" "$FRONT2" 2; }
+# desconhecido tratado como aplicado → libera
+sabota_dec rec_desc 's/^    0) LIBS+=("recibos")/    0|2) LIBS+=("recibos")/' s_rec2 10 RETIDO "$FRONT2"
+# shellcheck disable=SC2329
+s_semv() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo 0 > "$F/vigia/pendencias-$SV"; }
+# edge sem versao.ts volta a ser provada pelo ledger → publica
+# shellcheck disable=SC2016
+sabota_dec semv 's/^  if \[ -n "\$SEMV" \]; then$/  if false; then/' s_semv 10 RETIDO "$SV"
 # ancestral → igualdade (o código de antes): o caso real volta a ficar RETIDO
 # shellcheck disable=SC2016
 sabota_dec ancestral 's/git merge-base --is-ancestor "\$s" "\$HEAD_SHA" 2>\/dev\/null ||/[ "$s" = "$HEAD_SHA" ] ||/' s_lib_mig 0 PUBLICAR "$FRONT2"
@@ -299,7 +329,7 @@ git push -q origin "$FRONT2:refs/heads/main" -f 2>/dev/null
 # shellcheck disable=SC2329  # semeadores chamados indiretamente pelo sabota
 s_contem() { semeia "$FRONT2" x; }
 # shellcheck disable=SC2329
-s_retido() { semeia "$BASE" x; }
+s_retido() { semeia "$BASE" x; rec "$BASE" "$FRONT2"; }
 # shellcheck disable=SC2329
 s_vira()   { semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/liberar"; echo "$FRONT2" > "$F/vira"; echo 4 > "$F/vira_em"; }
 # ancestralidade → igualdade: ar=FRONT2 já contém FRONT, mas a cópia não vê
@@ -308,7 +338,7 @@ sabota ancestral 's/git merge-base --is-ancestor "\$PEDIDO" "\$AR" 2>\/dev\/null
   s_contem 0 "NO_AR=$FRONT2" "$FRONT"
 # RETIDO por migration ignorado → a cópia espera até o TIMEOUT
 # shellcheck disable=SC2016
-sabota retido 's/\[ -n "\$MIG" \] \&\& retido migration "\$MIG"/true/' \
+sabota retido 's/^    1) retido migration "\$MIG" ;;/    1) true ;;/' \
   s_retido 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT"
 # o ar vira no meio da espera, mas a cópia lê o ar uma vez só → TIMEOUT
 # shellcheck disable=SC2016

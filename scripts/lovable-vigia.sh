@@ -107,20 +107,35 @@ fim_episodio() {
 
 decidir
 VER=$(veredito)
-if [ "$VER" = PRECISA_LEDGER ]; then
-  # só edge no intervalo: o ledger diz se TODA edge da main já está servida. O --decidir só lê o cache
-  # (validade LP_CACHE_EDGE_MIN, a mesma para o --esperar); quem o renova é este tick.
-  rm -f "$EST"/pendencias-*
-  [ "$(shasum "$WT/bun.lock" 2>/dev/null)" = "$(cat "$EST/bun-lock.sha" 2>/dev/null)" ] \
-    || { (cd "$WT" && timeout 600 bun install --frozen-lockfile >>"$LOG" 2>&1) && shasum "$WT/bun.lock" > "$EST/bun-lock.sha"; }
-  (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1; PRC=$?
-  # o ledger mede a main que ELE buscou: se ela andou durante a consulta, a prova não é deste SHA
-  REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>/dev/null | cut -f1)
-  [ "$REMOTA" = "$HEAD_SHA" ] || { log "ledger descartado: a main foi a ${REMOTA:0:8} durante a consulta de ${HEAD_SHA:0:8}"; exit 0; }
-  grava "$EST/pendencias-$HEAD_SHA" "$PRC"
-  log "ledger consultado para ${HEAD_SHA:0:8}: pendencias:deploy exit $(cat "$EST/pendencias-$HEAD_SHA")"
-  decidir; VER=$(veredito)
-fi
+# o --decidir só LÊ caches; quem os renova é este tick, e decide de novo (recibos → ledger)
+for _ in 1 2 3; do
+  case "$VER" in
+    PRECISA_RECIBOS)
+      # recibo de banco de cada migration de ar..main (db_aplicacoes/db_migracoes_adiadas via psql-ro)
+      ARF=$(linha RECIBOS_DE)
+      [ -n "$ARF" ] || { log "PRECISA_RECIBOS sem RECIBOS_DE= na decisão — não libero"; exit 0; }
+      rm -f "$EST"/recibos-*
+      (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$ARF" "$HEAD_SHA") > "$EST/recibos.tmp.$$" 2>>"$LOG"
+      mv -f "$EST/recibos.tmp.$$" "$EST/recibos-$ARF-$HEAD_SHA"
+      R=$(tr '\n' ' ' < "$EST/recibos-$ARF-$HEAD_SHA" | head -c 400)
+      [ "$R" = "$(cat "$EST/recibos-ultimo" 2>/dev/null)" ] || { log "recibos ar=${ARF:0:8} main=${HEAD_SHA:0:8}: $R"; grava "$EST/recibos-ultimo" "$R"; }
+      decidir; VER=$(veredito) ;;
+    PRECISA_LEDGER)
+      # só edge no intervalo: o ledger diz se TODA edge da main já está servida. O --decidir só lê o cache
+      # (validade LP_CACHE_EDGE_MIN, a mesma para o --esperar); quem o renova é este tick.
+      rm -f "$EST"/pendencias-*
+      [ "$(shasum "$WT/bun.lock" 2>/dev/null)" = "$(cat "$EST/bun-lock.sha" 2>/dev/null)" ] \
+        || { (cd "$WT" && timeout 600 bun install --frozen-lockfile >>"$LOG" 2>&1) && shasum "$WT/bun.lock" > "$EST/bun-lock.sha"; }
+      (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1; PRC=$?
+      # o ledger mede a main que ELE buscou: se ela andou durante a consulta, a prova não é deste SHA
+      REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>/dev/null | cut -f1)
+      [ "$REMOTA" = "$HEAD_SHA" ] || { log "ledger descartado: a main foi a ${REMOTA:0:8} durante a consulta de ${HEAD_SHA:0:8}"; exit 0; }
+      grava "$EST/pendencias-$HEAD_SHA" "$PRC"
+      log "ledger consultado para ${HEAD_SHA:0:8}: pendencias:deploy exit $(cat "$EST/pendencias-$HEAD_SHA")"
+      decidir; VER=$(veredito) ;;
+    *) break ;;
+  esac
+done
 # camadas atestadas até a main (decisão limpa): o próximo PR julga a partir daqui, não do ar
 P=$(linha PISO); [ -n "$P" ] && [ "$P" != "$(cat "$EST/piso" 2>/dev/null)" ] && grava "$EST/piso" "$P"
 LIBERADO=$(linha LIBERADO)
@@ -153,6 +168,13 @@ falhou() {
   fi
 }
 
+# liberado por recibo: relê o banco AGORA (Codex PR2 #4: uma revogação durante o ledger não pode perder
+# para o cache de 5 min) — qualquer coisa ≠ 0 segura este disparo
+if case "$LIBERADO" in *recibos*) true ;; *) false ;; esac; then
+  RB=$(linha RECIBOS_DE)
+  RR=$( (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$RB" "$HEAD_SHA") 2>>"$LOG" | head -1)
+  [ "$RR" = 0 ] || { log "recibos relidos antes do disparo: veredito ${RR:-vazio} — não disparo ${HEAD_SHA:0:8}"; rm -f "$EST"/recibos-*; exit 0; }
+fi
 AR_ANTES=$(ar_curto)
 log "PUBLICAR ${AR_ANTES}..${HEAD_SHA:0:8} (tentativa $((N + 1)))${LIBERADO:+ liberado: $LIBERADO}"
 [ "${LV_SECO:-0}" = 1 ] && { log "LV_SECO=1 — não chamei o claude"; exit 0; }

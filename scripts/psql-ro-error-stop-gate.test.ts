@@ -147,7 +147,7 @@ describe('o corpo REAL do repo', () => {
     expect(r.sitios.length).toBeGreaterThanOrEqual(PISOS.sitios);
   });
 
-  it('o censo bate com o histórico: 21 consumidores executam o wrapper', () => {
+  it('o censo bate com o histórico: 22 consumidores executam o wrapper', () => {
     // O doc do #2167 contou 14 varrendo à mão "quem EXECUTA" (≠ as 200+ menções em prosa).
     // Se esta conta divergir, ou nasceu consumidor novo (atualize) ou o fiscal ficou cego.
     // 2026-09-07: 14 → 15, consumidor novo e legítimo — `scripts/pendencias-pacote.ts` mede a
@@ -172,7 +172,10 @@ describe('o corpo REAL do repo', () => {
     // 2026-10-28: 20 → 21, consumidor novo e legítimo — `scripts/reposicao-replay/extrair.sh` (replay TSB do estoque
     // de segurança) exporta os CSVs por `-f` COM `-v ON_ERROR_STOP=1` e só aceita a extração com o marcador `fim|ok`.
     // É sítio com `-f`, então entra na lista abaixo com a mesma exigência.
-    expect(r.arquivosComVinculo).toBe(21);
+    // 2026-11-26: 21 → 22, consumidor novo e legítimo — `scripts/lovable-recibos.sh` (vigia do Publish, PR 2)
+    // lê os recibos de db_aplicacoes/db_migracoes_adiadas. Por `-c` COM `-v ON_ERROR_STOP=1`; falha de leitura
+    // vira veredito 2 (desconhecido — não libera), então não entra na lista de `-f` abaixo.
+    expect(r.arquivosComVinculo).toBe(22);
   });
 
   it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) o exportador do Jev, o do orçamento de compra e o extrator do replay TSB, e TODOS têm ON_ERROR_STOP', () => {

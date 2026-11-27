@@ -59,7 +59,11 @@
 #       ledger a partir de ar/piso) — só SHA de 40 hex resolvível;
 #     - migration em base..<sha> → RETIDO (imprime `RETIDO=migration:<arq>` e o comando de liberação);
 #     - só edge → o ledger (`pendencias-<sha>` gravado pelo vigia, válido LP_CACHE_EDGE_MIN=15 min):
-#       0 = liberado · 1 = `RETIDO=edge:<arq>` · ausente/vencido = PRECISA_LEDGER (exit 11);
+#       0 = liberado · 1 = `RETIDO=edge:<arq>` · ausente/vencido = PRECISA_LEDGER (exit 11). Edge em
+#       `_shared` ou sem `versao.ts` o ledger não prova: só `liberar` sem mudança nela depois;
+#     - migration sem atestação → RECIBOS (`recibos-<ar>-<sha>`, scripts/lovable-recibos.sh, válido
+#       LP_CACHE_RECIBO_MIN=5 min): todas aplicada/adiada = liberado · sem_recibo/desconhecido =
+#       RETIDO · ausente/vencido = PRECISA_RECIBOS (exit 12);
 #     - camadas atestadas até <sha> → imprime `PISO=<sha>` (o vigia grava; o próximo PR não re-trava).
 #   --liberar <sha>: grava a atestação humana ($LP_ESTADO/liberar, atômico). Exige 40 hex e ancestral
 #   da origin/main; mostra a main medida e as migrations que a liberação cobre. Vale para todo
@@ -86,8 +90,11 @@ CAMADAS='^supabase/(migrations|functions)/'
 NAO_CAMADA='^supabase/functions/.*(_test\.ts|\.md)$'   # teste e doc de edge não vão a produção
 ESTADO=${LP_ESTADO:-${LP_VIGIA_ESTADO:-$HOME/.local/state/afiacao/lovable-vigia}}
 CACHE_EDGE_MIN=${LP_CACHE_EDGE_MIN:-15}
+CACHE_RECIBO_MIN=${LP_CACHE_RECIBO_MIN:-5}
 INERTE='^(docs/|\.github/|\.claude/|scripts/|db/|supabase/)|^[^/]+\.md$'
 
+# nomes com acento saem entre aspas no git por padrão (core.quotePath) e escapariam dos casamentos
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false
 TMP=$(mktemp -d) || exit 6
 trap 'rm -rf "$TMP"' EXIT
 
@@ -197,6 +204,7 @@ if [ -n "$ESPERAR" ]; then
               && sai 6 "MECANICA=FRONT_SUPERADO:${PEDIDO:0:8} nunca vai ao ar — a main reverteu o front dele (ar=${ARF:0:8})"
             sai 0 "NADA_A_PUBLICAR=$ARF" ;;
           0:PUBLICAR) diz "ar=${AR:0:8} main=${TIPO:0:8} · liberado ($(printf '%s\n' "$J" | sed -n 's/^LIBERADO=//p' | head -1)) — aguardando o Publish do vigia" ;;
+          12:PRECISA_RECIBOS) diz "ar=${AR:0:8} · migration no intervalo; o vigia ainda não leu os recibos do db:aplicar (ou o cache venceu)" ;;
           11:PRECISA_LEDGER) diz "ar=${AR:0:8} · só edge no intervalo; o vigia ainda não consultou o ledger (ou o cache venceu)" ;;
           *) diz "ar=${AR:0:8} main=${TIPO:0:8} · decidir: ${VER:-?} (rc $jrc) — sigo esperando" ;;
         esac
@@ -280,26 +288,78 @@ retido() {  # retido <tipo> <arquivo>
   echo "RETIDO=$1:$2"
   fim 10 RETIDO
 }
+LIBS=()   # o que liberou, para a linha LIBERADO=
+[ -n "$FONTE" ] && LIBS+=("$FONTE")
+MIG=$(printf '%s\n' "$PEND" | grep -m1 '^supabase/migrations/' || true)
+if [ -n "$MIG" ]; then
+  [ "$DECIDIR" = 1 ] || retido migration "$MIG"
+  # RECIBO de banco (o vigia grava pelo scripts/lovable-recibos.sh; psql-ro em db_aplicacoes e
+  # db_migracoes_adiadas, pelo SHA-256 dos bytes de HEAD). Cache por (ar, head): o ar muda o conjunto.
+  # base dos recibos: a atestação humana válida (liberar, depois piso), senão o ar — o que o humano
+  # já cobriu não volta a exigir recibo (Codex PR2 #6: migration do SQL Editor liberada à mão)
+  RB=$AR
+  for cand in "$LIB_ARQ" "$PISO_ARQ"; do
+    c=$(sha40 "$cand" 2>/dev/null) && git merge-base --is-ancestor "$c" "$HEAD_SHA" 2>/dev/null && { RB=$c; break; }
+  done
+  echo "RECIBOS_DE=$RB"
+  REC="$ESTADO/recibos-$RB-$HEAD_SHA"
+  if [ -z "$(find "$REC" -mmin "-$CACHE_RECIBO_MIN" 2>/dev/null)" ]; then
+    echo "  migration em ${RB:0:8}..${HEAD_SHA:0:8} sem atestação; recibos sem leitura válida (< ${CACHE_RECIBO_MIN} min)"
+    fim 12 PRECISA_RECIBOS
+  fi
+  sed -n '2,$p' "$REC" | sed 's/^/  recibo: /'
+  case "$(head -1 "$REC")" in
+    0) LIBS+=("recibos"); PEND=$(printf '%s\n' "$PEND" | grep '^supabase/functions/' || true) ;;
+    1) retido migration "$MIG" ;;
+    2) echo "  recibo DESCONHECIDO (tentativa sem desfecho, ou não li o ledger) — não libero: confira com bun run db:aplicar"
+       retido migration "$MIG" ;;
+    *) mecanica "RECIBOS_ILEGIVEIS: $REC" ;;
+  esac
+fi
 if [ -n "$PEND" ]; then
-  MIG=$(printf '%s\n' "$PEND" | grep -m1 '^supabase/migrations/' || true)
-  [ -n "$MIG" ] && retido migration "$MIG"
   EDG=$(printf '%s\n' "$PEND" | head -1)
   [ "$DECIDIR" = 1 ] || retido edge "$EDG"
-  # só edge: o ledger deploy_atestacoes, pelo cache que o vigia grava (mesma validade para todos)
+  # edge que o ledger NÃO prova: _shared (muda toda edge sem mexer na versão dela) ou função sem
+  # versao.ts (a sonda não sabe o que está servido). Só atestação humana (liberar) sem mudança depois.
+  SEMV=$(printf '%s\n' "$PEND" | while read -r e; do
+    fn=$(printf '%s' "$e" | cut -d/ -f3)
+    if [ "$fn" = _shared ] || ! git cat-file -e "$HEAD_SHA:supabase/functions/$fn/versao.ts" 2>/dev/null; then echo "$e"; fi
+  done)
+  if [ -n "$SEMV" ]; then
+    L=""; [ -n "$LIB_ARQ" ] && L=$(sha40 "$LIB_ARQ" || true)
+    # o DIRETÓRIO inteiro de cada função (Codex PR2 #5: um helper que volta aos bytes do ar some do
+    # intervalo, mas a edge implantada em L usa a versão de L)
+    DIRS=(); while read -r e; do DIRS+=("supabase/functions/$(printf '%s' "$e" | cut -d/ -f3)/"); done <<< "$SEMV"
+    if [ -n "$L" ] && git merge-base --is-ancestor "$L" "$HEAD_SHA" 2>/dev/null \
+       && D=$(git diff --no-renames --name-only "$L" "$HEAD_SHA" -- "${DIRS[@]}" 2>/dev/null) && [ -z "$D" ]; then
+      LIBS+=("liberar ${L:0:8} (edge sem versao.ts/_shared)")
+      PEND=$(printf '%s\n' "$PEND" | grep -vxF "$SEMV" || true)
+    else
+      echo "  edge que o ledger não prova (sem versao.ts ou _shared) — deploy dela e liberação humana:"
+      printf '%s\n' "$SEMV" | sed 's/^/      /'
+      echo "  liberar: faça o deploy e rode  bash scripts/lovable-publish.sh --liberar $HEAD_SHA"
+      echo "RETIDO=edge:$(printf '%s\n' "$SEMV" | head -1)"
+      fim 10 RETIDO
+    fi
+  fi
+fi
+if [ -n "$PEND" ]; then
+  EDG=$(printf '%s\n' "$PEND" | head -1)
+  # edge com versao.ts: o ledger deploy_atestacoes, pelo cache que o vigia grava (mesma validade para todos)
   CACHE="$ESTADO/pendencias-$HEAD_SHA"
   if [ -z "$(find "$CACHE" -mmin "-$CACHE_EDGE_MIN" 2>/dev/null)" ]; then
-    echo "  só edge em ${BASE_E:0:8}..${HEAD_SHA:0:8} (ar=${AR:0:8}); ledger sem leitura válida (< ${CACHE_EDGE_MIN} min) para ${HEAD_SHA:0:8}"
+    echo "  edge em ${BASE_E:0:8}..${HEAD_SHA:0:8} (ar=${AR:0:8}); ledger sem leitura válida (< ${CACHE_EDGE_MIN} min) para ${HEAD_SHA:0:8}"
     fim 11 PRECISA_LEDGER
   fi
   case "$(head -1 "$CACHE")" in
-    0) echo "LIBERADO=ledger base=${BASE:0:8} ar=${AR:0:8} (pendencias:deploy=0: toda edge da main servida)" ;;
+    0) LIBS+=("ledger") ;;
     1) retido edge "$EDG" ;;
     *) mecanica "LEDGER_FALHOU: pendencias:deploy exit $(head -1 "$CACHE") — ver $ESTADO/pendencias.txt" ;;
   esac
-elif [ -n "$FONTE" ]; then
-  echo "LIBERADO=$FONTE ar=${AR:0:8}"
 fi
-# piso = migrations atestadas até HEAD por HUMANO (liberar/piso anterior), nunca só pelo carimbo do ar
+[ "${#LIBS[@]}" -gt 0 ] && echo "LIBERADO=$(IFS='+'; echo "${LIBS[*]}") ar=${AR:0:8}"
+# piso = migrations atestadas até HEAD por HUMANO (liberar/piso anterior), nunca por carimbo nem por
+# recibo (adiada é revogável: o recibo se relê a cada decisão, cache de LP_CACHE_RECIBO_MIN)
 [ "$DECIDIR" = 1 ] && [ -n "$FONTE" ] && echo "PISO=$HEAD_SHA"
 [ "$JULGAR" = 1 ] && fim 0 PUBLICAR
 
