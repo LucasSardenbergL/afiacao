@@ -437,3 +437,35 @@ códigos de vendedor da seleção (a OS sairia com o antigo) e a conta que falha
 "Trocar". Falsificação 36/36 vermelha (18 sabotagens × `C` e `pt_BR.UTF-8`), controle verde na mesma invocação. Lacuna conhecida: a
 EDGE trata conta Omie que falhou como "não encontrada" (fica fora da comparação) — 3 contas
 falhando devolvem `consistente: true`; corrigir exige deploy da `omie-cliente` (Onda 3).
+
+### Novo Pedido — Rodada 3, Onda 2: medição (2026-11-26)
+
+**9.0 — linha de base (psql-ro, 2026-11-26, sem código).** Cortes pelo merge: rodada 1 = #4029 (20/11 20:52Z),
+rodada 2 = #4042 (21/11 02:14Z), Onda 1 = #4127 (22/11 14:27Z). Merge ≠ Publish: o corte real é mais tarde.
+O achado que muda a leitura: **`sales_orders` é quase todo ESPELHO do Omie** (`hash_payload = omie_<conta>_<id>`,
+~500/mês). PV nascido no app (`hash_payload` sem esse prefixo): 28 antes da rodada 1, todos de abril a agosto,
+e **1 desde 1º/09** (21/11, do founder, apagado 15 min depois = teste). O ledger de rotas (desde 20/11) mostra
+`/sales/new` aberto só pelo founder, em 3 dias, e **um único titular em todas as rotas** — pode ser build velho
+nos aparelhos da equipe (o SW só troca quando o usuário clica), então isso é "sem dado", não "ninguém usa".
+
+| período | PVs do app | erro/falha | duplicidade | parcial multi-conta | tempo até `omie_pedido_id` |
+|---|---|---|---|---|---|
+| antes (jan–20/11) | 28 | não medível: envio que falha não grava linha | 3 grupos mesmo cliente+dia+conta em 28 (abril, prováveis testes) · 0 `checkout_id` repetido | não medível: só 1 linha com `checkout_id` | não medível: sem carimbo do write-back |
+| rodada 1 (5 h) | sem dado | sem dado | sem dado | sem dado | sem dado |
+| rodada 2 | 1 (teste) | sem dado | sem dado | sem dado | sem dado |
+| Onda 1 | sem dado | sem dado | sem dado | sem dado | sem dado |
+
+Conclusão: **nenhuma rodada é medível**. Não há uso real da tela para comparar, e o banco não guarda envio que
+falhou. Nada "melhorou" ou "piorou" provado: é ausência de dado. Pela regra da fase sem sinal, a fase seguinte
+é instalar o sensor: o 9.1.
+
+**9.1 — funil no ledger.** 11 eventos `novo_pedido.*` (migration `20261127100100`, molde TRAVA→PRE→CREATE→PÓS),
+emissor `src/hooks/unifiedOrder/sensor-funil.ts`. A unidade é a **jornada** (uuid por pedido em montagem). O
+`checkout_id` vai nas props e faz a ponte com `sales_orders`. O desfecho por conta usa o mesmo conjunto de steps
+do `allConfirmed`. `pedido.criado` (PostHog) e o sucesso do sensor de Clientes passam a disparar **só com
+envio confirmado em todas as contas**. Antes contavam também parcial, bloqueio de crédito e o pós-ATP.
+Leitura: `db/sensor-novo-pedido-funil.sql`. Retenção do ledger é ~7 dias: rode toda semana e guarde a saída.
+"Quando medir" = ≥1 jornada de não-master na seção `denominador`. Prova: `db/test-analytics-ledger-novo-pedido.sh`.
+38 asserts e 5 sabotagens da migration. Mais 4 sabotagens da query (contar linhas em vez de jornadas,
+p50→p0, ponte sempre verdadeira, denominador 0 virando número), todas vermelhas em `C` e `pt_BR.UTF-8`, com
+controle verde na mesma invocação.

@@ -12,6 +12,7 @@ import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart } from '@/hooks/unifiedOrder/useCart';
 import { nascerItemProduto } from '@/hooks/unifiedOrder/nascimento-item';
+import type { SensorFunilPedido } from '@/hooks/unifiedOrder/sensor-funil';
 import { codigoObenDoBuscarCliente } from '@/hooks/unifiedOrder/codigo-oben-busca';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
@@ -448,6 +449,8 @@ export function useUnifiedOrder() {
   // sem esperar o debounce. `aoConfirmarTudo`: sucesso TOTAL → apaga o rascunho antes de qualquer UI,
   // mesmo com a página já desmontada (navegou durante o envio) — Codex P1.
   const cicloRascunhoRef = useRef<{ aoComprometer?: () => void; aoConfirmarTudo?: () => void }>({});
+  // Sensor do funil (PR 9.1): a página registra aqui o emissor do ledger; o envio só o avisa.
+  const sensorEnvioRef = useRef<SensorFunilPedido | null>(null);
   const descartarEnvelope = useCallback(() => {
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
   }, []);
@@ -936,10 +939,25 @@ export function useUnifiedOrder() {
 
   const submitOrder = useCallback(async (opts?: { atpBackorder?: { autorizado: true; motivo: string } }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
+    // Sensor do funil (9.1): toda chamada que chega aqui é um envio TENTADO — inclusive as barradas
+    // pelas guardas abaixo (cada uma registra a própria falha, classe `validacao_local`).
+    const sensor = sensorEnvioRef.current;
+    const contasComItens = {
+      oben: obenProductItems.length > 0, colacor: colacorProductItems.length > 0, afiacao: serviceItems.length > 0,
+    };
+    const tentativa = sensor?.envioTentado({
+      contas: [contasComItens.oben && 'oben', contasComItens.colacor && 'colacor', contasComItens.afiacao && 'afiacao']
+        .filter(Boolean).join('+'),
+      atp_override: !!opts?.atpBackorder,
+    }) ?? null;
+    const falhouLocal = (motivo: string) => {
+      if (tentativa) sensor?.envioFalhou(tentativa, 'validacao_local', { motivo });
+    };
     // Seleção em andamento: o ensure desta seleção ainda nem foi retido (a ref
     // tem a promise placeholder) — o preflight fail-closed do service já
     // bloquearia, mas barrar aqui dá feedback melhor que o erro do preflight.
     if (loadingCustomer) {
+      falhouLocal('cliente_carregando');
       toast.info('Aguarde — ainda carregando os dados do cliente.');
       return;
     }
@@ -947,6 +965,7 @@ export function useUnifiedOrder() {
     // (atalho, reenvio do ATP e "Enviar agora" da reconexão chegam aqui sem passar pelo botão).
     const bloqueioVendedor = mensagemBloqueioVendedor(estadoVendedor);
     if (bloqueioVendedor) {
+      falhouLocal('vendedor');
       toast.error(bloqueioVendedor);
       return;
     }
@@ -961,12 +980,14 @@ export function useUnifiedOrder() {
       { temItens: colacorProductItems.length > 0, estado: estadoFormasColacor },
     ]);
     if (bloqueioFormas.length > 0) {
+      falhouLocal('condicao_pagamento');
       toast.error(mensagemCondicoesIndisponiveis(bloqueioFormas));
       return;
     }
     // Follow-up do #4068 (Codex P2): o seletor limpa a data na virada, mas o timer acorda com folga —
     // o clique logo após a meia-noite gravaria `ready_by_date` de ontem. Confere pelo relógio de agora.
     if (dataEntregaJaPassou(readyByDate)) {
+      falhouLocal('dia_vencido');
       setReadyByDate('');
       toast.error('Dia de entrega vencido', { description: 'O dia escolhido já passou. Escolha o dia de novo e envie.' });
       return;
@@ -983,6 +1004,7 @@ export function useUnifiedOrder() {
       const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
       const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
       if (decision === 'conflict') {
+        if (tentativa) sensor?.envioFalhou(tentativa, 'conflito_envelope');
         toast.error('Há um envio pendente para este cliente com outro carrinho', {
           description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
         });
@@ -1081,6 +1103,8 @@ export function useUnifiedOrder() {
             return true;
           },
         });
+        // Antes do reset do envelope: o desfecho leva o checkout_id DESTE envio.
+        if (tentativa) sensor?.envioDesfecho(tentativa, result, contasComItens, checkoutId);
         if (result.success && result.lastOrderData && result.allConfirmed) {
           checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
           cicloRascunhoRef.current.aoConfirmarTudo?.();
@@ -1164,6 +1188,7 @@ export function useUnifiedOrder() {
           });
         }
       } catch (error) {
+        if (tentativa) sensor?.envioFalhou(tentativa, 'excecao', { checkout_id: checkoutId });
         toast.error('Erro ao criar pedido', { description: mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
       }
     });
@@ -1215,7 +1240,7 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
-    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, cicloRascunhoRef,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, cicloRascunhoRef, sensorEnvioRef,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,
