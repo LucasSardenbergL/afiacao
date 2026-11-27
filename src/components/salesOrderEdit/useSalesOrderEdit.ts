@@ -169,13 +169,14 @@ export function useSalesOrderEdit() {
       // isso, um envio cuja consulta nem chegou ao banco podia reivindicar depois do "livre", e a leitura feita
       // antes de ele concluir abriria o carrinho velho como editável (Codex no diff r2/r3).
       let pendenteAberto = false;
-      let algumConcluiu = false;
       for (const t of tokensPendentes(id)) {
         const d = await desfechoNoBanco(id, t);
         if (velha()) return;
         if (d === 'concluido' || d === 'nao_alterado' || d === 'resolvido') {
+          // Concluiu depois que a tela desistiu: invalida ANTES de largar o token — se a leitura do pedido falhar
+          // adiante, o cache (cupom/WhatsApp) já não serve o total de antes (Codex r5; a comparação é canônica).
+          if (d === 'concluido') await invalidarCachesDoPedido(queryClient, id);
           resolverPendente(id, t);
-          if (d === 'concluido') algumConcluiu = true;
         } else {
           pendenteAberto = true;
           // Depois de um F5 a memória da aba se perdeu; o pendente persistido devolve a trava certa.
@@ -190,8 +191,6 @@ export function useSalesOrderEdit() {
       if (error) throw error;
       if (velha()) return;
       const row = data;
-      // Concluiu depois que a tela desistiu: o cache pode ter relido o total de antes (cupom/WhatsApp).
-      if (algumConcluiu) void invalidarCachesDoPedido(queryClient, row.id);
       // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
       // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
       // {...order.omie_payload, cabecalho:{codigo_parcela}} — sem o payload atual, salvar APAGARIA
@@ -934,8 +933,14 @@ export function useSalesOrderEdit() {
       }
     } catch (e) {
       console.error(e);
-      if (!montadoRef.current) return;
       const message = e instanceof Error ? e.message : 'Erro ao salvar pedido';
+      // Exceção com o token ainda sem desfecho (o invoke rejeitou, por ex.): o banco decide, como em todo desfecho
+      // desconhecido — liberar o formulário aqui deixaria um 2º envio sair antes de saber do 1º (Codex r5).
+      if (tokenEnvio && manterPendente) {
+        await desfechoDesconhecido('Erro ao sincronizar com Omie: ' + message);
+        return;
+      }
+      if (!montadoRef.current) return;
       toast.error(message);
       setSaving(false);
     } finally {

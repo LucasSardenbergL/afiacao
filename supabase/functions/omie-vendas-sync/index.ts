@@ -4877,7 +4877,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("[Omie Vendas] Erro:", error);
     // Erro da edição: antes do despacho libera; depois dele, a tentativa fica DIVERGENTE com o motivo.
-    await encerrarPosseEdicao(error instanceof Error ? error.message : String(error));
+    await encerrarPosseEdicao(mensagemDeErro(error) ?? "erro sem mensagem");
     // Finaliza o log de sync órfão como 'error' (best-effort interno → não
     // mascara nem altera a resposta 500 original).
     if (vendaLogId && !vendaSyncFinalized) {

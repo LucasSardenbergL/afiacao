@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  encerrarEnvio, esquecerMemoriaParaTeste, estadoDoPedido, iniciarEnvio, limparRegistroParaTeste, marcarDivergente,
+  encerrarEnvio, estadoDoPedido, iniciarEnvio, limparRegistroParaTeste, marcarDivergente,
   marcarPendente, resolverPendente, tokensPendentes,
 } from '../registroEnvios';
 import { invalidarCachesDoPedido } from '../envioEdicao';
@@ -41,48 +41,34 @@ describe('registroEnvios — grafias do UUID e divergente recusa envio', () => {
   });
 });
 
-describe('pendentes persistidos no aparelho (leva 1 PR 2, Codex r3/r4)', () => {
-  let memoria: Record<string, string>;
-  beforeEach(() => {
-    memoria = {};
-    vi.stubGlobal('localStorage', {
-      getItem: (k: string) => (k in memoria ? memoria[k] : null),
-      setItem: (k: string, v: string) => { memoria[k] = v; },
-      removeItem: (k: string) => { delete memoria[k]; },
-    });
-    limparRegistroParaTeste();
-    return () => { vi.unstubAllGlobals(); };
-  });
+describe('pendentes da aba (leva 1 PR 2)', () => {
+  beforeEach(() => limparRegistroParaTeste());
 
-  it('um F5 (memória perdida) não perde o token: ele segue no storage até ser resolvido', () => {
+  it('marca, lista pela chave canônica e resolve um a um', () => {
     marcarPendente(ID, 'tok-a');
-    esquecerMemoriaParaTeste();
-    expect(tokensPendentes(ID.toUpperCase())).toEqual(['tok-a']);
+    marcarPendente(ID.toUpperCase(), 'tok-b');
+    expect(tokensPendentes(ID).sort()).toEqual(['tok-a', 'tok-b']);
     resolverPendente(ID, 'tok-a');
-    esquecerMemoriaParaTeste();
+    expect(tokensPendentes(ID)).toEqual(['tok-b']);
+    resolverPendente(ID, 'tok-b');
     expect(tokensPendentes(ID)).toEqual([]);
   });
 
-  it('duas abas não se sobrescrevem: cada operação relê o storage e mescla', () => {
-    marcarPendente(ID, 'tok-a');
-    // "outra aba" grava o pendente de OUTRO pedido direto no storage
-    const atual = JSON.parse(memoria['afiacao.edicao-pedido.pendentes.v1']) as Record<string, string[]>;
-    atual['outro'] = ['tok-b'];
-    memoria['afiacao.edicao-pedido.pendentes.v1'] = JSON.stringify(atual);
-    marcarPendente(ID, 'tok-c');
-    const final = JSON.parse(memoria['afiacao.edicao-pedido.pendentes.v1']) as Record<string, string[]>;
-    expect(final['outro']).toEqual(['tok-b']);
-    expect(tokensPendentes(ID).sort()).toEqual(['tok-a', 'tok-c']);
-  });
-
-  it('storage que lança degrada para a memória da aba (nunca quebra o salvar)', () => {
+  it('não toca o localStorage (compartilhado entre abas — Codex r5)', () => {
+    const toques: string[] = [];
     vi.stubGlobal('localStorage', {
-      getItem: () => { throw new Error('bloqueado'); },
-      setItem: () => { throw new Error('bloqueado'); },
-      removeItem: () => { throw new Error('bloqueado'); },
+      getItem: () => { toques.push('get'); return null; },
+      setItem: () => { toques.push('set'); },
+      removeItem: () => { toques.push('remove'); },
     });
-    expect(() => marcarPendente(ID, 'tok-a')).not.toThrow();
-    expect(tokensPendentes(ID)).toEqual(['tok-a']);
+    try {
+      marcarPendente(ID, 'tok-a');
+      tokensPendentes(ID);
+      resolverPendente(ID, 'tok-a');
+      expect(toques).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
