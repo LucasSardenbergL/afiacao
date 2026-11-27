@@ -464,3 +464,30 @@ controle verde na mesma invocação (o real passa, a cópia sabotada na linha da
   As camadas que seguravam o episódio (`$EST/retido-camadas`) viram um aviso "publicado por fora com camada não
   atestada: X" e uma linha em `$EST/divida-camadas`. Só alerta, nunca bloqueia. Terminar em `NADA_A_PUBLICAR`
   não gera dívida.
+
+### PR C — M1, `_shared/` pelo ledger
+
+**Antes.** Todo arquivo de `supabase/functions/_shared/` no intervalo ar..main exigia `liberar` humano. O mapa
+`_shared/sonda-fingerprints.ts` muda em todo PR de edge, então todo PR de edge virava RETIDO manual: em 27/11
+foram 74 min, de 18:16 a 19:31, por `sonda-fingerprints.ts` e depois `pii-carteira.ts`.
+
+**Por que o ledger prova.** O `pendencias:deploy` compara `(versao, fonte)` servido com a main, e `fonte` é o hash
+do FECHO transitivo da edge, `_shared/` incluído. Para uma edge DO MAPA, o ledger já vê a mudança de `_shared/`.
+Ele só não vê uma consumidora fora do mapa (edge sem `versao.ts`, ou que não entrou no mapa).
+
+**Agora.** O `scripts/sonda-fan-out.ts --prova-ledger --base <ar> --head <main>` olha TODA edge com `index.ts`, e
+não só as instrumentadas. Imprime `LEDGER`/`FORA_DO_MAPA`/`ILEGIVEL`/`SEM_CONSUMIDORA` por linha e termina em
+`PROVA_LEDGER=0|1`; exit 2 é mecânica. O vigia grava o resultado em `$EST/shared-<base>-<head>` no ramo
+`PRECISA_LEDGER`, e qualquer falha da prova grava `2`.
+- No `--decidir`: `0` tira o `_shared/` do caminho humano e o manda para o ledger.
+- `1` ou `2` mantém o `liberar` e lista as consumidoras fora do mapa.
+- Sem leitura fresca da prova, sai `PRECISA_LEDGER` (exit 11).
+
+O teste antigo `dec_shared_ledger0`, em que `_shared` com ledger=0 ficava RETIDO, foi invertido em 6 cenários.
+
+**Calibração em produção, os dois RETIDO de 27/11:**
+- `--base 166ed871 --head 370e32c8` (só o mapa mudou) → `PROVA_LEDGER=0`.
+- `--base 166ed871 --head d7ae7171` → `LEDGER omie-cliente/omie-sync/omie-vendas-sync _shared/pii-carteira.ts`,
+  `PROVA_LEDGER=0`.
+
+Os dois teriam ido ao ledger em vez de esperar 74 min por um `liberar`.
