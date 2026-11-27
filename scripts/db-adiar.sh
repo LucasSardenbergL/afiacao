@@ -26,7 +26,7 @@ if [ "$REVOGAR" = 1 ]; then
   # Revogar depois que o front foi ao ar sobre a migration adiada deixaria o ar dependendo de DDL que o
   # gate não volta a olhar (ela já está atrás do ar — Codex PR2 #1). Aí o caminho é APLICAR (db:aplicar).
   AR=${DB_ADIAR_AR:-$(bash "$(dirname "$0")/lovable-publish.sh" --julgar HEAD 2>/dev/null | sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' | head -1)}   # DB_ADIAR_AR: só teste
-  [ -n "$AR" ] && AR=$(git rev-parse --verify --quiet "$AR^{commit}") || morre 6 "não li o commit no ar — não revogo às cegas"
+  if [ -z "$AR" ] || ! AR=$(git rev-parse --verify --quiet "$AR^{commit}"); then morre 6 "não li o commit no ar — não revogo às cegas"; fi
   INTRO=$(git log --diff-filter=A --format=%H -- "$ARQ" | tail -1)
   [ -n "$INTRO" ] || morre 6 "não achei o commit que introduziu $ARQ"
   git merge-base --is-ancestor "$INTRO" "$AR" && morre 2 "$ARQ já está no ar (${AR:0:8}): revogar não volta a reter nada — aplique com bun run db:aplicar $ARQ"
