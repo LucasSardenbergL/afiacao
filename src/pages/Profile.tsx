@@ -188,6 +188,16 @@ const Profile = () => {
         .update(updateData)
         .eq('user_id', user.id);
 
+      // Onda D 4b-2: o 23505 de `idx_profiles_document_unique` diz que o documento já pertence a outro
+      // cadastro. Mensagem própria, neutra e sem eco do número; o log leva só o código, nunca o `details`
+      // ("Key (document)=(...)").
+      if (error?.code === '23505' && 'document' in updateData) {
+        console.error('Error saving profile: documento recusado (23505)');
+        toast.error('Não foi possível salvar o CPF/CNPJ', {
+          description: 'Confira o número. Se ele estiver correto, fale com a nossa equipe para regularizar o cadastro.',
+        });
+        return;
+      }
       if (error) throw error;
 
       queryClient.invalidateQueries({ queryKey: ['profile', user.id] });
