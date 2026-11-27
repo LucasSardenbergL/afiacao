@@ -145,6 +145,19 @@ describe('lens-write-guard', () => {
     expect(c.calls).toEqual(['rpc']);
   });
 
+  // Revisão /sales #13/#22: a lista /sales e o detalhe do pedido leem pela lente; o contato operacional
+  // (VOLÁTIL, grava o ledger de acesso) segue barrado — o detalhe abre sem ele.
+  it('na lente: as leituras da lista /sales e do detalhe passam; o contato operacional segue bloqueado', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await c.rpc('order_feed_do_vendedor', { p_vendedor: 'u1' });
+    await c.rpc('order_feed_total', {});
+    await c.rpc('staff_get_sales_order_payload', { p_order_ids: ['p1'] });
+    expect(c.calls).toEqual(['rpc', 'rpc', 'rpc']);
+    await expect(c.rpc('contato_cliente_operacional', {})).rejects.toBeInstanceOf(LensReadOnlyError);
+    expect(c.calls).toEqual(['rpc', 'rpc', 'rpc']);
+  });
+
   it('na lente: rpc de ESCRITA com nome ambíguo FORA da allowlist (ciclo_/sugerir_) é bloqueada', async () => {
     // Guarda contra allowlistar às cegas: ciclo_oportunidade_do_dia e
     // sugerir_negociacao_paralela_hoje GERAM pedidos/sugestões (escrita).

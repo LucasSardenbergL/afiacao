@@ -389,3 +389,23 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
     _source: 'afiacao',
   };
 }
+
+/**
+ * Texto da tela de erro da lista conforme a CAUSA (revisão /sales #40): antes, toda falha com rede
+ * dizia "O servidor não respondeu" — inclusive permissão negada, a lente e resposta fora da forma, em
+ * que "tente de novo em instantes" não resolve.
+ */
+export function mensagemDoErroDaLista(erro: unknown, online: boolean): string {
+  if (!online) return 'Sem conexão com a internet.';
+  if (erro instanceof Error && erro.name === 'LensReadOnlyError') {
+    return 'A lente "Ver como" não permite esta leitura. Saia da lente para ver a lista.';
+  }
+  const codigo = typeof erro === 'object' && erro !== null && 'code' in erro ? String((erro as { code: unknown }).code) : '';
+  if (codigo === '42501' || codigo === 'PGRST301' || codigo === '401' || codigo === '403') {
+    return 'Seu acesso não permite ler os pedidos. Se deveria, avise o suporte.';
+  }
+  if (codigo === 'PGRST002' || codigo.startsWith('5') || codigo === '57014') {
+    return 'O servidor não respondeu. Tente de novo em instantes.';
+  }
+  return 'A leitura dos pedidos falhou. Tente de novo; se repetir, avise o suporte.';
+}

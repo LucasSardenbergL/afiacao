@@ -2,7 +2,7 @@
 // O supabase é um fake em memória com 6.000 pedidos — mais que os 5.000 que a tela antiga drenava —
 // e uma coluna `busca` montada como a view a monta (migration 20261101221452): é o que prova que o
 // termo que o hook manda casa com o formato da coluna, e que a busca alcança pedido fora do recorte.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -25,6 +25,8 @@ const fake = vi.hoisted(() => ({
   linhas: [] as Linha[], pedidos: [] as Pedido[], segurar: null as Promise<void> | null,
   totais: [] as Record<string, unknown>[], erroTotal: false, efetivo: 'u1' as string | null,
   filtrarComo: null as null | ((p: Pedido) => Linha[]),
+  /** `update` LANÇA (como o guard da lente faz), em vez de devolver `{ error }`. */
+  lancarNoUpdate: null as Error | null,
 }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 
@@ -92,7 +94,10 @@ vi.mock('@/integrations/supabase/client', () => {
       order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) { p.ordens.push([col, opts]); return b; },
       or(f: string) { p.or = f; return b; },
       range(a: number, z: number) { p.range = [a, z]; return b; },
-      update(v: unknown) { p.update = v; return b; },
+      update(v: unknown) {
+        if (fake.lancarNoUpdate) throw fake.lancarNoUpdate;
+        p.update = v; return b;
+      },
       in(col: string, ids: string[]) { p.in = [col, ids]; return b; },
       then(ok: (r: unknown) => unknown, erro?: (e: unknown) => unknown) {
         if (tabela !== 'order_feed') return Promise.resolve({ data: null, error: null }).then(ok, erro);
@@ -179,7 +184,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: v
 vi.mock('@/lib/analytics', () => ({ track: analytics.track }));
 
 import { supabase } from '@/integrations/supabase/client';
-import { FEED_PAGE_SIZE, useSalesOrders } from '../useSalesOrders';
+import { FEED_PAGE_SIZE, useDiaDeHoje, useSalesOrders } from '../useSalesOrders';
 import { filtroDoPeriodo } from '../feed';
 import { diaDoPedido } from '@/lib/pedido/data-pedido';
 import { format } from 'date-fns';
@@ -239,6 +244,7 @@ beforeEach(() => {
   fake.efetivo = 'u1';
   fake.pedidos = [];
   fake.segurar = null;
+  fake.lancarNoUpdate = null;
   analytics.track.mockClear();
 });
 
@@ -247,11 +253,12 @@ describe('useSalesOrders — abertura', () => {
     const { result } = montar();
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.orders).toHaveLength(FEED_PAGE_SIZE);
-    expect(result.current.totalCount).toBe(TOTAL);
+    await waitFor(() => expect(result.current.totalCount).toBe(TOTAL));
     const feed = pedidosDoFeed();
     expect(feed).toHaveLength(1);
     expect(feed[0].range).toEqual([0, FEED_PAGE_SIZE - 1]);
-    expect(feed[0].count).toBe('exact');
+    // A contagem é a do valor do recorte (order_feed_total): a página não conta de novo (revisão /sales #34).
+    expect(feed[0].count).toBeUndefined();
     expect(feed[0].select?.split(',')).not.toContain('busca');
     expect(feed[0].filtros).toEqual([]);
   });
@@ -369,7 +376,8 @@ describe('useSalesOrders — busca no servidor', () => {
     const [pedido] = pedidosDoFeed();
     expect(pedido.filtros).toEqual([['ilike', 'busca', '%por do sol & filhos%']]);
     expect(pedido.count).toBeUndefined();
-    expect(result.current.totalCount).toBeNull();
+    // Com busca o rodapé também tem o total: vem da RPC do valor, mesmos filtros (revisão /sales #34).
+    await waitFor(() => expect(result.current.totalCount).toBe(1));
   });
 
   it('acentos nos dois sentidos: "afiacao" e "AFIAÇÃO" acham "Afiação de Serra"', async () => {
@@ -807,5 +815,71 @@ describe('useSalesOrders — "Meus pedidos" e valor do recorte', () => {
     fake.erroTotal = true;
     const { result } = montar();
     await waitFor(() => expect(result.current.valorRecorte).toEqual({ estado: 'erro' }));
+  });
+});
+
+
+// Revisão /sales, leva 3.
+describe('useSalesOrders — leva 3 da revisão /sales', () => {
+  it('#14: "Meus" esperando o usuário efetivo não serve o cache de "Todos" como se fosse dele', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    fake.efetivo = null; // a lente ainda resolvendo o vendedor efetivo
+    fake.pedidos = [];
+    act(() => result.current.setMeus(true));
+    await waitFor(() => expect(result.current.meus).toBe(true));
+    expect(result.current.meusAguardando).toBe(true);
+    // Chave própria: o que estiver na tela é PLACEHOLDER do recorte anterior (ações suspensas), nunca
+    // um acerto de cache de "Todos" com cara de "Meus" (com a chave igual, buscando ficava false).
+    expect(result.current.buscando).toBe(true);
+    expect(pedidosDoFeed()).toHaveLength(0);
+  });
+
+  it('#20: exclusão cuja escrita LANÇA (guard da lente) devolve a linha ao cache e não estoura', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const alvo = result.current.orders[2];
+    fake.lancarNoUpdate = new Error('LANCOU_NO_UPDATE');
+    await act(() => result.current.deleteOrder(alvo));
+    await waitFor(() => expect(result.current.orders.map((o) => o.id)).toContain(alvo.id));
+    expect(result.current.excluindoIds.size).toBe(0);
+    const { toast } = await import('sonner');
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Erro ao excluir', expect.anything());
+  });
+
+  it('#36: lote grande vai em fatias de no máximo 100 ids (marca e rollback)', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const base = result.current.orders[0];
+    const ids = Array.from({ length: 150 }, (_, i) => `11111111-0000-0000-0000-${String(i).padStart(12, '0')}`);
+    act(() => { for (const id of ids) result.current.toggleSelect({ ...base, id }, true); });
+    const invoke = vi.mocked(supabase.functions.invoke);
+    invoke.mockImplementation((async (nome: string) =>
+      nome === 'omie-vendas-sync' ? { data: null, error: new Error('omie fora') } : { data: { logos: {} }, error: null }) as never);
+    fake.pedidos = [];
+    await act(() => result.current.deleteSelected());
+    const updates = fake.pedidos.filter((p) => p.tabela === 'sales_orders' && p.update);
+    const marcas = updates.filter((p) => (p.update as { deleted_at: string | null }).deleted_at !== null);
+    const rollbacks = updates.filter((p) => (p.update as { deleted_at: string | null }).deleted_at === null);
+    expect(marcas.map((p) => p.in?.[1].length)).toEqual([100, 50]);
+    expect(rollbacks.map((p) => p.in?.[1].length)).toEqual([100, 50]);
+    expect(new Set(marcas.flatMap((p) => p.in?.[1] ?? []))).toEqual(new Set(ids));
+    invoke.mockReset();
+    invoke.mockImplementation((async () => ({ data: { logos: {} }, error: null })) as never);
+  });
+});
+
+describe('useDiaDeHoje (#31)', () => {
+  afterEach(() => vi.useRealTimers());
+  it('vira sozinho na meia-noite local, sem outro render', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 25, 23, 59, 59, 900));
+    const { result } = renderHook(() => useDiaDeHoje());
+    expect(result.current).toBe('2026-11-25');
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(result.current).toBe('2026-11-26');
+    // re-armado para a próxima virada
+    act(() => { vi.advanceTimersByTime(24 * 60 * 60 * 1000); });
+    expect(result.current).toBe('2026-11-27');
   });
 });

@@ -16,6 +16,7 @@ import { useUrlState } from '@/hooks/useUrlState';
 import { toast } from 'sonner';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import { format } from 'date-fns';
 import {
   mensagemDoLote,
   type Account,
@@ -41,8 +42,11 @@ import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } fr
 import { ehFalhaDePagina } from '@/lib/postgrest';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { chunk } from '@/lib/lotes';
 
 export const FEED_PAGE_SIZE = 50;
+// ~37 bytes por uuid na URL: 100 ids ficam bem abaixo do limite do proxy (o mesmo lote de buscarDescontosItens).
+const IDS_POR_LOTE_EXCLUSAO = 100;
 // Ordem do feed: [total DESC NULLS LAST,] created_at DESC, origin, id (a do cursor, em feed.ts).
 const DESC = { ascending: false } as const;
 const ASC = { ascending: true } as const;
@@ -58,6 +62,30 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function clienteDoFiltro(v: string | null | undefined): string | null {
   const t = (v ?? '').trim();
   return UUID.test(t) ? t.toLowerCase() : null;
+}
+
+/** 'yyyy-MM-dd' de `agora` no fuso do navegador (o mesmo de `corteDoPeriodo` e `agruparPorDia`). */
+export function diaLocal(agora: Date): string {
+  return format(agora, 'yyyy-MM-dd');
+}
+
+/** Meia-noite local do dia 'yyyy-MM-dd'. */
+function diaComoData(dia: string): Date {
+  const [a, m, d] = dia.split('-').map(Number);
+  return new Date(a, m - 1, d);
+}
+
+/** O dia local de hoje, que MUDA sozinho na meia-noite (um timer até a próxima, re-armado a cada virada). */
+export function useDiaDeHoje(): string {
+  const [dia, setDia] = useState(() => diaLocal(new Date()));
+  useEffect(() => {
+    const agora = new Date();
+    const proxima = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
+    // +50 ms: o timer não dispara um tique antes da meia-noite e re-arma para o mesmo dia.
+    const t = setTimeout(() => setDia(diaLocal(new Date())), proxima.getTime() - agora.getTime() + 50);
+    return () => clearTimeout(t);
+  }, [dia]);
+  return dia;
 }
 
 export function useSalesOrders() {
@@ -121,33 +149,37 @@ export function useSalesOrders() {
   const feedKeyBase = useMemo(() => ['order-feed', user?.id] as const, [user?.id]);
   const padrao = padraoBuscaFeed(search);
   // O corte do período entra na key já calculado: virar o dia muda o corte e a key (sem cache velho).
-  const corte = corteDoPeriodo(periodo);
+  // `hoje` re-renderiza a tela na meia-noite local: sem ele, "Hoje" seguia o dia de quando a tela
+  // renderizou por último (revisão /sales #31).
+  const hoje = useDiaDeHoje();
+  const corte = useMemo(() => corteDoPeriodo(periodo, diaComoData(hoje)), [periodo, hoje]);
   const cortePeriodo = orDoCorte(corte);
   // "Meus" sem usuário efetivo (lente carregando) NÃO consulta: mandar vendedor nulo abriria o
   // recorte inteiro com o rótulo "Meus" (Codex).
   const vendedor = meus ? effectiveUserId : null;
   const recortePronto = !meus || !!vendedor;
+  // Na CHAVE, "Meus" em espera não é "Todos" (vendedor nulo nos dois): com a chave igual, o cache do
+  // recorte geral aparecia sob o rótulo "Meus" (revisão /sales #14).
+  const vendedorDaChave = meus ? (vendedor ?? 'meus-aguardando') : null;
   // UMA fonte para a página E para o valor do recorte: a soma não diverge dos filtros da lista.
   const recorte: RecorteFeed = {
     empresa: accountFilter, status: statusFilter, corte, cliente: clienteFiltro, busca: termoBuscaFeed(search), vendedor,
   };
   const feedQuery = useInfiniteQuery({
-    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem, clienteFiltro, vendedor],
+    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem, clienteFiltro, vendedorDaChave],
     enabled: isStaff && !!user && recortePronto,
     staleTime: 60_000,
     // Trocar a busca mantém a lista anterior na tela até a nova chegar (sem piscar o skeleton).
     placeholderData: keepPreviousData,
     initialPageParam: null as CursorFeed | null,
     queryFn: async ({ pageParam }): Promise<PaginaFeed> => {
-      // count só na 1ª página e só sem busca: com busca ele seria um 2º scan dos ~32 k na mesma query.
-      const contar = pageParam === null && !padrao ? 'exact' as const : undefined;
       // "Meus": a MESMA projeção da view, restrita pela função do vendedor (a coluna do vendedor é
       // fechada para `authenticated`; migration 20261123120000). Filtros, ordem e cursor iguais.
       // Ordem estável + janela junto da fonte (a rpc set-returning também tem a capa de 1.000).
       // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
       const fonte = vendedor
-        ? supabase.rpc('order_feed_do_vendedor', { p_vendedor: vendedor }, { count: contar }).select(COLUNAS_PAGINA_FEED)
-        : supabase.from('order_feed').select(COLUNAS_PAGINA_FEED, { count: contar });
+        ? supabase.rpc('order_feed_do_vendedor', { p_vendedor: vendedor }).select(COLUNAS_PAGINA_FEED)
+        : supabase.from('order_feed').select(COLUNAS_PAGINA_FEED);
       let query = (ordem === 'valor' ? fonte.order('total', NULOS_NO_FIM) : fonte)
         .order('created_at', DESC).order('origin', ASC).order('id', ASC).range(0, FEED_PAGE_SIZE - 1);
       for (const f of filtrosDoRecorte(recorte)) {
@@ -158,14 +190,15 @@ export function useSalesOrders() {
       // Corte do período e/ou "depois da última linha lida" (keyset) — um `.or()` só.
       const predicado = filtroDaPaginaFeed(pageParam, ordem, cortePeriodo);
       if (predicado) query = query.or(predicado);
-      const { data, error, count } = await query;
+      const { data, error } = await query;
       if (error) throw error;
       // data nulo sem erro não é "acabou": encerraria a rolagem com a lista parcial.
       if (!data) throw new Error('order_feed: página sem dados e sem erro');
       const linhas = data;
       return {
+        // Sem `count: 'exact'`: a contagem do recorte vem de `order_feed_total`, que já a faz — o
+        // count daqui era um 2º scan do mesmo recorte (revisão /sales #34).
         rows: linhas.map(({ total_cursor: _cursor, ...linha }) => feedRowDaLinha(linha)),
-        count: count ?? null,
         cursor: cursorDaPagina(linhas),
         cheia: linhas.length === FEED_PAGE_SIZE,
       };
@@ -180,7 +213,7 @@ export function useSalesOrders() {
   // Prefixo PRÓPRIO: o optimistic da exclusão varre `feedKeyBase` lendo `.pages`.
   const totalKeyBase = useMemo(() => ['order-feed-total', user?.id] as const, [user?.id]);
   const totalQuery = useQuery({
-    queryKey: [...totalKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, clienteFiltro, vendedor],
+    queryKey: [...totalKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, clienteFiltro, vendedorDaChave],
     enabled: isStaff && !!user && recortePronto,
     staleTime: 60_000,
     queryFn: async () => {
@@ -198,8 +231,8 @@ export function useSalesOrders() {
     () => dedupeFeedRows(feedQuery.data?.pages.flatMap((p) => p.rows) ?? []),
     [feedQuery.data],
   );
-  // Total do servidor para a aba atual (null com busca — ver queryFn).
-  const totalCount = feedQuery.data?.pages[0]?.count ?? null;
+  // Total do recorte (o `pedidos` da RPC do valor, mesmos filtros); null enquanto carrega ou se falhou.
+  const totalCount = valorRecorte.estado === 'ok' ? valorRecorte.pedidos : null;
   // Filtro/aba nova a caminho com as linhas da anterior na tela (keepPreviousData): elas NÃO são do
   // filtro atual, então seleção e ações ficam suspensas até a resposta chegar (Codex, 2ª rodada).
   const emTransicao = feedQuery.isPlaceholderData;
@@ -306,6 +339,14 @@ export function useSalesOrders() {
       // Aviso da EQUIPE, não do papel: o cupom saiu sem a quebra de um desconto que existe
       // ou que não se conseguiu ler.
       if (aviso) toast.warning(aviso.titulo, { description: aviso.descricao });
+      // Contato que não se leu sai em branco no papel — "não li" não pode passar por "não tem".
+      if (d.contatoIndisponivel) {
+        // O próximo clique lê de novo (o cache de 60 s guardaria a falha).
+        void queryClient.invalidateQueries({ queryKey: orderDetailQueryKey(user?.id, row.origin, row.id) });
+        toast.warning('Cupom impresso sem o contato do cliente', {
+          description: 'Não consegui ler endereço, telefone e documento agora. Tente imprimir de novo em instantes.',
+        });
+      }
     } catch (e) {
       console.error(e);
       toast.error('Não foi possível carregar o pedido para imprimir');
@@ -356,17 +397,9 @@ export function useSalesOrders() {
   const tirarDoCache = (ids: Set<string>) => {
     queryClient.setQueriesData<InfiniteData<PaginaFeed>>({ queryKey: feedKeyBase }, (old) => {
       if (!old) return old;
-      const removidas = old.pages.reduce(
-        (n, p) => n + p.rows.filter((r) => r.origin === 'sales' && ids.has(r.id)).length,
-        0,
-      );
       return {
         ...old,
-        pages: old.pages.map((p) => ({
-          ...p,
-          rows: p.rows.filter((r) => !(r.origin === 'sales' && ids.has(r.id))),
-          count: p.count === null ? null : Math.max(0, p.count - removidas),
-        })),
+        pages: old.pages.map((p) => ({ ...p, rows: p.rows.filter((r) => !(r.origin === 'sales' && ids.has(r.id))) })),
       };
     });
   };
@@ -397,9 +430,19 @@ export function useSalesOrders() {
     if (travar([row.id]).length === 0) return; // já há uma exclusão deste pedido em voo
     try {
       await excluirUm(row);
+    } catch (e) {
+      falhaInesperadaNaExclusao(e);
     } finally {
       soltar([row.id]);
     }
+  };
+
+  // Rejeição fora do `{ error }` (o guard da lente, rede, bug): as linhas já saíram do cache pelo
+  // optimistic — sem reconciliar, ficariam sumidas da tela sem terem sido excluídas (revisão /sales #20).
+  const falhaInesperadaNaExclusao = (e: unknown) => {
+    console.error(e);
+    void reconciliar();
+    toast.error('Erro ao excluir', { description: mensagemDeErro(e) ?? 'A lista foi recarregada com o estado do servidor.' });
   };
 
   const excluirUm = async (row: OrderFeedRow) => {
@@ -436,6 +479,8 @@ export function useSalesOrders() {
     }
     try {
       await excluirLote(toDelete);
+    } catch (e) {
+      falhaInesperadaNaExclusao(e);
     } finally {
       soltar([...livres]);
     }
@@ -448,25 +493,32 @@ export function useSalesOrders() {
     tirarDoCache(deleteIds);
     setSelecionados(new Map());
 
-    // 1. Soft-delete em batch (1 UPDATE com .in('id', ...))
+    // 1. Soft-delete em LOTES de ids (`.in()` com centenas de uuids estoura a URL do proxy — revisão
+    // /sales #36). Lote que falha não foi gravado: os pedidos dele não vão ao Omie e contam como falha.
     const nowIso = new Date().toISOString();
-    const { error: softErr } = await supabase
-      .from('sales_orders')
-      .update({ deleted_at: nowIso })
-      .in('id', Array.from(deleteIds));
+    const marcados = new Set<string>();
+    const motivos: string[] = [];
+    for (const lote of chunk([...deleteIds], IDS_POR_LOTE_EXCLUSAO)) {
+      const { error: softErr } = await supabase.from('sales_orders').update({ deleted_at: nowIso }).in('id', lote);
+      if (softErr) {
+        console.error(softErr);
+        motivos.push(softErr.message);
+        continue;
+      }
+      lote.forEach((id) => marcados.add(id));
+    }
 
-    if (softErr) {
-      console.error(softErr);
+    if (marcados.size === 0) {
       void reconciliar(); // nada foi gravado: o servidor devolve os pedidos
-      toast.error(`Erro ao excluir pedidos`, { description: softErr.message });
+      toast.error(`Erro ao excluir pedidos`, { description: [...new Set(motivos)].join(' · ') || undefined });
       return;
     }
 
     // 2. Omie exclude sequencial (não floodar). Rollback do deleted_at em falhas.
     const failedIds: string[] = [];
-    const motivos: string[] = [];
     let success = 0;
     for (const o of toDelete) {
+      if (!marcados.has(o.id)) continue;
       try {
         const { error } = await supabase.functions.invoke('omie-vendas-sync', {
           body: {
@@ -484,16 +536,17 @@ export function useSalesOrders() {
         console.error(e);
       }
     }
-    const failed = failedIds.length;
+    // Os que nem chegaram a ser marcados (lote do passo 1 que falhou) também falharam.
+    const failed = failedIds.length + (deleteIds.size - marcados.size);
 
     // Rollback do soft-delete só pros que falharam no Omie
     let rollbackFalhou: string | null = null;
-    if (failedIds.length > 0) {
+    for (const lote of chunk(failedIds, IDS_POR_LOTE_EXCLUSAO)) {
       // Só desfaz a marca que ESTE lote gravou (mesmo carimbo) — nunca a de outra exclusão.
       const { error: rbErr } = await supabase
         .from('sales_orders')
         .update({ deleted_at: null })
-        .in('id', failedIds)
+        .in('id', lote)
         .eq('deleted_at', nowIso);
       if (rbErr) rollbackFalhou = rbErr.message;
     }
@@ -528,6 +581,8 @@ export function useSalesOrders() {
     authLoading,
     loading: feedQuery.isLoading,
     loadError: feedQuery.isError,
+    // A causa, para a tela dizer o que houve (`mensagemDoErroDaLista`), não "o servidor não respondeu" sempre.
+    erroDaLista: feedQuery.error,
     // Refetch de FUNDO que falhou com o cache na tela (a lista segue, a tela avisa discretamente).
     refetchError: feedQuery.isRefetchError,
     // Sem rede e sem cache: a query PAUSA (networkMode 'online') com isLoading=false e lista vazia —
@@ -552,6 +607,8 @@ export function useSalesOrders() {
     setStatusFilter,
     periodo,
     setPeriodo,
+    // Dia local de hoje (vira sozinho à meia-noite): rótulos "Hoje"/"Ontem" e o corte do período.
+    hoje,
     ordem,
     setOrdem,
     search,

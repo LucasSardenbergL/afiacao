@@ -77,10 +77,14 @@ export interface SalesOrder {
 // Sem `busca`: a coluna só serve de filtro no servidor e a listagem não a baixa.
 export type LinhaOrderFeed = Omit<Tables<'order_feed'>, 'busca'>;
 
-/** Colunas sem as quais a linha do feed não faz sentido (view: o gerador as dá todas `| null`). */
+/**
+ * Colunas sem as quais a linha do feed não faz sentido (view: o gerador as dá todas `| null`).
+ * `subtotal`/`total` NÃO entram: valor ausente é "—" na linha, nunca R$ 0,00 nem a página inteira
+ * derrubada por uma linha (revisão /sales #33 — o valor do recorte já conta `sem_total`).
+ */
 export const COLUNAS_FEED_EXIGIDAS = [
   'origin', 'id', 'created_at', 'account', 'customer_user_id',
-  'item_names', 'item_quantity', 'status', 'subtotal', 'total',
+  'item_names', 'item_quantity', 'status',
 ] as const satisfies readonly (keyof LinhaOrderFeed)[];
 
 /** Linha da view `order_feed` com as colunas-chave exigidas e `origin` estreitado (`feedRowDaLinha`). */
@@ -88,11 +92,10 @@ export type OrderFeedRow = Omit<LinhaOrderFeed, (typeof COLUNAS_FEED_EXIGIDAS)[n
   [K in Exclude<(typeof COLUNAS_FEED_EXIGIDAS)[number], 'origin'>]: NonNullable<LinhaOrderFeed[K]>;
 } & { origin: 'sales' | 'afiacao' };
 
-// Uma página da listagem (useInfiniteQuery ['order-feed', userId, empresa, busca]). `count` só vem
-// na 1ª página e só sem busca (o count da busca custaria um 2º scan dos ~32 k); `null` = não contado.
+// Uma página da listagem (useInfiniteQuery ['order-feed', userId, …filtros]). A contagem do recorte
+// não vem aqui: é o `pedidos` de `order_feed_total` (revisão /sales #34).
 export interface PaginaFeed {
   rows: OrderFeedRow[];
-  count: number | null;
   /**
    * Chave da ÚLTIMA linha como o servidor a devolveu — a próxima página começa depois dela (keyset).
    * Guardada na leitura, não derivada de `rows`: o optimistic da exclusão tira linhas da página, e o
@@ -117,6 +120,11 @@ export interface OrderDetail {
   order: SalesOrder;
   customerName: string;
   customerDocument?: string;
+  /**
+   * `true` = a leitura do contato (endereço/telefone/documento) FALHOU — não é "cliente sem contato".
+   * O painel abre igual; o cupom sai sem esses campos e a equipe é avisada (revisão /sales #22).
+   */
+  contatoIndisponivel?: true;
 }
 
 export const statusLabels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {

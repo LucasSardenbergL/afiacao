@@ -4,6 +4,8 @@ import { ATRASO_PREFETCH_MS, SalesOrderCard } from '../SalesOrderCard';
 import type { OrderFeedRow } from '../types';
 
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
+const lente = vi.hoisted(() => ({ ativa: false }));
+vi.mock('@/lib/impersonation/useLenteAtiva', () => ({ useLenteAtiva: () => lente.ativa }));
 vi.mock('@/lib/analytics', () => ({ track: analytics.track }));
 
 // O card consome a linha da view order_feed (listagem enxuta).
@@ -250,6 +252,31 @@ describe('SalesOrderCard — prefetch só com o ponteiro parado', () => {
       expect(onPrefetch).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// Revisão /sales, leva 3.
+describe('SalesOrderCard — leva 3 da revisão /sales', () => {
+  it('#33: total ausente sai "—", nunca R$ 0,00', () => {
+    setup(order({ total: null }));
+    expect(screen.queryByText(/R\$\s0,00/)).toBeNull();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('#20: na lente, "Excluir" fica desligado com o motivo e sem checkbox', () => {
+    lente.ativa = true;
+    try {
+      const props = setup(order({ status: 'rascunho', omie_pedido_id: null }));
+      expect(screen.queryByRole('checkbox')).toBeNull();
+      fireEvent.keyDown(screen.getByRole('button', { name: /Mais ações/ }), { key: 'Enter' });
+      const item = screen.getByRole('menuitem', { name: /Excluir/ });
+      expect(item.getAttribute('aria-disabled')).toBe('true');
+      expect(screen.getByText(/exclusão fica desligada/)).toBeTruthy();
+      fireEvent.click(item);
+      expect(props.onPedirExclusao).not.toHaveBeenCalled();
+    } finally {
+      lente.ativa = false;
     }
   });
 });
