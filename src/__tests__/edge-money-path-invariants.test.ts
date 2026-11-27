@@ -4389,13 +4389,31 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
     return src.slice(i, f);
   })();
 
+  // Única exceção (revisão /sales leva 1, #6/#7): a RESERVA pela versão — UPDATE só de `updated_at`, que
+  // não grava dado do pedido e tem de acontecer ANTES da 1ª mutação no Omie.
+  const RESERVA = '.update({ updated_at: new Date().toISOString() })';
+
   it('a edição NÃO volta a gravar o pedido por .update() do PostgREST', () => {
     expect(
-      bloco,
+      bloco.split(RESERVA).join(''),
       'alterar_pedido voltou a escrever sales_orders por PostgREST — o cabeçalho iria sem as linhas',
     ).not.toContain('.update(');
     expect(bloco, 'alterar_pedido escrevendo order_items solto: fora da transação do cabeçalho')
       .not.toContain('from("order_items")');
+  });
+
+  it('a reserva pela versão vem UMA vez, antes da 1ª mutação no Omie, e exige 1 linha', () => {
+    const iReserva = bloco.indexOf(RESERVA);
+    expect(bloco.split(RESERVA).length - 1, 'reserva ausente ou duplicada').toBe(1);
+    for (const mutacao of ['"AlterarPedidoVenda"', '"ExcluirItemPedido"', '"IncluirItemPedido"']) {
+      const iMut = bloco.indexOf(mutacao);
+      expect(iMut, `${mutacao} sumiu do bloco`).toBeGreaterThan(-1);
+      expect(iReserva, `a reserva tem de vir antes de ${mutacao}`).toBeLessThan(iMut);
+    }
+    const trecho = bloco.slice(iReserva, bloco.indexOf('"AlterarPedidoVenda"'));
+    for (const filtro of ['.eq("updated_at", versaoEdit.valor)', '.is("updated_at", null)', '.is("deleted_at", null)', '.is("hash_payload", null)', '.eq("hash_payload", hashLidoEdit)', '.eq("omie_pedido_id"', '.eq("account"', '.eq("status"', '.length !== 1', 'edicaoReservada = true']) {
+      expect(trecho, `a reserva perdeu ${filtro}`).toContain(filtro);
+    }
   });
 
   it('e chama a RPC atômica com as OITO chaves do contrato', () => {

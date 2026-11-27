@@ -53,6 +53,11 @@ import {
   vereditoGemeoEdicao,
   vereditoParcelaEdicao,
   vereditoPedidoLocalEdicao,
+  corpoDoErro,
+  MOTIVO_EDICAO_CONCORRENTE,
+  notasDaEdicao,
+  observacaoParaOmie,
+  versaoDaEdicao,
 } from "./edicao-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
@@ -2675,6 +2680,10 @@ Deno.serve(async (req) => {
   const SYNC_ACTIONS = ["sync_products", "sync_estoque", "sync_pedidos"];
   let vendaLogId = "";
   let vendaSyncFinalized = false;
+  // `alterar_pedido` já reservou o pedido (versão trocada; o Omie pode ter mudado): o 500 diz à tela que
+  // o formulário dela é um retrato velho (#30, ./edicao-omie.ts `corpoDoErro`).
+  let edicaoReservada = false;
+  let emAlterarPedido = false;
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -3303,6 +3312,7 @@ Deno.serve(async (req) => {
       }
 
       case "alterar_pedido": {
+        emAlterarPedido = true;
         const {
           sales_order_id: editSoId,
           items: editItems,
@@ -3314,6 +3324,20 @@ Deno.serve(async (req) => {
         if (!editSoId || !editItems?.length) throw new Error("Dados insuficientes para alterar pedido");
         // Guard money-path: rejeita ANTES de consultar/excluir itens no Omie (passo destrutivo).
         assertOmieItemPricesValid(editItems);
+
+        // Versão da tela (#7) NA ENTRADA, antes até de ler o pedido (Codex 2026-11-26): sem ela não há como provar que o formulário
+        // não é um retrato velho — a lista inteira reenviada desfaria a edição de outra pessoa. Front antigo
+        // recebe a instrução de recarregar o app, antes de qualquer registro de crédito ou leitura do Omie.
+        const versaoEdit = versaoDaEdicao({
+          presente: Object.prototype.hasOwnProperty.call(params, "versao"),
+          informada: (params as { versao?: unknown }).versao,
+        });
+        if (!versaoEdit.ok) {
+          // ERRO, não `blocked`: a tela antiga só mostra o texto da edge no ramo de erro ("Erro ao sincronizar
+          // com Omie: <texto>"); um `blocked` desconhecido ela traduz como "Tente novamente" (Codex 2026-11-26).
+          // Antes da reserva → o 500 leva `precisa_recarregar: false`.
+          throw new Error(`Edição recusada: ${versaoEdit.motivo}`);
+        }
 
         // Load existing order
         const { data: existingOrder } = await supabaseAdmin
@@ -3331,6 +3355,7 @@ Deno.serve(async (req) => {
           account: existingOrder.account,
           hashPayload: (existingOrder as { hash_payload?: string | null }).hash_payload ?? null,
           status: (existingOrder as { status?: string | null }).status ?? null,
+          excluido: (existingOrder as { deleted_at?: string | null }).deleted_at != null,
         });
         if (!vereditoLocal.permitido) {
           result = { success: false, blocked: vereditoLocal.bloqueio, contexto: "edicao", motivo: vereditoLocal.motivo };
@@ -3728,6 +3753,38 @@ Deno.serve(async (req) => {
         });
         if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);
 
+        // RESERVA do pedido pela versão que a tela viu (./edicao-omie.ts `versaoDaEdicao`; revisão /sales #6/#7):
+        // é aqui, na fronteira da 1ª mutação no Omie, que se prova que o pedido AINDA é o que a tela e as
+        // checagens acima leram — mesma versão, mesmo PV, mesma conta, mesmo status, origem do app, não
+        // excluído. UPDATE condicional atômico: de dois saves com a mesma versão, o 2º espera o lock da
+        // linha, reavalia o WHERE depois do commit do 1º e casa 0 linhas. Depois dela a versão mudou, então
+        // QUALQUER falha adiante faz o mesmo formulário ser recusado aqui no reenvio (#30 na fronteira).
+        // Residual aceito (igual ao envio #4043): tela reaberta DURANTE o voo lê a versão nova.
+        let reservaEdit = supabaseAdmin
+          .from("sales_orders")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", editSoId)
+          .is("deleted_at", null)
+          .eq("omie_pedido_id", existingOrder.omie_pedido_id)
+          .eq("account", existingOrder.account)
+          .eq("status", existingOrder.status);
+        // Origem: o hash EXATO que o veredito aprovou (recibo de checkout tem `checkout_*`, não NULL — Codex
+        // 2026-11-26). Um sync que trocasse o hash para `omie_*` no meio faz a reserva não casar.
+        const hashLidoEdit = (existingOrder as { hash_payload?: string | null }).hash_payload ?? null;
+        reservaEdit = hashLidoEdit === null ? reservaEdit.is("hash_payload", null) : reservaEdit.eq("hash_payload", hashLidoEdit);
+        reservaEdit = versaoEdit.valor === null
+          ? reservaEdit.is("updated_at", null)
+          : reservaEdit.eq("updated_at", versaoEdit.valor);
+        const { data: reservadasEdit, error: reservaEditErr } = await reservaEdit.select("id");
+        if (reservaEditErr) {
+          throw new Error(`Edição recusada: não consegui reservar o pedido (${reservaEditErr.message}). Nada foi alterado no Omie.`);
+        }
+        if ((reservadasEdit ?? []).length !== 1) {
+          result = { success: false, blocked: "edicao_concorrente", contexto: "edicao", motivo: MOTIVO_EDICAO_CONCORRENTE };
+          break;
+        }
+        edicaoReservada = true;
+
         // Step 2 (cabeçalho ANTES do delete+add): etapa, previsão, frete e classificação são os LIDOS
         // do PV (./edicao-omie.ts) — salvar só a observação não regride etapa, não troca a previsão e
         // não apaga transportadora/volumes/valor do frete. Vem antes da fase destrutiva de propósito: o
@@ -3735,6 +3792,14 @@ Deno.serve(async (req) => {
         // 2026-11-26); se o Omie o recusar, a edição falha com os ITENS intactos, em vez de deixá-los
         // trocados e o cabeçalho para trás. O TotalizarPedido do fim recalcula as parcelas.
         const editCabecalho = cabecalhoDaEdicao({ codigoPedido, lido: lidoEdit, codigoParcela: editParcelaEnvio });
+        // #17: uma só normalização para o AlterarPedidoVenda e o espelho no omie_payload (./edicao-omie.ts).
+        const obsEnvioEdit = observacaoParaOmie({
+          presente: Object.prototype.hasOwnProperty.call(params, "observacao"),
+          informada: editObs,
+          viva: lidoEdit.observacaoViva,
+          notaLocal: (existingOrder as { notes?: string | null }).notes ?? null,
+          padraoDaConta: editConfig.obs_prefix,
+        });
         const editInfoAdic = informacoesAdicionaisDaEdicao(lidoEdit);
         const editFrete = freteDaEdicao({ lido: lidoEdit, quantidadeVolumes: editVolumes });
 
@@ -3742,7 +3807,7 @@ Deno.serve(async (req) => {
           // throwOnTransient: o `null` aqui deixava o cabeçalho VELHO (parcela, observações, volumes) no
           // ERP e a action seguia para a troca de itens como se tivesse aplicado.
           await callOmieVendasApi("produtos/pedido/", "AlterarPedidoVenda",
-            { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic },
+            { cabecalho: editCabecalho, frete: editFrete, observacoes: { obs_venda: obsEnvioEdit }, informacoes_adicionais: editInfoAdic },
             editAccount, { throwOnTransient: true });
         } catch (headerErr) {
           const msg = headerErr instanceof Error ? headerErr.message : String(headerErr);
@@ -3964,7 +4029,7 @@ Deno.serve(async (req) => {
           // `codigo_cliente` = o vivo, já provado igual à âncora: sem ele o payload regravado perdia a âncora
           // e a PRÓXIMA edição seria recusada por "sem registro do cliente".
           cabecalho: { ...editCabecalho, codigo_cliente: omieCodigoClienteEdit }, frete: editFrete, det: newDetForPayload,
-          observacoes: { obs_venda: editObs || editConfig.obs_prefix }, informacoes_adicionais: editInfoAdic,
+          observacoes: { obs_venda: obsEnvioEdit }, informacoes_adicionais: editInfoAdic,
         };
 
         console.log(`[Omie Vendas][${editAccount}] Pedido atualizado: ${editItems.length} itens`);
@@ -4020,7 +4085,12 @@ Deno.serve(async (req) => {
           p_items: updatedItemsPayload,
           p_itens: itensRelacionais,
           p_total: updatedSubtotal,
-          p_notes: editObs || existingOrder.notes,
+          // #17: `""` limpa (NULL); chave ausente mantém. Antes `editObs || notes` ressuscitava a antiga.
+          p_notes: notasDaEdicao({
+            presente: Object.prototype.hasOwnProperty.call(params, "observacao"),
+            informada: editObs,
+            atuais: (existingOrder as { notes?: string | null }).notes ?? null,
+          }),
           p_omie_payload: editPayload,
           p_omie_response: editResult,
           p_lido_em: finalLidoEm,
@@ -4749,9 +4819,10 @@ Deno.serve(async (req) => {
       vendaSyncFinalized = true;
     }
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Erro desconhecido",
-      }),
+      JSON.stringify(corpoDoErro({
+        mensagem: error instanceof Error ? error.message : "Erro desconhecido",
+        edicao: !emAlterarPedido ? "fora" : edicaoReservada ? "depois" : "antes",
+      })),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

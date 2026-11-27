@@ -20,6 +20,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useSalesOrderEdit } from '../useSalesOrderEdit';
+import { comQueryClient } from '@/test/query-client';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
@@ -102,7 +103,7 @@ beforeEach(() => {
 });
 
 async function renderLoaded() {
-  const hook = renderHook(() => useSalesOrderEdit());
+  const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
   await waitFor(() => expect(hook.result.current.loading).toBe(false));
   await waitFor(() => expect(hook.result.current.order).toBeTruthy());
   return hook;

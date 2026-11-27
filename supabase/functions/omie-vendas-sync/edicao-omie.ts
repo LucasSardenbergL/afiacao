@@ -34,7 +34,10 @@ type BloqueioEdicao =
   | "gemeo_omie"
   | "etapa_omie"
   | "leitura_omie_incompleta"
-  | "cliente_omie";
+  | "cliente_omie"
+  | "pedido_excluido"
+  | "edicao_concorrente"
+  | "versao_ausente";
 
 export type VereditoEdicao =
   | { permitido: true }
@@ -45,7 +48,16 @@ export function vereditoPedidoLocalEdicao(input: {
   account: unknown;
   hashPayload: string | null;
   status: string | null;
+  /** `deleted_at` preenchido. Opcional só para chamadas antigas; a edge sempre informa (#6). */
+  excluido?: boolean;
 }): VereditoEdicao {
+  if (input.excluido === true) {
+    return {
+      permitido: false,
+      bloqueio: "pedido_excluido",
+      motivo: "o pedido foi excluído do app — nada foi alterado. Recarregue a lista de pedidos.",
+    };
+  }
   if (input.account !== "oben" && input.account !== "colacor") {
     return {
       permitido: false,
@@ -150,6 +162,8 @@ export interface CabecalhoLido {
   categoria: string | null;
   contaCorrente: number | null;
   codVend: number | null;
+  /** `observacoes.obs_venda` VIVA do PV — o que a edição preserva quando a tela não manda observação. */
+  observacaoViva?: string | null;
 }
 
 type ConsultaCrua = {
@@ -158,6 +172,7 @@ type ConsultaCrua = {
   frete?: unknown;
   infoCadastro?: { cancelado?: unknown; faturado?: unknown };
   informacoes_adicionais?: { codigo_categoria?: unknown; codigo_conta_corrente?: unknown; codVend?: unknown };
+  observacoes?: { obs_venda?: unknown };
 } | null | undefined;
 
 function textoOuNull(v: unknown): string | null {
@@ -199,6 +214,7 @@ export function lerCabecalhoParaEdicao(consulta: ConsultaCrua): CabecalhoLido {
   const freteCru = pv?.frete ?? consulta?.frete;
   const info = pv?.infoCadastro ?? consulta?.infoCadastro;
   const adic = pv?.informacoes_adicionais ?? consulta?.informacoes_adicionais;
+  const obsViva = pv?.observacoes?.obs_venda ?? consulta?.observacoes?.obs_venda;
   return {
     etapa: textoOuNull(cab?.etapa),
     dataPrevisao: textoOuNull(cab?.data_previsao),
@@ -210,6 +226,7 @@ export function lerCabecalhoParaEdicao(consulta: ConsultaCrua): CabecalhoLido {
     categoria: textoOuNull(adic?.codigo_categoria),
     contaCorrente: inteiroPositivoOuNull(adic?.codigo_conta_corrente),
     codVend: inteiroPositivoOuNull(adic?.codVend),
+    observacaoViva: typeof obsViva === "string" && obsViva.trim() !== "" ? obsViva : null,
   };
 }
 
@@ -299,4 +316,83 @@ export function informacoesAdicionaisDaEdicao(lido: CabecalhoLido): Record<strin
   };
   if (lido.codVend !== null) out.codVend = lido.codVend;
   return out;
+}
+
+// ── Concorrência e desfecho da edição (revisão /sales, leva 1: #6, #7, #17, #30) ──────────────────────
+
+/**
+ * Versão da linha (`updated_at` visto ao abrir a tela) contra a qual a edição RESERVA o pedido antes de tocar o
+ * Omie (#7). Ausente ou de tipo errado RECUSA (Codex 2026-11-26): emprestar a versão lida agora a uma aba antiga
+ * deixaria a lista inteira dela desfazer a edição já concluída de outra pessoa. `null` explícito casa
+ * `IS NULL` (no esquema atual `updated_at` é NOT NULL → 0 linhas → recusa na reserva).
+ */
+export type VersaoDaEdicao =
+  | { ok: true; valor: string | null }
+  | { ok: false; motivo: string };
+
+export function versaoDaEdicao(input: { presente: boolean; informada: unknown }): VersaoDaEdicao {
+  if (!input.presente) {
+    return {
+      ok: false,
+      motivo: "esta tela é de uma versão antiga do app e não diz qual versão do pedido foi editada. " +
+        "Atualize o app (recarregue a página) e edite de novo — nada foi alterado.",
+    };
+  }
+  if (input.informada === null) return { ok: true, valor: null };
+  if (typeof input.informada === "string" && input.informada.trim() !== "") return { ok: true, valor: input.informada };
+  return { ok: false, motivo: "a versão do pedido enviada pela tela é ilegível — recarregue o pedido; nada foi alterado." };
+}
+
+export const MOTIVO_EDICAO_CONCORRENTE =
+  "o pedido mudou desde que esta tela foi aberta (outra edição, envio, exclusão ou mudança de status). " +
+  "Nada foi alterado no Omie — recarregue o pedido para ver a versão atual.";
+
+/**
+ * Observação que o write-back grava (#17). Antes: `editObs || notasAtuais` — limpar o campo (`""`) trazia a
+ * observação velha de volta. Chave ausente = não mexer; string vazia/só espaço = limpar (NULL); outro tipo =
+ * não é observação, mantém a atual.
+ */
+export function notasDaEdicao(input: { presente: boolean; informada: unknown; atuais: string | null }): string | null {
+  if (!input.presente || typeof input.informada !== "string") return input.atuais;
+  return input.informada.trim() === "" ? null : input.informada;
+}
+
+/**
+ * Corpo do 500 do handler. `precisa_recarregar` = a falha veio DEPOIS da reserva do pedido (a versão já mudou
+ * e o Omie pode ter mudado): a tela não pode reenviar o mesmo formulário (#30).
+ */
+export function corpoDoErro(input: {
+  mensagem: string;
+  /** `fora` = não é `alterar_pedido`; `antes` = falhou antes da reserva (nada mudou: tentar de novo é seguro). */
+  edicao: "fora" | "antes" | "depois";
+}): Record<string, unknown> {
+  if (input.edicao === "fora") return { error: input.mensagem };
+  // `false` EXPLÍCITO antes da reserva: a tela só destrava com a prova. Sem a chave (edge antiga, resposta
+  // perdida, corpo não-JSON) o resultado é indeterminado e a tela congela (Codex 2026-11-26).
+  return { error: input.mensagem, precisa_recarregar: input.edicao === "depois" };
+}
+
+/**
+ * `obs_venda` que a edição manda ao Omie — e que o `omie_payload` espelha (#17, Codex 2026-11-26). Uma só
+ * normalização para as duas pontas, irmã de `notasDaEdicao`:
+ * • texto → o texto; vazio/só espaço = limpeza explícita → volta o texto padrão da conta (mesmo default da
+ *   criação; na Oben carrega o texto fiscal do recibo, que espaços em branco apagariam);
+ * • chave ausente → preserva a observação VIVA do PV (o prefixo por cima apagaria uma nota comercial);
+ *   sem leitura viva, o padrão da conta.
+ */
+export function observacaoParaOmie(input: {
+  presente: boolean;
+  informada: unknown;
+  viva: string | null | undefined;
+  /** `sales_orders.notes`: o que a main mandava. Vale quando a leitura do PV não trouxe a observação. */
+  notaLocal: string | null | undefined;
+  padraoDaConta: string;
+}): string {
+  if (input.presente && typeof input.informada === "string") {
+    return input.informada.trim() === "" ? input.padraoDaConta : input.informada;
+  }
+  // Leitura sem `observacoes` é inconclusiva, não "PV sem nota": cair no padrão apagaria uma condição
+  // comercial no ERP (Codex 2026-11-26). Antes do padrão, a nota que o app tem.
+  const local = typeof input.notaLocal === "string" && input.notaLocal.trim() !== "" ? input.notaLocal : null;
+  return input.viva ?? local ?? input.padraoDaConta;
 }

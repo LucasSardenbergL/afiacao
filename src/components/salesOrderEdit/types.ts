@@ -66,9 +66,23 @@ export const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado', 'importado
  * criado no Omie que avançou para "separacao" deixou de ser `importado`, mas continua sendo de outra
  * pessoa — salvar aqui faria `alterar_pedido` nele (Codex P0-5, 15 casos na prod em 2026-11-25).
  */
-export function bloqueioDaEdicao(order: Pick<SalesOrder, 'status' | 'origem_omie'>): string | null {
+export function bloqueioDaEdicao(
+  order: Pick<SalesOrder, 'status' | 'origem_omie'> & { account?: SalesOrder['account'] },
+): string | null {
   if (order.origem_omie) return motivoEdicaoBloqueada('importado');
+  if (order.account !== undefined && contaDaEdicao(order.account) === null) {
+    return `A empresa deste pedido (${order.account || 'sem empresa'}) não é editável pelo app — catálogo e condições seriam de outra empresa. Altere no Omie.`;
+  }
   return BLOCKED_STATUSES.includes(order.status) ? motivoEdicaoBloqueada(order.status) : null;
+}
+
+/**
+ * Conta do pedido que a edição sabe tratar, ou `null`. Antes valia `colacor ? colacor : oben`: qualquer
+ * outra conta (ex.: `colacor_sc`) abria com catálogo e condições da Oben (revisão /sales #4). Mesma regra
+ * da edge (`vereditoPedidoLocalEdicao` → `conta_desconhecida`).
+ */
+export function contaDaEdicao(account: unknown): 'oben' | 'colacor' | null {
+  return account === 'oben' || account === 'colacor' ? account : null;
 }
 
 /** Por que a edição está travada — o importado diz ONDE alterar, em vez de só "não pode". */

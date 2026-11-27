@@ -265,6 +265,12 @@ const UnifiedOrder = () => {
         toast.error('O pedido a repetir é de outro cliente.');
         return;
       }
+      // #4 (revisão /sales): conta fora de oben|colacor não vira Oben — repetir com o catálogo de outra
+      // empresa casaria SKUs por engano.
+      if (pedido.account !== 'colacor' && pedido.account !== 'oben') {
+        toast.error(`Não sei repetir pedido da empresa "${pedido.account ?? 'sem empresa'}" por aqui.`);
+        return;
+      }
       const catalogo = pedido.account === 'colacor' ? h.colacorProducts : h.obenProducts;
       const plano = montarPlanoReplicacao(pedido.items, catalogo);
       for (const d of plano.diretos) h.addProductToCart(d.product, d.quantidade);
