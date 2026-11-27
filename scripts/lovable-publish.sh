@@ -121,13 +121,17 @@ api() {
 
 # sha_no_ar → ecoa o SHA COMPLETO que o ar serve; rc≠0 com o motivo no stdout
 sha_no_ar() {
-  local entry corpo curtos n
+  local entry corpo curtos n visto
   entry=$(curl -fsS --max-time 20 "$APP/" 2>/dev/null | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
   [ -n "$entry" ] || { echo "SITE_FORA: $APP sem /assets/index-*.js"; return 1; }
   corpo=$(curl -fsS --max-time 30 "$APP$entry" 2>/dev/null) || { echo "ENTRY_NAO_BAIXOU: $entry"; return 1; }
   curtos=$(printf '%s' "$corpo" | grep -oE '__BUILD_SHA__="[0-9a-f]{7,40}"' | grep -oE '[0-9a-f]{7,40}' | sort -u)
   n=$(printf '%s' "$curtos" | grep -c . || true)
-  [ "$n" = 1 ] || { echo "CARIMBO_INVALIDO: $n carimbos em $entry"; return 1; }
+  # o que o bundle TRAZ no lugar (rodada 2, B1): sem isto o log de 27/11 só dizia "0 carimbos" e o asset sumiu (404)
+  if [ "$n" != 1 ]; then
+    visto=$(printf '%s' "$corpo" | grep -oE '__BUILD_SHA__.{0,24}' | head -2 | tr '\n' ' ' | tr -d '"' | cut -c1-80)
+    echo "CARIMBO_INVALIDO: $n carimbos em $entry (visto: ${visto:-nenhum __BUILD_SHA__})"; return 1
+  fi
   git rev-parse --verify --quiet "$curtos^{commit}" 2>/dev/null || { echo "CARIMBO_NAO_RESOLVE: $curtos"; return 1; }
 }
 
@@ -231,10 +235,24 @@ command -v jq >/dev/null || mecanica "jq ausente"
 HEAD_SHA=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || mecanica "HEAD não resolve: ${1:-HEAD}"
 
 # ── 1. o que o ar serve ────────────────────────────────────────────────────────────────────────
-AR=$(sha_no_ar) || mecanica "$AR"
+# Carimbo ausente/inválido (rodada 2, B1): no --decidir, com LP_AR_FALLBACK = o último ar MEDIDO (o vigia grava
+# `ar-ultimo` a cada leitura boa e só o passa depois de N ticks seguidos sem carimbo), julga as camadas a partir
+# dele — o gate inteiro segue valendo — e não aceita JA_NO_AR nem NADA_A_PUBLICAR: o servido é desconhecido, e
+# republicar a main é o que conserta o carimbo. Só CARIMBO_INVALIDO: site fora/entry que não baixa seguem MECANICA.
+FALLBACK=0
+if ! AR=$(sha_no_ar); then
+  case "$AR" in
+    CARIMBO_INVALIDO*)
+      if [ "$DECIDIR" = 1 ] && [ -n "${LP_AR_FALLBACK:-}" ] && FB=$(sha40 "$LP_AR_FALLBACK"); then
+        echo "  ar sem carimbo válido ($AR) — julgo a partir do último ar medido ${FB:0:8}; republicar conserta o carimbo"
+        echo "AR_FALLBACK=$FB"; AR=$FB; FALLBACK=1
+      else mecanica "$AR"; fi ;;
+    *) mecanica "$AR" ;;
+  esac
+fi
 echo "ar=${AR:0:8} head=${HEAD_SHA:0:8} app=$APP"
 [ "$DECIDIR" = 1 ] && echo "AR=$AR"
-[ "$AR" = "$HEAD_SHA" ] && fim 0 JA_NO_AR   # sem PISO: carimbo igual prova o front, não a migration
+[ "$AR" = "$HEAD_SHA" ] && [ "$FALLBACK" = 0 ] && fim 0 JA_NO_AR   # sem PISO: carimbo igual prova o front, não a migration
 git merge-base --is-ancestor "$AR" "$HEAD_SHA" 2>/dev/null \
   || mecanica "NAO_ANCESTRAL: o ar (${AR:0:8}) não é ancestral de HEAD — reconciliar à mão"
 git diff --name-only "$AR" "$HEAD_SHA" > "$TMP/diff" 2>/dev/null || mecanica "DIFF_FALHOU ${AR:0:8}..${HEAD_SHA:0:8}"
@@ -275,7 +293,7 @@ PEND=$( { [ "$MIG_OK" = 1 ] || printf '%s\n' "$CA" | grep '^supabase/migrations/
 BASE=$AR
 
 # ── 3. há algo publicável? (antes do RETIDO: sem front novo, ninguém espera o Publish) ───────────
-if ! grep -qvE "$INERTE" "$TMP/diff"; then
+if [ "$FALLBACK" = 0 ] && ! grep -qvE "$INERTE" "$TMP/diff"; then
   if [ -n "$PEND" ]; then echo "  camadas pendentes (${BASE:0:8}..${HEAD_SHA:0:8}), mas nada publicável — seguem no intervalo do próximo PR"
   elif [ "$DECIDIR" = 1 ] && [ -n "$FONTE" ]; then echo "PISO=$HEAD_SHA"; fi
   fim 0 NADA_A_PUBLICAR
