@@ -24,7 +24,7 @@ export const CAMPOS_PII_OMIE = [
 ] as const;
 
 /** O que a exceção operacional da impressão abre: só o endereço de entrega (nada de e-mail, telefone, IE). */
-export const CAMPOS_ENDERECO_OMIE = ["endereco", "endereco_numero", "complemento", "bairro", "cep"] as const;
+const CAMPOS_ENDERECO_OMIE = ["endereco", "endereco_numero", "complemento", "bairro", "cep"] as const;
 
 /**
  * Devolve o cliente com a PII zerada para `null` e `contato_visivel` explícito. Não muta a entrada.
