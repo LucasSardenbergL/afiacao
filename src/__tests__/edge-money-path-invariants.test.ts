@@ -1372,17 +1372,18 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
   });
 
   it('LÊ a view fresca account-correta (colacor_sc); omie_clientes só resta como WRITER', () => {
-    // As 3 leituras money-path (pedido, vendedor, check_client) usam a view fresca por conta.
+    // As 3 leituras money-path (pedido, vendedor, check_client) usam a view fresca por conta, mais a 4ª da onda D
+    // 4b-3: `conferirVinculoOS` (o código da OS é do titular?).
     expect(
       count(src, '.from("omie_customer_account_map_fresco")'),
-      'REVERSÃO Lovable? sumiu leitura da view fresca account-correta (esperado 3: pedido, vendedor, check_client)',
-    ).toBe(3);
+      'REVERSÃO Lovable? sumiu leitura da view fresca account-correta (esperado 4: pedido, vendedor, check_client, conferirVinculoOS)',
+    ).toBe(4);
     // O filtro de conta é o fail-closed por-conta. Codex P2: contar == 3 (uma por leitura), não um toMatch
     // genérico — senão o pedido poderia perder o filtro e o teste passar só porque check_client o mantém.
     expect(
       count(src, '.eq("account", "colacor_sc")'),
-      'cada uma das 3 leituras da view DEVE filtrar account=colacor_sc (fail-closed por-conta)',
-    ).toBe(3);
+      'cada uma das 4 leituras da view DEVE filtrar account=colacor_sc (fail-closed por-conta)',
+    ).toBe(4);
     // [Fatia 4] O write-back saiu do espelho p/ a RPC: este edge não toca mais omie_clientes, em via
     // nenhuma. Zero é o teto — qualquer reaparição é reversão de deploy do Lovable ou regressão.
     expect(
@@ -2841,8 +2842,14 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
   it('os 3 LEITORES vêm da view fresca e os 3 WRITERS migraram para a RPC (Fatia 4)', () => {
     expect(
       count(src, '.from("omie_customer_account_map_fresco")'),
-      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 5: criar_perfil_local, sync_all_clients, sync_addresses + os 2 gates de PII da onda D 4b-2 — codigosComContatoVisivel e usuariosDoCodigoFresco)',
-    ).toBe(5);
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 4: criar_perfil_local, sync_all_clients, sync_addresses + o gate de PII usuariosDoCodigoFresco)',
+    ).toBe(4);
+    // Onda D 4b-3: o gate `codigosComContatoVisivel` foi para `_shared/pii-carteira.ts` (a mesma regra da
+    // omie-vendas-sync); a leitura dele segue no mapa FRESCO, filtrada pela conta pedida.
+    const piiShared = read('supabase/functions/_shared/pii-carteira.ts');
+    expect(count(piiShared, '.from("omie_customer_account_map_fresco")'), 'o gate de PII compartilhado deixou o mapa fresco').toBe(1);
+    expect(count(piiShared, '.eq("account", account)'), 'o gate de PII compartilhado perdeu o filtro de conta').toBe(1);
+    expect(src).toContain('codigosVisiveisNaConta(admin, clienteDoChamador, chamadorId, "colacor_sc", codigos)');
     // [Fatia 4] Os 3 writers INSERT viraram 3 chamadas da RPC. Este edge não toca mais o espelho.
     expect(
       count(src, '.from("omie_clientes")'),
