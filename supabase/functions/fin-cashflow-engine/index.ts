@@ -13,7 +13,7 @@ import { criarLimitador, fetchAllParticionadoUuid } from "../_shared/paginate-pa
 // descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
 // calculada sobre caixa zero sem NENHUM sinal na tela (money-path §2 "ausente ≠ zero").
-import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/leitura-critica.ts";
+import { exigirLeitura, exigirLinhas } from "../_shared/leitura-critica.ts";
 // E o terceiro lado da mesma moeda, no eixo da PERSISTÊNCIA: o supabase-js resolve normal
 // com `error` preenchido, então um `await ....insert()` cujo retorno é ignorado devolve
 // HTTP 200 sem ter gravado. Medido em prod: 8 de 9 snapshots em 2026-07-28. O par com o
@@ -42,6 +42,8 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
 import { colunasCpVencidoFora, medirCpVencidoForaProjecao, type CpVencidoForaProjecao } from "./cp-vencido.ts";
 import { colunasComposicaoNcg } from "./ncg-composicao.ts";
+import { classificarPcoNcg, type LinhaMapa } from "./ncg-folha-tributos.ts";
+import { expandirRecorrenteDeno } from "./recorrente.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -316,9 +318,6 @@ type Config = {
     pmr_crescimento_max_pct_90d: number;
   };
   adiantamento_categorias_codigos: string[];
-  // Onda 2: categorias de CP que representam folha (opcional; ativa o guard de
-  // folha por janela no NCG). Default [] = guard inerte (usa só o evento recorrente).
-  folha_categorias_codigos?: string[];
 };
 
 // === Onda 2 — Curvas de cobrança por faixa de aging ===
@@ -421,12 +420,19 @@ type DadosBase = {
   // Fonte ÚNICA do prazo (mesma do card client-side getCapitalDeGiro) → consistência.
   prazos: { pmr: number | null; pmp: number | null; pmr_cobertura: number | null; pmp_cobertura: number | null } | null;
   config: Config;
+  // v2.7: o mapa curado por empresa + código (`fin_categoria_fluxo_mapping`), só as linhas de folha e
+  // tributos — a fonte de `folha_30d` e `tributos_a_pagar` na NCG (./ncg-folha-tributos.ts).
+  mapa_fluxo_ncg: LinhaMapa[];
+  company: Company;
   // Canal de degradação HONESTA: motivos das leituras que falharam mas NÃO derrubam o
   // cálculo (hoje só `prazos`, que já virava null e mostrava "—" sem dizer por quê).
   // Leitura cujo valor não pode virar zero LANÇA e nunca chega aqui. Domínio fechado
   // (fonte + código), nunca texto livre do servidor — a resposta vai ao cliente.
   motivos_confianca: string[];
 };
+
+/** Teto da leitura do mapa de fluxo: a página cheia é tratada como truncada (cap de 1000 do PostgREST). */
+const MAPA_FLUXO_TETO = 1000;
 
 async function carregarDados(
   supabase: SupabaseClient,
@@ -445,7 +451,7 @@ async function carregarDados(
   // `count: 'exact'` em cada página: o helper encerra a faixa quando o servidor prova que não há
   // nada além (rows === count no mesmo statement), sem a página vazia — 64 → 48 requisições na colacor.
   const limitador = criarLimitador(12);
-  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes, estoqueOmieRes]] = await Promise.all([
+  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, mapaRes, prazosRes, estoqueOmieRes]] = await Promise.all([
     medir(tempos, 'cr', fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
       let q = supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo', { count: 'exact' })
@@ -493,11 +499,11 @@ async function carregarDados(
       // @ts-expect-error - fin_dre_snapshots não está nos types gerados
       supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
         .eq('company', company).eq('regime', 'competencia'),
-      // @ts-expect-error - folha_categorias_codigos é coluna OPCIONAL (Onda 2). Se não
-      // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
-      // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
-      supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
-        .eq('company', company).maybeSingle(),
+      // v2.7: fonte de folha/tributos da NCG = mapa curado por empresa + código (o mesmo do DFC). O mapa
+      // INTEIRO da empresa (todas as linhas): código ausente é o que acusa mapa incompleto. 26/11: 40–125
+      // linhas por empresa; truncamento no cap de 1000 do PostgREST LANÇA abaixo.
+      supabase.from('fin_categoria_fluxo_mapping').select('omie_codigo, fluxo_linha')
+        .eq('company', company).order('omie_codigo', { ascending: true }).limit(MAPA_FLUXO_TETO),
       // Fase 3 (B): PMR/PMP + cobertura da baixa derivada — a linha de v_capital_giro_prazos
       // desta empresa, via RPC com o filtro de empresa dentro do CTE (a view varria
       // fin_movimentacoes inteira 2× por chamada; ver ./prazos-empresa.ts).
@@ -605,18 +611,16 @@ async function carregarDados(
     console.warn(`[Cashflow][${company}] status_titulo DESCONHECIDO (não conta como aberto): ${resumo}`);
   }
 
-  // Onda 2: folha categorias (coluna opcional). Leitura defensiva — se a coluna não
-  // existe, folhaCatRes.data é null e cai em []; o guard de folha fica inerte.
-  // ⚠️ Coluna OPCIONAL (Onda 2): quando não existe, o PostgREST devolve erro — não uma
-  // resposta vazia —, então "migration não aplicada" não pode derrubar a engine e o guard
-  // de folha fica inerte de propósito. Mas tolerar QUALQUER erro era amplo demais: um
-  // timeout ou um 42501 desligaria o guard de dupla contagem da folha sem ninguém saber,
-  // e "feature não migrada" ficaria indistinguível de "o banco piscou". `tolerarColunaAusente`
-  // engole só os códigos de coluna/relação inexistente e lança no resto.
-  const folhaCatRow = tolerarColunaAusente(folhaCatRes, 'fin_config_cashflow.folha_categorias_codigos') as
-    { folha_categorias_codigos?: string[] } | null;
-  const folha_categorias_codigos = folhaCatRow?.folha_categorias_codigos ?? [];
-  const config: Config = { ...(configRow as unknown as Config), folha_categorias_codigos };
+  const config = configRow as unknown as Config;
+  // v2.7: o mapa de folha/tributos. Erro de leitura LANÇA (senão a composição sairia "não medida" por um
+  // timeout, ou pior, folha zero medida nas empresas de folha centralizada); mapa vazio é legítimo e vira
+  // fonte vazia → composição não medida (ncg-folha-tributos.ts).
+  // Corpo que não é lista (HTTP 200 com `null`) também LANÇA — não vira "mapa vazio" (achado Codex v2.7).
+  const mapaLinhas = exigirLeitura(mapaRes, 'fin_categoria_fluxo_mapping');
+  if (!Array.isArray(mapaLinhas)) throw new Error('leitura crítica malformada: fin_categoria_fluxo_mapping (corpo não é lista)');
+  if (mapaLinhas.length >= MAPA_FLUXO_TETO) throw new Error(`leitura crítica truncada: fin_categoria_fluxo_mapping (≥ ${MAPA_FLUXO_TETO} linhas)`);
+  const mapa_fluxo_ncg = (mapaLinhas as Array<Record<string, unknown>>)
+    .map((m) => ({ omie_codigo: String(m.omie_codigo), fluxo_linha: String(m.fluxo_linha) }));
 
   // Fase 3 (B): PMR/PMP + cobertura da baixa derivada. Degrada p/ null se a view não tiver
   // linha pra empresa → calcularIndicadores mostra "—" honesto. Esta leitura TOLERA o erro
@@ -673,6 +677,8 @@ async function carregarDados(
     curvas_aging,
     prazos,
     config,
+    mapa_fluxo_ncg,
+    company,
     motivos_confianca,
   };
 }
@@ -955,32 +961,6 @@ function prazoMedioPonderado(titulos: Array<{ dias: number; valor: number }>): n
   return mediaPonderada(titulos.map((t) => ({ valor: t.dias, peso: t.valor })));
 }
 
-function expandirRecorrenteDeno(
-  rec: EventoRecorrente,
-  de: string,
-  ate: string,
-): string[] {
-  const result: string[] = [];
-  const startBase = rec.inicio > de ? rec.inicio : de;
-  const start = new Date(startBase + 'T00:00:00Z');
-  const end = new Date(ate + 'T00:00:00Z');
-  const fim = rec.fim ? new Date(rec.fim + 'T00:00:00Z') : null;
-
-  let ano = start.getUTCFullYear();
-  let mes1 = start.getUTCMonth() + 1;
-  while (true) {
-    const ultimoDia = new Date(Date.UTC(ano, mes1, 0)).getUTCDate();
-    const dia = Math.min(rec.dia_do_mes, ultimoDia);
-    const candidato = new Date(Date.UTC(ano, mes1 - 1, dia));
-    if (candidato > end) break;
-    if (candidato >= start && (!fim || candidato <= fim)) {
-      result.push(candidato.toISOString().slice(0, 10));
-    }
-    mes1++;
-    if (mes1 > 12) { mes1 = 1; ano++; }
-  }
-  return result;
-}
 
 type ResultadoSemanas = {
   semanas: Semana[];
@@ -1121,6 +1101,8 @@ type NCG = {
   parcial: boolean;
   /** A regra de cada parcela achou obrigação aberta (ou recorrente de folha)? `false` = fonte vazia. */
   fontes: { folha: boolean; tributos: boolean };
+  /** Motivos de confiança da composição (folha fora da janela, fonte vazia) — vão a `confianca_dados`. */
+  motivos: string[];
   projecao_12m: Array<{ mes: string; valor: number }>;
 };
 
@@ -1143,57 +1125,19 @@ function calcularNCG(dados: DadosBase): NCG {
     total: cr_aberto + (dados.estoque_valor ?? 0) + adiantamentos, // null → `parcial` abaixo
   };
 
-  // === Onda 2: guard de folha por janela (data + categoria) ===
-  // Se a folha já está no ERP como CP de categoria de folha vencendo em ≤30d, ela já
-  // entra em cp_fornecedor — não somar o evento recorrente de folha em cima. Regra:
-  // ERP vence (folha_30d = max(CP folha na janela, recorrente)); os CPs de folha na
-  // janela saem de cp_fornecedor (contados uma vez, em folha_30d). Sem categorias de
-  // folha configuradas → guard inerte: cp_fornecedor inalterado, folha = recorrente.
-  const folhaCats = dados.config.folha_categorias_codigos ?? [];
-  const hojeNcg = hojeSP();
-  const limite30 = addDays(hojeNcg, 30);
-  const isFolhaCPJanela = (c: CP): boolean =>
-    folhaCats.length > 0 &&
-    c.categoria_codigo != null && folhaCats.includes(c.categoria_codigo) &&
-    c.data_vencimento != null && c.data_vencimento <= limite30;
-
-  const cp_fornecedor = dados.cps
-    .filter(c =>
-      isOpenTitleStatus(c.status_titulo) &&
-      c.saldo > 0 &&
-      (!c.categoria_codigo || !dados.config.adiantamento_categorias_codigos.includes(c.categoria_codigo)) &&
-      !(c.categoria_codigo && c.categoria_codigo.startsWith('3.99')) &&
-      !isFolhaCPJanela(c)
-    )
-    .reduce((s, c) => s + c.saldo, 0);
-
-  const folhaRecorrente = dados.eventos_rec
-    .filter(e => e.is_folha && e.tipo === 'saida')
-    .reduce((s, e) => s + e.valor, 0);
-  const folhaCP30d = dados.cps
-    .filter(c => isFolhaCPJanela(c) && isOpenTitleStatus(c.status_titulo) && c.saldo > 0)
-    .reduce((s, c) => s + c.saldo, 0);
-  const folha_30d = folhaCP30d > 0 ? Math.max(folhaCP30d, folhaRecorrente) : folhaRecorrente;
-
-  const tributos_a_pagar = dados.cps
-    .filter(c =>
-      isOpenTitleStatus(c.status_titulo) &&
-      c.saldo > 0 &&
-      c.categoria_codigo && c.categoria_codigo.startsWith('3.99')
-    )
-    .reduce((s, c) => s + c.saldo, 0);
-
-  // Ausente ≠ zero (incidente 25/11: 1º snapshot medido da v2.5 gravou folha 0 e tributos 0 nas 3
-  // empresas). As somas acima dão 0 tanto com "nada a pagar" quanto com FILTRO QUE NÃO CASA: `3.99` não
-  // existe no plano Omie do grupo (tributos vivem em 2.06 / op_impostos*) e `folha_categorias_codigos`
-  // está vazia. A parcela só é MEDIDA se a fonte enxerga a obrigação AGORA: ≥1 título ABERTO que a regra
-  // classifica (histórico pago não atesta a janela) ou, na folha, um evento recorrente de folha.
-  // Sem isso, `colunasComposicaoNcg` grava a composição como NÃO medida. Os números (e `saldo_tesouraria`)
-  // seguem os da v2.5 — trocar a fonte para o mapa por empresa é decisão de método à parte.
-  const fontes = {
-    folha: folhaRecorrente > 0 || folhaCP30d > 0,
-    tributos: tributos_a_pagar > 0,
-  };
+  // v2.7: cp_fornecedor / folha_30d / tributos_a_pagar vêm do mapa curado por empresa + código
+  // (`fin_categoria_fluxo_mapping`) — regras, janela da folha e "fonte" em ./ncg-folha-tributos.ts.
+  // Cada título aberto cai em UM balde; o que sai de cp_fornecedor entra em folha/tributos, então o
+  // total da NCG só muda pelo recorrente de folha (max), como antes.
+  const { cp_fornecedor, folha_30d, tributos_a_pagar, fontes, motivos } = classificarPcoNcg({
+    company: dados.company,
+    hoje: hojeSP(),
+    cps: dados.cps,
+    mapa: dados.mapa_fluxo_ncg,
+    adiantamentoCodigos: dados.config.adiantamento_categorias_codigos,
+    recorrentes: dados.eventos_rec,
+    aberto: isOpenTitleStatus,
+  });
 
   const pco = {
     cp_fornecedor,
@@ -1215,7 +1159,7 @@ function calcularNCG(dados: DadosBase): NCG {
     });
   }
 
-  return { aco, pco, valor, parcial: dados.estoque_valor == null, fontes, projecao_12m };
+  return { aco, pco, valor, parcial: dados.estoque_valor == null, fontes, motivos, projecao_12m };
 }
 
 type Indicadores = {
@@ -1652,7 +1596,7 @@ async function calcularComDados(
     // motivo (fonte + código). Vazio = nenhuma degradação. O que NÃO pode virar zero
     // lança e não chega a este ponto — a resposta 200 nunca carrega número fabricado.
     // `saldo_inicial`: o motivo do saldo datado, à parte, para a tela das 13 semanas (que parte dele).
-    confianca_dados: { motivos: dados.motivos_confianca, saldo_inicial: dados.saldo_cc_motivo },
+    confianca_dados: { motivos: [...dados.motivos_confianca, ...ncg.motivos], saldo_inicial: dados.saldo_cc_motivo },
     metadados: {
       cenario,
       horizon,

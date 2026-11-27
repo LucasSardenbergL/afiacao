@@ -155,8 +155,11 @@ h.responderForaDoGate(async (req) => {
     if (caminho === "fin_contas_receber") return paginar(CRS, url);
     if (caminho === "fin_contas_pagar") return paginar(CPS, url);
     if (caminho === "fin_config_cashflow") {
-      const sel = url.searchParams.get("select") ?? "";
-      return json([sel.includes("folha_categorias_codigos") ? { folha_categorias_codigos: ["2.10.01"] } : CONFIG]);
+      return json([CONFIG]);
+    }
+    // v2.7: fonte de folha/tributos da NCG = mapa por empresa + código.
+    if (caminho === "fin_categoria_fluxo_mapping") {
+      return json([{ omie_codigo: "2.10.01", fluxo_linha: "op_pessoal" }, { omie_codigo: "3.99.01", fluxo_linha: "op_impostos" }]);
     }
     // Alertas já ativos para 2 tipos: exercita o ramo UPDATE (além do INSERT e do dismiss).
     if (caminho === "fin_alertas") {

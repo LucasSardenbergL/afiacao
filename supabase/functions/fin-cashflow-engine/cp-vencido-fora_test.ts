@@ -133,8 +133,11 @@ h.responderForaDoGate(async (req) => {
       return paginar(CPS, url);
     }
     if (caminho === "fin_config_cashflow") {
-      const sel = url.searchParams.get("select") ?? "";
-      return json([sel.includes("folha_categorias_codigos") ? { folha_categorias_codigos: ["2.10.01"] } : CONFIG]);
+      return json([CONFIG]);
+    }
+    // v2.7: fonte de folha/tributos da NCG = mapa por empresa + código.
+    if (caminho === "fin_categoria_fluxo_mapping") {
+      return json([{ omie_codigo: "2.10.01", fluxo_linha: "op_pessoal" }, { omie_codigo: "3.99.01", fluxo_linha: "op_impostos" }]);
     }
     if (caminho === "fin_alertas") return json([]);
     if (caminho in TABELAS) return json(TABELAS[caminho]);
