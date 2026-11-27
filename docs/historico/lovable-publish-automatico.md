@@ -401,3 +401,42 @@ Toda leitura de recibo devolvia `1` (`sem_recibo`), e o front ficava RETIDO até
 - Codex não consultado: cota em 99% até 02/12 (Caminho B).
 - A prova em produção é a próxima linha `LIBERADO=recibos` no `vigia.log`
   (`grep LIBERADO=recibos ~/.local/state/afiacao/lovable-vigia/vigia.log`).
+
+## Rodada 2 (2026-11-27): 19 melhorias da varredura B1–B5 / M1–M14
+
+**Origem.** No `vigia.log` de 22 a 27/11 houve 17 `PUBLICADO` e **0** `LIBERADO=recibos`. Os 5 episódios RETIDO
+terminaram todos com alguém publicando por fora. Uma varredura (Fable), conferida no log, achou 25 linhas
+`CARIMBO_INVALIDO`, 132 linhas de recibo repetidas e nenhuma liberação por recibo. A lista B1–B5 / M1–M14 vira
+6 PRs sequenciais (A–F), um por lote.
+
+### PR A — higiene (B2, B3, B4, M4, M6, M9, M13)
+
+- **B2, dedup do log de recibos.** `rm -f "$EST"/recibos-*` apagava também o `recibos-ultimo`, que é a memória do
+  dedup. Por isso a mesma linha de ~400 caracteres voltava ao log a cada releitura (5 min, 11 vezes por hora).
+  O glob agora é `recibos-[0-9a-f]*`, só os caches. Teste `r_dedup`: 3 releituras de mesmo conteúdo dão 1 linha.
+- **B3, `liberar` ultrapassado.** A atestação humana só vale enquanto o ar for ancestral dela. Quando o ar a
+  passa, o vigia apaga `$EST/liberar` e loga `liberar <sha> apagado: o ar (<sha>) já o ultrapassou`. No
+  `lovable-publish.sh`, `retido()` deixa de dizer "liberado para SHA antigo" para esse caso
+  (`liberar <sha> ultrapassado`). O ramo de edge sem versão/`_shared` também deixou de aceitar um `L` que o ar
+  passou. Ali havia um verde falso real: um helper que muda (L→ar) e volta aos bytes de L em HEAD tem
+  `diff L..HEAD` vazio, mas a edge servida é a do ar e precisa de deploy (teste `dec_semv_lib_ultrapassado`).
+- **B4, MECANICA vira episódio.** Antes era 1 aviso por dia (`mecanica-<data>`), sem lembrete nem fim: em 27/11
+  foram ~5 h de `CARIMBO_INVALIDO` com um aviso às 07:25 e mais nada. Agora segue a mesma lógica do RETIDO
+  (`episodio()`): 1 aviso no início, lembrete a cada `LV_RELEMBRA_MEC_MIN` (60) com a idade, e
+  `fim do episódio MECANICA após N min` quando a medida volta. Os arquivos são `mecanica-episodio` e `mecanica-chave`.
+- **M4, cache de recibos invalidado no apply.** Quando o `db-aplicar.sh` grava `aplicada` (inclusive no caso
+  "COMMIT chegou, resposta perdida"), ele apaga os `recibos-[0-9a-f]*` do vigia (`LP_VIGIA_ESTADO`, por padrão
+  `~/.local/state/afiacao/lovable-vigia`). Assim o próximo tick relê o banco, sem esperar os 5 min do cache.
+- **M6, batimento.** Toda invocação do launchd grava o epoch em `$EST/batimento`, inclusive a que sai porque o
+  lock está com um tick vivo. Ao acordar depois de um buraco maior que `LV_BURACO_S` (300 s), o vigia loga
+  `acordei após buraco de N min sem tick`. O `--esperar`, no prazo, troca o `TIMEOUT` cru por
+  `TIMEOUT=vigia parado há N min` quando o batimento tem mais de `LP_BATIMENTO_VELHO_S` (300 s).
+- **M9, publicado por fora.** `$EST/ar-ultimo` guarda o último ar medido (40 hex). Se o ar muda sem `intencao`
+  do vigia, sai `JA_NO_AR por fora (ar A→B)`. O PR B reaproveita esse arquivo para o B1.
+- **M13, tetos.** `avisados` tem teto de 200 linhas (fica com as 100 mais novas). Os caches `pendencias-*` e
+  `recibos-*` de outra main são apagados a cada tick. O último stream do `claude -p` que não disparou fica em
+  `claude-falha.jsonl`.
+
+Prova: `test-lovable-vigia.sh` e `test-lovable-publish.sh`. Cada correção tem roteiro próprio e falsificação com
+controle verde na mesma invocação (o real passa, a cópia sabotada na linha da correção reprova), em `LC_ALL=C` e
+`pt_BR.UTF-8`.

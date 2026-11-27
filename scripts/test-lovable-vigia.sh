@@ -54,7 +54,7 @@ fim()  { printf '{"type":"result","subtype":"success","result":"%s","total_cost_
 gp()   { printf '{\\"id\\":\\"p\\",\\"latest_commit_sha\\":\\"%s\\"}' "$1"; }
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project
   res t2 '{\"status\":\"pending\",\"deployment_id\":\"dep-123\"}'; fim "VIGIA=DISPARADO dep-123"; } > "$TMP/stream-ok.jsonl"
-for c in ledger recibos sem_ar adiante_limpo adiante_camada ar_divergente lock store intencao; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
+for c in ledger recibos sem_ar adiante_limpo adiante_camada ar_divergente lock store intencao buraco caches; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
 DEPR='{\"status\":\"pending\",\"deployment_id\":\"dep-9\"}'
 # PR 3 — controle do protocolo: cada stream tem deploy aceito (deployment_id lido), mas FORA do roteiro
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project "{\"project_id\":\"$PROJ\",\"name\":\"outro\"}"; res t2 "$DEPR"; } > "$TMP/stream-viol_nome.jsonl"
@@ -88,7 +88,7 @@ cat > "$TMP/origin/scripts/lovable-publish.sh" <<'EOF'
 # falso: --julgar e --decidir. $LVT/decisao (e $LVT/decisao-pos, depois que o vigia grava o cache do
 # ledger) substituem a decisão; sem eles: PUBLICAR até o "deploy", JA_NO_AR depois
 if [ "$1" = --decidir ] && [ -f "$LVT/decisao" ]; then
-  if [ -f "$LVT/decisao-pos" ] && { ls "$LP_ESTADO"/pendencias-* || ls "$LP_ESTADO"/recibos-*; } >/dev/null 2>&1; then cat "$LVT/decisao-pos"; else cat "$LVT/decisao"; fi
+  if [ -f "$LVT/decisao-pos" ] && { ls "$LP_ESTADO"/pendencias-* || ls "$LP_ESTADO"/recibos-[0-9a-f]*; } >/dev/null 2>&1; then cat "$LVT/decisao-pos"; else cat "$LVT/decisao"; fi
   exit 0
 fi
 if [ -f "$LVT/ar-fixo" ]; then echo "ar=$(cat "$LVT/ar-fixo") x"; echo VEREDITO=MECANICA
@@ -197,7 +197,7 @@ episodio() {  # o roteiro inteiro; 0 = o vigia sob teste se comportou
 episodio && ok "RETIDO: 1 aviso por episódio, lembrete com a idade, fim do episódio logado" || nok "episódio RETIDO"
 # falsificação com controle verde logo acima, na MESMA invocação: sem o `return 0` do lembrete, re-avisa a cada tick
 # shellcheck disable=SC2016  # $((agora - ult)) e $RELEMBRA são LITERAIS do fonte sabotado
-sed 's/\[ \$((agora - ult)) -ge "\$RELEMBRA" \] || return 0/true/' "$VIGIA" > "$TMP/vigia-sab.sh"
+sed 's/\[ \$((agora - ult)) -ge "\$rel" \] || return 0/true/' "$VIGIA" > "$TMP/vigia-sab.sh"
 if cmp -s "$VIGIA" "$TMP/vigia-sab.sh"; then nok "sabotagem do episódio não casou"
 elif ( VIGIA_SOB_TESTE="$TMP/vigia-sab.sh" episodio ) >/dev/null 2>&1; then nok "vigia sabotado (re-avisa todo tick) passou no roteiro do episódio"
 else ok "falsificação: vigia que re-avisa a cada tick reprova o roteiro"; fi
@@ -287,6 +287,102 @@ rm -f "$TMP/ar-alvo"; echo deadbeef > "$TMP/ar-fixo"; LVT_MANTEM=1 roda ar_diver
   && ok "alerta divergente persiste no tick seguinte sem re-avisar" || nok "persistência: $(tail -2 "$LOGV")"
 rm -f "$TMP/ar-fixo"; LVT_MANTEM=1 roda ar_divergente
 { tem "fim do alerta de ar divergente" && [ ! -f "$E/alerta-divergente" ]; } && ok "ar sai do SHA divergente → fim do alerta logado" || nok "fim do alerta: $(tail -2 "$LOGV")"
+
+# ═══ Rodada 2 — PR A ════════════════════════════════════════════════════════════════════════════
+# B2: a releitura dos recibos (cache vencido) não pode apagar a memória do dedup — 1 linha por conteúdo
+r_dedup() {
+  local e="$TMP/est-dedup" n
+  printf 'ar=22222222 x\nAR=%s\nRECIBOS_DE=%s\nVEREDITO=PRECISA_RECIBOS\n' "$AR40" "$AR40" > "$TMP/decisao"
+  printf 'ar=22222222 x\nAR=%s\nRECIBOS_DE=%s\nRETIDO=migration:supabase/migrations/9_z.sql\nVEREDITO=RETIDO\n' "$AR40" "$AR40" > "$TMP/decisao-pos"
+  rm -f "$TMP/recibos-n"; roda dedup
+  rm -f "$e/recibos-$AR40-$(cat "$TMP/head")"; LVT_MANTEM=1 roda dedup     # o cache venceu: relê o banco
+  rm -f "$e/recibos-$AR40-$(cat "$TMP/head")"; LVT_MANTEM=1 roda dedup
+  n=$(grep -c 'recibos ar=22222222' "$LOGV"); rm -f "$TMP/decisao" "$TMP/decisao-pos"
+  [ "$(wc -l < "$TMP/recibos-n" | tr -d ' ')" = 3 ] && [ "$n" = 1 ] && [ -f "$e/recibos-ultimo" ]
+}
+r_dedup && ok "B2: 3 releituras dos recibos com o mesmo conteúdo → 1 linha no log (recibos-ultimo sobrevive)" || nok "dedup: $(grep -c 'recibos ar=' "$LOGV") linhas"
+# B4: MECANICA é episódio — 1 aviso, lembrete com a idade (1 h), fim logado quando a medida volta
+MEC='ar= x
+  motivo: CARIMBO_INVALIDO: 0 carimbos em /assets/index-X.js
+VEREDITO=MECANICA'
+r_mecanica() {
+  local e="$TMP/est-mecanica"
+  printf '%s\n' "$MEC" > "$TMP/decisao"
+  roda mecanica; [ "$(avisos)" = 1 ] && tem "AVISO: MECANICA: julgamento sem medida (CARIMBO_INVALIDO: 0 carimbos" || { echo "  1º: $(tail -2 "$LOGV")"; return 1; }
+  LVT_MANTEM=1 roda mecanica; [ "$(avisos)" = 1 ] && [ "$(grep -c 'MECANICA CARIMBO_INVALIDO' "$LOGV")" = 1 ] || { echo "  2º re-avisou/re-logou"; return 1; }
+  echo "$(( $(date +%s) - 7300 )) $(( $(date +%s) - 3700 ))" > "$e/mecanica-episodio"
+  LVT_MANTEM=1 roda mecanica; [ "$(avisos)" = 2 ] && tem "AVISO: AINDA MECANICA há 2h (CARIMBO_INVALIDO" || { echo "  lembrete: $(tail -2 "$LOGV")"; return 1; }
+  printf 'ar=aaaaaaaa x\nVEREDITO=NADA_A_PUBLICAR\n' > "$TMP/decisao"
+  LVT_MANTEM=1 roda mecanica; rm -f "$TMP/decisao"
+  tem "fim do episódio MECANICA após 121 min" && [ ! -f "$e/mecanica-episodio" ] || { echo "  fim: $(tail -2 "$LOGV")"; return 1; }
+}
+r_mecanica && ok "B4: MECANICA = episódio (1 aviso, lembrete 2h, fim)" || nok "episódio MECANICA"
+# B3: liberar que o ar ULTRAPASSOU é apagado e logado; liberar À FRENTE do ar fica
+r_lib_ultra() {
+  local e="$TMP/est-libultra"; rm -rf "$e"; mkdir -p "$e"; echo "$A1" > "$e/liberar"
+  printf 'ar=%s x\nAR=%s\nVEREDITO=NADA_A_PUBLICAR\n' "${A2:0:8}" "$A2" > "$TMP/decisao"
+  LVT_MANTEM=1 roda libultra; [ ! -f "$e/liberar" ] && tem "liberar ${A1:0:8} apagado: o ar (${A2:0:8}) já o ultrapassou" || { rm -f "$TMP/decisao"; return 1; }
+  echo "$A2" > "$e/liberar"; printf 'ar=%s x\nAR=%s\nVEREDITO=NADA_A_PUBLICAR\n' "${A1:0:8}" "$A1" > "$TMP/decisao"
+  LVT_MANTEM=1 roda libultra; rm -f "$TMP/decisao"; [ "$(cat "$e/liberar")" = "$A2" ]
+}
+r_lib_ultra && ok "B3: liberar ultrapassado pelo ar → apagado e logado; à frente do ar → fica" || nok "lib_ultra: $(tail -2 "$LOGV")"
+# M9: o ar mudou sem intenção do vigia → JA_NO_AR por fora; com intenção pendente, não
+r_por_fora() {
+  local e="$TMP/est-porfora"; rm -rf "$e"
+  printf 'ar=%s x\nAR=%s\nVEREDITO=NADA_A_PUBLICAR\n' "${A1:0:8}" "$A1" > "$TMP/decisao"; roda porfora
+  ! tem "por fora" && [ "$(cat "$e/ar-ultimo")" = "$A1" ] || { rm -f "$TMP/decisao"; echo "  1º tick"; return 1; }
+  printf 'ar=%s x\nAR=%s\nVEREDITO=JA_NO_AR\n' "${A2:0:8}" "$A2" > "$TMP/decisao"; LVT_MANTEM=1 roda porfora
+  tem "JA_NO_AR por fora (ar ${A1:0:8}→${A2:0:8})" || { rm -f "$TMP/decisao"; echo "  2º: $(tail -2 "$LOGV")"; return 1; }
+  echo "sha=$A1 hora=$(date +%s) tentativa=1 ar=${A2:0:8}" > "$e/intencao"
+  printf 'ar=%s x\nAR=%s\nVEREDITO=JA_NO_AR\n' "${A1:0:8}" "$A1" > "$TMP/decisao"; LVT_MANTEM=1 roda porfora; rm -f "$TMP/decisao"
+  [ "$(grep -c 'por fora' "$LOGV")" = 1 ]
+}
+r_por_fora && ok "M9: ar trocado sem intenção → 'JA_NO_AR por fora (ar A→B)'; com intenção, calado" || nok "por_fora: $(tail -2 "$LOGV")"
+# M6: batimento a cada tick; acordar depois de um buraco > 5 min loga o tamanho
+r_buraco() {
+  local e="$TMP/est-buraco"; rm -rf "$e"; mkdir -p "$e"; echo $(( $(date +%s) - 1000 )) > "$e/batimento"
+  LVT_MANTEM=1 roda buraco; tem "acordei após buraco de 16 min sem tick" || return 1
+  [ $(( $(date +%s) - $(cat "$e/batimento") )) -lt 60 ] || return 1
+  LVT_MANTEM=1 roda buraco; [ "$(grep -c 'acordei após buraco' "$LOGV")" = 1 ]
+}
+r_buraco && ok "M6: batimento renovado a cada tick; buraco de 16 min logado 1x" || nok "buraco: $(tail -2 "$LOGV")"
+# M13: avisados com teto; caches de outra main apagados (recibos-ultimo fica); stream que falhou guardado
+r_teto() {
+  local e="$TMP/est-teto"; rm -rf "$e"; mkdir -p "$e"; seq 1 250 | sed 's/^/chave-/' > "$e/avisados"
+  LVT="$TMP" LV_ESTADO="$e" LV_WT="$TMP/nao-existe" PATH="$TMP/bin:$PATH" bash "${VIGIA_SOB_TESTE:-$VIGIA}"
+  [ "$(wc -l < "$e/avisados" | tr -d ' ')" -le 101 ] && tail -1 "$e/avisados" | grep -qx sem-repo
+}
+r_teto && ok "M13: avisados com 251 chaves → teto (fica com as 100 mais novas)" || nok "teto: $(wc -l < "$TMP/est-teto/avisados")"
+r_caches() {
+  local e="$TMP/est-caches" h; rm -rf "$e"; mkdir -p "$e"; h=$(cat "$TMP/head")
+  echo 0 > "$e/pendencias-$OUTRO"; echo 0 > "$e/recibos-$AR40-$OUTRO"; echo x > "$e/recibos-ultimo"; echo 0 > "$e/recibos-$AR40-$h"
+  LVT_MANTEM=1 roda caches
+  [ ! -f "$e/pendencias-$OUTRO" ] && [ ! -f "$e/recibos-$AR40-$OUTRO" ] && [ -f "$e/recibos-ultimo" ] && [ -f "$e/recibos-$AR40-$h" ]
+}
+# shellcheck disable=SC2012  # diagnóstico do teste, nomes fixos
+r_caches && ok "M13: caches de outra main apagados; os da main atual e o recibos-ultimo ficam" || nok "caches: $(ls "$TMP/est-caches" | tr '\n' ' ')"
+roda fabricado; [ -s "$TMP/est-fabricado/claude-falha.jsonl" ] && ok "M13: stream que não disparou guardado em claude-falha.jsonl" || nok "claude-falha.jsonl ausente"
+roda ok; [ ! -f "$TMP/est-ok/claude-falha.jsonl" ] && ok "M13: stream que disparou não vira claude-falha.jsonl" || nok "ok gravou claude-falha"
+# M4: db-aplicar grava `aplicada` → apaga os caches de recibo do vigia (o próximo tick relê o banco)
+mkdir -p "$TMP/dba"; git init -q "$TMP/dba"; echo 'select 1;' > "$TMP/dba/m.sql"
+git -C "$TMP/dba" add m.sql && git -C "$TMP/dba" -c user.email=t@t -c user.name=t commit -qm m
+cat > "$TMP/bin/psql-rw-falso" <<'FALSO'
+#!/usr/bin/env bash
+case "$*" in
+  *SONDA_RW_OK*) echo 'SONDA_RW_OK:claude_rw' ;;
+  *string_agg*) echo inedito ;;
+  *"insert into public.db_aplicacoes"*) echo 7 ;;
+  *" -f "*) echo 'FIM_APLICACAO_OK' ;;
+esac
+exit 0
+FALSO
+chmod +x "$TMP/bin/psql-rw-falso"
+r_m4() {
+  local v="$TMP/dba-vigia"; rm -rf "$v"; mkdir -p "$v"; echo 0 > "$v/recibos-$AR40-$OUTRO"; echo x > "$v/recibos-ultimo"
+  (cd "$TMP/dba" && AFIACAO_PSQL_RW="$TMP/bin/psql-rw-falso" LP_VIGIA_ESTADO="$v" TMPDIR="$TMP/" bash "${DBA_SOB_TESTE:-$RAIZ/scripts/db-aplicar.sh}" m.sql) >/dev/null 2>&1 || return 1
+  [ ! -f "$v/recibos-$AR40-$OUTRO" ] && [ -f "$v/recibos-ultimo" ]
+}
+r_m4 && ok "M4: db:aplicar com recibo aplicada → caches de recibo do vigia apagados (recibos-ultimo fica)" || nok "m4"
 
 # lock vinculado ao processo: dono vivo (vigia) segura; dono morto ou PID reciclado (não-vigia) libera
 mkdir -p "$TMP/dono"; printf 'sleep 30\n' > "$TMP/dono/vigia.sh"
@@ -392,6 +488,25 @@ falsifica_inst token 's/CLAUDE_CODE_OAUTH_TOKEN="\$tok" //'
 
 # shellcheck disable=SC2016
 falsifica store 's/^if \[ ! -f "\$CFG_DIR\/.vigia-pronto" \]; then$/if false; then/' r_store
+
+# rodada 2 — PR A: cada correção, sabotada, reprova o roteiro dela (o controle verde roda antes)
+# shellcheck disable=SC2016  # os $ são LITERAIS do fonte sabotado
+falsifica b2_glob 's/      rm -f "\$EST"\/recibos-\[0-9a-f\]\*$/      rm -f "$EST"\/recibos-*/' r_dedup
+falsifica b4_mecanica 's/^  MECANICA) episodio mecanica .*$/  MECANICA) exit 0 ;;/' r_mecanica
+# shellcheck disable=SC2016
+falsifica b3_liberar 's/   \&\& git -C "\$WT" merge-base --is-ancestor "\$LIB_ATUAL" "\$AR40" 2>\/dev\/null; then/   \&\& false; then/' r_lib_ultra
+falsifica m9_por_fora 's/    log "JA_NO_AR por fora/    true "JA_NO_AR por fora/' r_por_fora
+# shellcheck disable=SC2016
+falsifica m6_buraco 's/\[ \$((BAT_AGORA - BAT_ANT)) -gt "\$BURACO_S" \]/false/' r_buraco
+# shellcheck disable=SC2016
+falsifica m13_teto 's/-gt "\${LV_AVISADOS_MAX:-200}"/-gt 999999/' r_teto
+# shellcheck disable=SC2016
+falsifica m13_caches 's/\*"-\$HEAD_SHA") ;; \*) rm -f "\$c" ;;/*) ;;/' r_caches
+sed 's/^  invalida_recibos_do_vigia$/  true/' "$RAIZ/scripts/db-aplicar.sh" > "$TMP/dba-sab.sh"
+if ! ( r_m4 ) >/dev/null 2>&1; then nok "controle: r_m4 reprovou o db-aplicar REAL"
+elif cmp -s "$RAIZ/scripts/db-aplicar.sh" "$TMP/dba-sab.sh"; then nok "sabotagem m4 não casou"
+elif ( DBA_SOB_TESTE="$TMP/dba-sab.sh" r_m4 ) >/dev/null 2>&1; then nok "db-aplicar sabotado (m4) passou"
+else ok "falsificação m4: real verde, sabotado vermelho"; fi
 
 [ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK ($OKS)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1

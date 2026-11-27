@@ -50,7 +50,8 @@
 #                                        e o front de <sha> já é o do ar
 #     10 RETIDO=<migration|edge>:<arquivo> — migration sem `liberar` no vigia, ou edge que o ledger
 #                                        diz não servida (pendencias:deploy=1): aplicar a camada
-#     30 TIMEOUT                       — prazo estourou sem o ar conter <sha> (vigia parado? fila?)
+#     30 TIMEOUT                       — prazo estourou sem o ar conter <sha> (fila? Mac dormindo?)
+#     30 TIMEOUT=vigia parado há N min — idem, e o `batimento` do vigia está velho (> LP_BATIMENTO_VELHO_S, 300)
 #     6  MECANICA=<motivo>             — <sha> não resolve / não está na main, ou nunca medi o ar
 #   --decidir <sha>: a DECISÃO ÚNICA do vigia e do --esperar (sem API, sem chave, só LÊ o estado em
 #   $LP_ESTADO — default o diretório do vigia). É o --julgar + a política de liberação:
@@ -194,7 +195,7 @@ if [ -n "$ESPERAR" ]; then
         VER=$(printf '%s\n' "$J" | tail -1 | sed -n 's/^VEREDITO=//p')
         case "$jrc:$VER" in
           10:RETIDO)
-            printf '%s\n' "$J" | grep -E '^  (liberar:|liberado para SHA antigo|liberar .* ignorado)' || true
+            printf '%s\n' "$J" | grep -E '^  (liberar:|liberado para SHA antigo|liberar .* (ignorado|ultrapassado))' || true
             sai 10 "$(printf '%s\n' "$J" | grep -m1 '^RETIDO=' || echo RETIDO=?)" ;;
           0:NADA_A_PUBLICAR)
             [ -n "$ARF" ] || ARF=$AR
@@ -212,7 +213,15 @@ if [ -n "$ESPERAR" ]; then
     else
       falha=$AR; diz "leitura do ar falhou: $AR"
     fi
-    [ "$t" -ge "$PRAZO" ] && { [ "$mediu" = 1 ] && sai 30 TIMEOUT; sai 6 "MECANICA=AR_ILEGIVEL:$falha"; }
+    if [ "$t" -ge "$PRAZO" ]; then
+      [ "$mediu" = 1 ] || sai 6 "MECANICA=AR_ILEGIVEL:$falha"
+      # batimento do vigia (rodada 2, M6): velho = o vigia não está rodando, não é "só demora"
+      B=$(head -1 "$VIGIA/batimento" 2>/dev/null)
+      case "$B" in ''|*[!0-9]*) sai 30 TIMEOUT ;; esac
+      P=$(( $(date +%s) - B ))
+      [ "$P" -gt "${LP_BATIMENTO_VELHO_S:-300}" ] && sai 30 "TIMEOUT=vigia parado há $((P / 60)) min (sem batimento em $VIGIA/batimento)"
+      sai 30 TIMEOUT
+    fi
     "$DORME" "$PASSO"; t=$((t + PASSO))
   done
 fi
@@ -280,8 +289,13 @@ retido() {  # retido <tipo> <arquivo>
   if [ "$1" = migration ]; then
     if [ -n "${LIB_ARQ:-}" ] && L=$(sha40 "$LIB_ARQ") && [ "$L" != "$HEAD_SHA" ] \
        && git merge-base --is-ancestor "$L" "$HEAD_SHA" 2>/dev/null; then
-      echo "  liberado para SHA antigo ${L:0:8} — migration(s) depois dele até ${HEAD_SHA:0:8}:"
-      git diff --name-only "$L" "$HEAD_SHA" -- supabase/migrations 2>/dev/null | sed 's/^/      /'
+      # rodada 2, B3: um liberar que o ar já passou não é "liberado para SHA antigo" — não cobre nada
+      if [ "$L" != "$AR" ] && git merge-base --is-ancestor "$L" "$AR" 2>/dev/null; then
+        echo "  liberar ${L:0:8} ultrapassado: o ar (${AR:0:8}) já o contém — não cobre nada (o vigia o apaga)"
+      else
+        echo "  liberado para SHA antigo ${L:0:8} — migration(s) depois dele até ${HEAD_SHA:0:8}:"
+        git diff --name-only "$L" "$HEAD_SHA" -- supabase/migrations 2>/dev/null | sed 's/^/      /'
+      fi
     fi
     echo "  liberar: aplique a(s) migration(s) e rode  bash scripts/lovable-publish.sh --liberar $HEAD_SHA"
   fi
@@ -331,6 +345,8 @@ if [ -n "$PEND" ]; then
   done)
   if [ -n "$SEMV" ]; then
     L=""; [ -n "$LIB_ARQ" ] && L=$(sha40 "$LIB_ARQ" || true)
+    # rodada 2, B3: só um liberar que o ar NÃO ultrapassou (ar ancestral dele) atesta edge sem versão
+    [ -n "$L" ] && ! git merge-base --is-ancestor "$AR" "$L" 2>/dev/null && L=""
     # o DIRETÓRIO inteiro de cada função (Codex PR2 #5: um helper que volta aos bytes do ar some do
     # intervalo, mas a edge implantada em L usa a versão de L)
     DIRS=(); while read -r e; do DIRS+=("supabase/functions/$(printf '%s' "$e" | cut -d/ -f3)/"); done <<< "$SEMV"
