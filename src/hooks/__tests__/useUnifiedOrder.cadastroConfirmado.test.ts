@@ -86,7 +86,9 @@ describe('8.2 — envio pendente: a saída é recarregar, não "Trocar" (Codex r
   it('o hook expõe envioPendente e a página o passa aos motivos e ao CustomerSearch', () => {
     expect(hook).toContain('envioPendente: !!checkoutEnvRef.current?.committed,');
     expect(pagina).toContain('envioPendente: h.envioPendente,');
-    expect(pagina).toContain('envioPendente={h.envioPendente}');
+    // Codex r2 do #4271: com o restore esperando o cliente (carrinho vazio), "Trocar" preserva o envio
+    // pendente — o aviso e a confirmação de "desfazer a ligação" não se aplicam ali.
+    expect(pagina).toContain('envioPendente={h.envioPendente && !(restoreEsperandoCliente && h.cart.length === 0)}');
   });
   it('no orçamento, o aviso de pedido pendente vem ANTES do bloqueio do cadastro (Codex r4 P0-3)', () => {
     const ini = hook.indexOf('const submitQuote = useCallback(');

@@ -103,7 +103,11 @@ describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
   });
 
   it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
-    expect(corpoPagina('handleClearCustomer')).toContain('if (h.clearCustomer()) clearDraft();');
+    // Codex r2 do #4271: a troca de verdade apaga o rascunho; com o restore ESPERANDO o cliente (carrinho
+    // vazio) só a seleção sai — o comportamento está provado em UnifiedOrder.restore-pendente.test.tsx.
+    const corpo = corpoPagina('handleClearCustomer');
+    expect(corpo).toContain('if (!h.clearCustomer()) return; // barrada com envio em voo');
+    expect(corpo.indexOf('clearDraft();')).toBeGreaterThan(corpo.indexOf('if (!h.clearCustomer()) return;'));
     expect(pagina).toContain('onClearCustomer={handleClearCustomer}');
     expect(pagina).not.toContain('onClearCustomer={h.clearCustomer}');
   });
@@ -127,7 +131,7 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     const ini = hook.indexOf('const clearCustomer = useCallback(');
     const corpo = hook.slice(ini, hook.indexOf('\n  }, [', ini));
     expect(corpo).toContain('if (submittingRef.current) { avisarCarrinhoTravado(); return false; }');
-    expect(pagina).toContain('if (h.clearCustomer()) clearDraft();');
+    expect(pagina).toContain('if (!h.clearCustomer()) return; // barrada com envio em voo → nada é apagado');
   });
 
   it('orçamento com envio de pedido pendente é barrado ANTES de gravar (sem 2ª linha da conta enviada)', () => {
