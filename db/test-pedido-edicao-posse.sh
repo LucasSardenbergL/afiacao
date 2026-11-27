@@ -22,7 +22,7 @@ FIX_8ARGS="$REPO_ROOT/db/fixtures/aplicar-edicao-pedido-omie-8args-prod.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
   SABOTAGENS="indice_comum:A0 indice_comum_sem_post:R2 sem_versao:R4 sem_excluido:R5 sem_expirar:R9
-    sem_token_encerrado:E2 despacho_sem_gemeo:D3 despacho_sem_ttl:D5 despacho_sem_bump:D2
+    sem_token_encerrado:E2 despacho_sem_gemeo:D3 despacho_sem_ttl:D5 despacho_sem_bump:D2b
     liberar_despachada:L2 marcar_sobre_concluida:W4 aplicar_sem_deleted:W2 aplicar_sem_token:W1
     aplicar_nao_conclui:W3b excluir_sem_edicao:X1 excluir_sem_identidade:X2 trigger_sem_filtro:S1
     trigger_invoker:S1 estado_sem_gate:G1 resolver_sem_master:V1 resolver_sem_token:V2

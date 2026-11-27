@@ -39,6 +39,73 @@ export const TRAVA_DIVERGENTE: TravaDoEnvio = {
   mensagem: 'O Omie pode ter sido alterado e o app não conseguiu confirmar como o pedido ficou. Confira o pedido direto no Omie — esta tela não salva mais este pedido, para não regravar a versão antiga por cima.',
 };
 
+export const TRAVA_EM_CURSO: TravaDoEnvio = {
+  tipo: 'concorrente',
+  mensagem: 'Este pedido está sendo salvo agora em outra aba ou aparelho. Aguarde alguns minutos e recarregue o pedido antes de editar.',
+};
+
+export const TRAVA_POSSE_ILEGIVEL: TravaDoEnvio = {
+  tipo: 'concorrente',
+  mensagem: 'Não consegui conferir se este pedido está sendo salvo em outro lugar. Recarregue o pedido antes de editar.',
+};
+
+/** Divergência durável no banco (migration 20261127100200): o token é o que o master precisa para liberar. */
+export type DivergenciaDuravel = { token: string; motivo: string | null };
+
+/**
+ * Lê `pedido_edicao_omie_estado` ao abrir a tela — a posse é do PEDIDO (conta, PV), não desta aba: vale
+ * entre abas e aparelhos e sobrevive à recarga. Fail-closed: erro ou forma desconhecida TRAVA (sem a leitura
+ * não dá para provar que não há edição em voo).
+ */
+export function travaDaPosse(resp: { data: unknown; error: unknown }): {
+  trava: TravaDoEnvio | null;
+  divergencia: DivergenciaDuravel | null;
+} {
+  if (resp.error) return { trava: TRAVA_POSSE_ILEGIVEL, divergencia: null };
+  const d = resp.data && typeof resp.data === 'object' ? resp.data as Record<string, unknown> : null;
+  switch (d?.situacao) {
+    case 'livre':
+    case 'ausente':
+      return { trava: null, divergencia: null };
+    case 'reservada':
+    case 'em_voo':
+      return { trava: TRAVA_EM_CURSO, divergencia: null };
+    case 'divergente':
+      return {
+        trava: TRAVA_DIVERGENTE,
+        divergencia: typeof d.token === 'string'
+          ? { token: d.token, motivo: typeof d.motivo === 'string' ? d.motivo : null }
+          : null,
+      };
+    default:
+      return { trava: TRAVA_POSSE_ILEGIVEL, divergencia: null };
+  }
+}
+
+/**
+ * Desfecho de UM salvamento pelo banco (`pedido_edicao_omie_encerrar_envio`), quando a resposta da edge se
+ * perdeu ou não prova nada (#30; Codex no desenho do PR 2). A RPC ENCERRA o token: se a edge ainda não
+ * despachou, nada desse save vai mais ao Omie — "não alterou" vira fato. Só `concluida` é sucesso; só
+ * abandonada/liberada/expirada (e pedido sem PV/ausente) provam que nada mudou; o resto — em voo, divergente,
+ * resolvida por outro, leitura que falhou ou forma desconhecida — é divergente (fail-closed). A resposta
+ * `success: true` que chegue DEPOIS disto é descartada (`comPrazo`): o banco já respondeu.
+ */
+export function desfechoDoEnvioPeloBanco(resp: { data: unknown; error: unknown }): 'concluido' | 'nao_alterado' | 'divergente' {
+  if (resp.error) return 'divergente';
+  switch (resp.data) {
+    case 'concluida':
+      return 'concluido';
+    case 'abandonada':
+    case 'liberada':
+    case 'expirada':
+    case 'sem_pv':
+    case 'ausente':
+      return 'nao_alterado';
+    default:
+      return 'divergente';
+  }
+}
+
 /**
  * CANCELA antes de invalidar: um pré-carregamento do detalhe iniciado na lista e ainda em voo terminaria
  * DEPOIS da invalidação e gravaria o valor antigo como fresco por 60 s — que a impressão e o WhatsApp leem

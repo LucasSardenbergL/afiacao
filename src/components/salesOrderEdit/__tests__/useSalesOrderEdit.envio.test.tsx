@@ -8,18 +8,42 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 const navigateSpy = vi.fn();
 const rota = { id: 'ord-1' };
+// Posse durável (migration 20261127100200): as 3 RPCs da posse respondem por `posseMock` (padrão: PV livre);
+// o resto vai ao mock de sempre (`mockedRpc`). Sem isto o estado viria "ilegível" e a tela travaria (fail-closed).
+const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
+  const rpcInterno = vi.fn();
+  const posseMock = {
+    estado: { data: { situacao: 'livre' }, error: null } as unknown,
+    encerrar: { data: 'divergente', error: null } as unknown,
+    resolver: { data: 'resolvida', error: null } as unknown,
+    chamadas: [] as Array<{ nome: string; args: unknown }>,
+  };
+  const RESPOSTA: Record<string, keyof typeof posseMock> = {
+    pedido_edicao_omie_estado: 'estado',
+    pedido_edicao_omie_encerrar_envio: 'encerrar',
+    pedido_edicao_omie_resolver: 'resolver',
+  };
+  const rpcComPosse = (nome: string, args?: unknown) => {
+    const chave = RESPOSTA[nome];
+    if (!chave) return rpcInterno(nome, args);
+    posseMock.chamadas.push({ nome, args });
+    return Promise.resolve(posseMock[chave]);
+  };
+  return { rpcInterno, posseMock, rpcComPosse };
+});
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ id: rota.id }),
   useNavigate: () => navigateSpy,
 }));
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({}) }));
+const authMock = vi.hoisted(() => ({ isMaster: false }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => authMock }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/lib/analytics', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/analytics')>()),
   track: vi.fn(),
 }));
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: vi.fn() },
+  supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: rpcComPosse },
 }));
 
 import { supabase } from '@/integrations/supabase/client';
@@ -33,7 +57,7 @@ import type { OmieProduct } from '../types';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
-const mockedRpc = vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
+const mockedRpc = rpcInterno as unknown as Mock<(...args: unknown[]) => unknown>;
 
 const ITEM = { product_id: 'p-velho', omie_codigo_produto: 1, codigo: 'C1', descricao: 'Lixa 120', unidade: 'UN', quantidade: 2, valor_unitario: 10, valor_total: 20 };
 let salesOrderRow: Record<string, unknown>;
@@ -75,6 +99,11 @@ function chainFor(table: string) {
 }
 
 beforeEach(() => {
+  posseMock.estado = { data: { situacao: 'livre' }, error: null };
+  posseMock.encerrar = { data: 'divergente', error: null };
+  posseMock.resolver = { data: 'resolvida', error: null };
+  posseMock.chamadas = [];
+  authMock.isMaster = false;
   vi.clearAllMocks();
   limparRegistroParaTeste();
   rota.id = 'ord-1';
@@ -735,5 +764,105 @@ describe('leva 1 — Codex no diff (2026-11-26)', () => {
     let r: unknown;
     act(() => { r = result.current.handleTintConfirm('f1', 'COR1', 'Azul', 150, 0, undefined, { id: 'fora' } as never); });
     expect(r).toBe('conflito');
+  });
+});
+
+describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const encerramentos = () => posseMock.chamadas.filter((c) => c.nome === 'pedido_edicao_omie_encerrar_envio');
+
+  it('o salvamento manda um token próprio (UUID) — é por ele que a tela pergunta ao banco', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(String(bodyDoAlterar()?.token)).toMatch(UUID);
+    expect(encerramentos()).toHaveLength(0); // sucesso provado não consulta nem encerra nada
+  });
+
+  it('resposta perdida + banco diz abandonada: trava CONCORRENTE (recarregar é seguro), pelo MESMO token', async () => {
+    posseMock.encerrar = { data: 'abandonada', error: null };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('concorrente');
+    expect(encerramentos()).toHaveLength(1);
+    expect(encerramentos()[0].args).toEqual({ p_sales_order_id: 'ord-1', p_token: bodyDoAlterar()?.token });
+    const { estadoDoPedido } = await import('../registroEnvios');
+    expect(estadoDoPedido('ord-1').divergente).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ description: expect.stringContaining('não alterou o Omie') }));
+  });
+
+  it('500 pós-despacho + banco diz concluida: sucesso CONFIRMADO pelo banco, navega', async () => {
+    posseMock.encerrar = { data: 'concluida', error: null };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: erroDaEdge({ error: 'timeout do write-back', precisa_recarregar: true }) } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(toast.success).toHaveBeenCalledWith('Pedido atualizado e sincronizado com o Omie!', expect.objectContaining({ description: expect.stringContaining('banco confirmou') }));
+    expect(navigateSpy).toHaveBeenCalledWith('/sales');
+    expect(result.current.precisaRecarregar).toBeNull();
+  });
+
+  it.each([
+    ['leitura que falha', { data: null, error: { message: 'rede' } }],
+    ['em voo depois da resposta', { data: 'em_voo', error: null }],
+    ['resolvida por outro', { data: 'resolvida', error: null }],
+    ['forma desconhecida', { data: { desfecho: 'concluida' }, error: null }],
+  ])('banco sem prova de nada (%s): divergente (fail-closed)', async (_nome, resposta) => {
+    posseMock.encerrar = resposta;
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: 'true' }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it('ao abrir: PV divergente no banco trava com o token; employee NÃO libera', async () => {
+    posseMock.estado = { data: { situacao: 'divergente', token: 'tok-1', motivo: 'Omie recusou o item 2' }, error: null };
+    const { result } = await renderLoaded();
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(result.current.divergenciaDuravel).toEqual({ token: 'tok-1', motivo: 'Omie recusou o item 2' });
+    expect(result.current.podeLiberarDivergencia).toBe(false);
+    expect(result.current.formularioTravado).toBe(true);
+    mockedInvoke.mockClear();
+    await act(async () => { await result.current.handleSave(); });
+    expect(bodyDoAlterar()).toBeUndefined();
+  });
+
+  it('master libera a divergência VISTA (pelo token) e a tela relê o pedido destravada', async () => {
+    authMock.isMaster = true;
+    posseMock.estado = { data: { situacao: 'divergente', token: 'tok-1', motivo: null }, error: null };
+    const { result } = await renderLoaded();
+    expect(result.current.podeLiberarDivergencia).toBe(true);
+    posseMock.estado = { data: { situacao: 'livre' }, error: null };
+    await act(async () => { await result.current.liberarDivergencia(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const resolver = posseMock.chamadas.filter((c) => c.nome === 'pedido_edicao_omie_resolver');
+    expect(resolver).toEqual([{ nome: 'pedido_edicao_omie_resolver', args: { p_sales_order_id: 'ord-1', p_token: 'tok-1' } }]);
+    expect(result.current.precisaRecarregar).toBeNull();
+    expect(result.current.formularioTravado).toBe(false);
+  });
+
+  it('ao abrir: edição em curso em outra aba/aparelho trava (recarregar depois)', async () => {
+    posseMock.estado = { data: { situacao: 'em_voo' }, error: null };
+    const { result } = await renderLoaded();
+    expect(result.current.precisaRecarregar?.tipo).toBe('concorrente');
+    expect(result.current.precisaRecarregar?.mensagem).toContain('outra aba ou aparelho');
+    expect(result.current.formularioTravado).toBe(true);
+  });
+
+  it('ao abrir: leitura da posse que falha TRAVA (fail-closed)', async () => {
+    posseMock.estado = { data: null, error: { message: 'função não existe' } };
+    const { result } = await renderLoaded();
+    expect(result.current.precisaRecarregar?.mensagem).toContain('Não consegui conferir');
+    expect(result.current.formularioTravado).toBe(true);
+  });
+
+  it('blocked edicao_em_curso da edge: trava em curso, sem navegar', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: false, blocked: 'edicao_em_curso', motivo: 'outro salvando' }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.mensagem).toContain('outra aba ou aparelho');
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(encerramentos()).toHaveLength(0); // recusa conhecida antes do Omie: nada a perguntar
   });
 });

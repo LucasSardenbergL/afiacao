@@ -9,6 +9,29 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 
+// Posse durável (migration 20261127100200): as 3 RPCs da posse respondem por `posseMock` (padrão: PV livre);
+// o resto vai ao mock de sempre (`mockedRpc`). Sem isto o estado viria "ilegível" e a tela travaria (fail-closed).
+const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
+  const rpcInterno = vi.fn();
+  const posseMock = {
+    estado: { data: { situacao: 'livre' }, error: null } as unknown,
+    encerrar: { data: 'divergente', error: null } as unknown,
+    resolver: { data: 'resolvida', error: null } as unknown,
+    chamadas: [] as Array<{ nome: string; args: unknown }>,
+  };
+  const RESPOSTA: Record<string, keyof typeof posseMock> = {
+    pedido_edicao_omie_estado: 'estado',
+    pedido_edicao_omie_encerrar_envio: 'encerrar',
+    pedido_edicao_omie_resolver: 'resolver',
+  };
+  const rpcComPosse = (nome: string, args?: unknown) => {
+    const chave = RESPOSTA[nome];
+    if (!chave) return rpcInterno(nome, args);
+    posseMock.chamadas.push({ nome, args });
+    return Promise.resolve(posseMock[chave]);
+  };
+  return { rpcInterno, posseMock, rpcComPosse };
+});
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ id: 'ord-1' }),
   useNavigate: () => vi.fn(),
@@ -16,7 +39,7 @@ vi.mock('react-router-dom', () => ({
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({}) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: vi.fn() },
+  supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: rpcComPosse },
 }));
 
 import { supabase } from '@/integrations/supabase/client';
@@ -28,7 +51,7 @@ const mockedInvoke = vi.mocked(supabase.functions.invoke);
 // PR0.0-bis: loadOrder busca o omie_payload pelo canal staff SECDEF (fechado ao .select()).
 // Mock "achatado" de propósito: `vi.mocked(supabase.rpc)` carrega a união de TODAS as RPCs do types.ts, e a cada
 // RPC nova ela cresce até o TS2589 ("excessively deep") — medido quando o types.ts ganhou as RPCs do e-mail ao CRS.
-const mockedRpc = vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
+const mockedRpc = rpcInterno as unknown as Mock<(...args: unknown[]) => unknown>;
 
 /** Captura o valor passado a `.eq('account', X)` na query de omie_products. */
 const productsAccountEq = vi.fn();
@@ -83,6 +106,10 @@ function installMocks(orderAccount: string, pageFor: (from: number) => unknown[]
 }
 
 beforeEach(() => {
+  posseMock.estado = { data: { situacao: 'livre' }, error: null };
+  posseMock.encerrar = { data: 'divergente', error: null };
+  posseMock.resolver = { data: 'resolvida', error: null };
+  posseMock.chamadas = [];
   vi.clearAllMocks();
 });
 

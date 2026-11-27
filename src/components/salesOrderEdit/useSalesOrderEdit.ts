@@ -25,10 +25,10 @@ import {
 import { totalLinhaOuAusente } from '@/lib/format';
 import { mesmosItens, valoresDaEdicaoLocal } from './edicaoLocal';
 import {
-  comPrazo, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS, TRAVA_CONCORRENTE, TRAVA_DIVERGENTE,
-  type TravaDoEnvio,
+  comPrazo, desfechoDoEnvioPeloBanco, type DivergenciaDuravel, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS,
+  TRAVA_CONCORRENTE, TRAVA_DIVERGENTE, TRAVA_EM_CURSO, travaDaPosse, type TravaDoEnvio,
 } from './envioEdicao';
-import { encerrarEnvio, estadoDoPedido, iniciarEnvio, marcarDivergente, ouvirRegistro } from './registroEnvios';
+import { encerrarEnvio, estadoDoPedido, iniciarEnvio, liberarDivergente, marcarDivergente, ouvirRegistro } from './registroEnvios';
 import { precoDeNascimento, type InsumosDoNascimento } from '@/lib/pricing/precoDeNascimento';
 import { carregarPrecosPraticados } from '@/hooks/unifiedOrder/precos-praticados';
 import { buscarMultConfig, buscarTierPorConta } from '@/hooks/useClienteTier';
@@ -38,7 +38,7 @@ import { buscarMultConfig, buscarTierPorConta } from '@/hooks/useClienteTier';
 const RECUSAS_ANTES_DO_OMIE = [
   'credito', 'tint_preco', 'atp', 'desconto_omie', 'edicao_concorrente', 'versao_ausente',
   'gemeo_omie', 'etapa_omie', 'leitura_omie_incompleta', 'cliente_omie', 'origem_omie', 'status_pedido',
-  'conta_desconhecida', 'pedido_excluido',
+  'conta_desconhecida', 'pedido_excluido', 'edicao_em_curso', 'edicao_divergente',
 ];
 
 /** `blocked` da edge `alterar_pedido` que trazem `motivo` legível (edge v1.48, ./edicao-omie.ts). */
@@ -55,7 +55,8 @@ import {
 export function useSalesOrderEdit() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  useAuth(); // mantém o hook montado pra refresh de token; isStaff não é usado
+  // Só o master libera a divergência DURÁVEL (a RPC confere o papel de novo — o front só decide o botão).
+  const { isMaster } = useAuth();
 
   const [order, setOrder] = useState<SalesOrder | null>(null);
   const [customerName, setCustomerName] = useState('');
@@ -76,6 +77,8 @@ export function useSalesOrderEdit() {
   // #30: o salvar falhou DEPOIS de mexer no Omie (ou outra edição ganhou a vez). O formulário na tela
   // é um retrato velho — reenviá-lo regravaria itens que o Omie já não tem. Só recarregar destrava.
   const [precisaRecarregar, setPrecisaRecarregar] = useState<TravaDoEnvio | null>(null);
+  // Divergência gravada no banco (posse por conta+PV, migration 20261127100200): sobrevive à recarga e a outra aba.
+  const [divergenciaDuravel, setDivergenciaDuravel] = useState<DivergenciaDuravel | null>(null);
   // A página remonta a cada `:id` (SalesOrderEdit.tsx): a instância é de UM pedido. Depois de um `await`,
   // se ela desmontou (o vendedor abriu outro pedido), o salvar não publica toast, navegação nem estado — só
   // o que é do PEDIDO (registroEnvios: em voo / divergente) e a invalidação do cache.
@@ -139,6 +142,7 @@ export function useSalesOrderEdit() {
     setShowAddProduct(false);
     setProductSearch('');
     setPrecisaRecarregar(null);
+    setDivergenciaDuravel(null);
     setInsumosPreco(null);
     // Envio deste pedido ainda voando (outra tela, mesma aba): ler agora daria o carrinho de ANTES do envio.
     // A tela fica carregando; o efeito de `envioDeOutraTela` chama loadOrder de novo quando ele termina.
@@ -176,6 +180,14 @@ export function useSalesOrderEdit() {
         created_at: row.created_at,
         updated_at: row.updated_at ?? null,
       };
+      // Posse do PEDIDO no banco (outra aba/aparelho salvando, ou divergência de uma edição anterior): lida ANTES de
+      // liberar o formulário. Só pedido com PV (o caminho local não toca o Omie).
+      if (o.omie_pedido_id) {
+        const posse = travaDaPosse(await supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: o.id }));
+        if (velha()) return;
+        setPrecisaRecarregar(posse.trava);
+        setDivergenciaDuravel(posse.divergencia);
+      }
       setOrder(o);
       setItems(o.items || []);
       setNotes(o.notes || '');
@@ -545,6 +557,47 @@ export function useSalesOrderEdit() {
     setSaving(true);
     const pedidoEnviado = order.id;
     const naTela = () => montadoRef.current;
+    // Token DESTE salvamento: a edge reivindica a posse por ele, e é por ele que a tela pergunta ao banco o que
+    // houve quando a resposta se perde (migration 20261127100200).
+    const tokenEnvio = viaOmie ? crypto.randomUUID() : null;
+    // Desfecho desconhecido (#30; Codex no desenho do PR 2): o banco decide, e a consulta ENCERRA o token — se a
+    // edge ainda não despachou, nada deste save vai mais ao Omie. Leitura que falha ou não fecha = divergente.
+    const desfechoDesconhecido = async (titulo: string) => {
+      let desfecho: 'concluido' | 'nao_alterado' | 'divergente' = 'divergente';
+      if (tokenEnvio) {
+        try {
+          const lido = await comPrazo(
+            Promise.resolve(supabase.rpc('pedido_edicao_omie_encerrar_envio', { p_sales_order_id: pedidoEnviado, p_token: tokenEnvio })),
+            PRAZOS.corpoMs,
+          );
+          if (lido.ok) desfecho = desfechoDoEnvioPeloBanco(lido.valor);
+        } catch {
+          desfecho = 'divergente';
+        }
+      }
+      if (desfecho === 'divergente') marcarDivergente(pedidoEnviado);
+      // Concluído: o refetch disparado no despacho pode ter relido o total de ANTES do write-back.
+      if (desfecho === 'concluido') void invalidarCachesDoPedido(queryClient, pedidoEnviado);
+      if (!naTela()) return;
+      if (desfecho === 'concluido') {
+        toast.success('Pedido atualizado e sincronizado com o Omie!', {
+          description: 'A resposta se perdeu no caminho, mas o banco confirmou a gravação.',
+        });
+        navigate('/sales');
+        return;
+      }
+      if (desfecho === 'nao_alterado') {
+        setPrecisaRecarregar(TRAVA_CONCORRENTE);
+        toast.error(titulo, {
+          description: 'O banco confirmou: este salvamento não alterou o Omie. Recarregue o pedido e salve de novo.',
+          duration: 12000,
+        });
+        setSaving(false);
+        return;
+      }
+      toast.error(titulo, { description: TRAVA_DIVERGENTE.mensagem, duration: 12000 });
+      setSaving(false);
+    };
     try {
 
       if (order.omie_pedido_id) {
@@ -586,6 +639,7 @@ export function useSalesOrderEdit() {
             // #7: a versão da linha que este formulário viu. A edge reserva o pedido por ela ANTES de tocar
             // o Omie — outra edição (ou envio/exclusão) no meio do caminho faz a reserva não casar.
             versao: order.updated_at ?? null,
+            token: tokenEnvio,
             // Só a parcela que o VENDEDOR escolheu: sem mudança, a edge herda a condição VIVA do PV
             // (`parcelaEfetiva`). Reenviar a do recibo regravaria um prazo que o financeiro já trocou
             // no Omie (Codex r3).
@@ -599,14 +653,8 @@ export function useSalesOrderEdit() {
         // a lista e o detalhe deste pedido saem do cache em todas as rotas, sem segurar a navegação.
         void invalidarCachesDoPedido(queryClient, pedidoEnviado);
         if (!despacho.ok) {
-          // Sem resposta no prazo: o Omie pode ter mudado ou não — desconhecido é divergente (#30).
-          marcarDivergente(pedidoEnviado);
-          if (!naTela()) return;
-          toast.error('O Omie não respondeu a tempo — o app não sabe se o pedido mudou', {
-            description: TRAVA_DIVERGENTE.mensagem,
-            duration: 12000,
-          });
-          setSaving(false);
+          // Sem resposta no prazo: o Omie pode ter mudado ou não — o banco decide (#30).
+          await desfechoDesconhecido('O Omie não respondeu a tempo');
           return;
         }
         const { data, error } = despacho.valor;
@@ -614,9 +662,9 @@ export function useSalesOrderEdit() {
           const falha = await lerFalhaDoEnvio(error);
           const mensagem = falha.mensagem || error.message || 'Erro desconhecido';
           if (falha.exigeRecarregar) {
-            // #30: o Omie pode já ter mudado (ou o desfecho é desconhecido) — o formulário velho não pode ser
-            // reenviado, nem depois de recarregar o app.
-            marcarDivergente(pedidoEnviado);
+            // #30: o Omie pode já ter mudado (ou o desfecho é desconhecido) — o banco decide.
+            await desfechoDesconhecido('Erro ao sincronizar com Omie: ' + mensagem);
+            return;
           }
           if (!naTela()) return;
           toast.error('Erro ao sincronizar com Omie: ' + mensagem, { duration: 12000 });
@@ -628,7 +676,7 @@ export function useSalesOrderEdit() {
           // dá ANTES de tocar o Omie, o desfecho é desconhecido — o pedido fica divergente.
           const d = data as { success?: unknown; blocked?: unknown } | null;
           if (d?.success !== true && !(typeof d?.blocked === 'string' && RECUSAS_ANTES_DO_OMIE.includes(d.blocked))) {
-            marcarDivergente(pedidoEnviado);
+            await desfechoDesconhecido('');
           }
           return;
         }
@@ -714,6 +762,22 @@ export function useSalesOrderEdit() {
           setSaving(false);
           return;
         }
+        if (recusa?.blocked === 'edicao_em_curso' || recusa?.blocked === 'edicao_divergente') {
+          // Posse do PEDIDO no banco (v1.55): outra aba/aparelho salvando agora, ou edição anterior divergente.
+          track('pedido.edicao_bloqueada', { motivo: recusa.blocked, empresa: account });
+          toast.error('Edição recusada — o Omie NÃO foi atualizado por esta tela', {
+            description: recusa.motivo ?? 'Recarregue o pedido antes de editar.',
+            duration: 12000,
+          });
+          setSaving(false);
+          if (recusa.blocked === 'edicao_divergente') {
+            // Relê o pedido: a trava durável e o token que o master precisa para liberar vêm do banco.
+            void loadOrder();
+          } else {
+            setPrecisaRecarregar(TRAVA_EM_CURSO);
+          }
+          return;
+        }
         if (recusa?.blocked && BLOQUEIOS_COM_MOTIVO.includes(recusa.blocked)) {
           // Travas da edge v1.48 (./edicao-omie.ts): gêmeo avançado, etapa viva, PV de outro cliente,
           // leitura incompleta, origem/status/conta. O motivo vem da edge — a tela só o mostra.
@@ -727,13 +791,8 @@ export function useSalesOrderEdit() {
         }
         if ((data as { success?: unknown } | null)?.success !== true) {
           // 200 sem recusa conhecida e sem `success: true` literal (HTML de proxy, `"false"`, corpo vazio): o
-          // desfecho no Omie é DESCONHECIDO — nem sucesso, nem "tente de novo" (Codex 2026-11-26).
-          marcarDivergente(pedidoEnviado);
-          toast.error('O app não conseguiu confirmar o resultado no Omie', {
-            description: TRAVA_DIVERGENTE.mensagem,
-            duration: 12000,
-          });
-          setSaving(false);
+          // desfecho no Omie é DESCONHECIDO — nem sucesso, nem "tente de novo" (Codex 2026-11-26). O banco decide.
+          await desfechoDesconhecido('O app não conseguiu confirmar o resultado no Omie');
           return;
         }
         // Sucesso: o edge já persistiu items/subtotal/notes/omie_payload.
@@ -814,6 +873,34 @@ export function useSalesOrderEdit() {
     }
   };
 
+  // Master conferiu o pedido direto no Omie: libera a divergência DURÁVEL que a tela VIU (pelo token — outra
+  // divergência mais nova não sai junto). A RPC move a versão do pedido: formulário aberto antes vira retrato velho.
+  const [liberandoDivergencia, setLiberandoDivergencia] = useState(false);
+  const liberarDivergencia = async () => {
+    if (!order || !divergenciaDuravel || liberandoDivergencia) return;
+    setLiberandoDivergencia(true);
+    try {
+      const { data, error } = await supabase.rpc('pedido_edicao_omie_resolver', {
+        p_sales_order_id: order.id,
+        p_token: divergenciaDuravel.token,
+      });
+      if (error) {
+        toast.error('Não consegui liberar a edição: ' + error.message);
+        return;
+      }
+      if (data === 'resolvida') {
+        liberarDivergente(order.id);
+        toast.success('Edição liberada', { description: 'O pedido foi recarregado como está registrado no app.' });
+      } else {
+        toast.error('Nada a liberar: a divergência já foi resolvida ou mudou. O pedido foi recarregado.');
+      }
+      void invalidarCachesDoPedido(queryClient, order.id);
+      await loadOrder();
+    } finally {
+      if (montadoRef.current) setLiberandoDivergencia(false);
+    }
+  };
+
   const motivoBloqueio = order ? bloqueioDaEdicao(order) : null;
   const isBlocked = motivoBloqueio !== null;
   // #48: durante o envio e depois de uma falha que exige recarregar, nada no formulário muda.
@@ -871,6 +958,10 @@ export function useSalesOrderEdit() {
     invalidQuantityItemIndices,
     formularioTravado,
     precisaRecarregar: travaEfetiva,
+    divergenciaDuravel,
+    podeLiberarDivergencia: isMaster === true && divergenciaDuravel !== null,
+    liberandoDivergencia,
+    liberarDivergencia,
     envioDeOutraTela,
     recarregar: loadOrder,
     temAlteracaoPendente,

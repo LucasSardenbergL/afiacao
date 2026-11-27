@@ -396,3 +396,88 @@ export function observacaoParaOmie(input: {
   const local = typeof input.notaLocal === "string" && input.notaLocal.trim() !== "" ? input.notaLocal : null;
   return input.viva ?? local ?? input.padraoDaConta;
 }
+
+// ── Posse DURÁVEL da edição (leva 1 PR 2, migration 20261127100200) ──────────────────────────────────────
+// Uma tentativa por token no banco (`pedido_edicao_omie_tentativa`), no máximo uma viva por (conta, PV).
+// A tela gera o token e o manda; com ele, depois de perder a resposta, ela pergunta ao banco o que houve
+// (`pedido_edicao_omie_encerrar_envio`). Tela antiga (sem token) → a edge gera um: a posse vale igual,
+// só a consulta posterior que não.
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type TokenDaEdicao = { ok: true; valor: string; daTela: boolean } | { ok: false; motivo: string };
+
+/** Token da tentativa. Presente e malformado RECUSA (não troca por um gerado: a tela consultaria outro). */
+export function tokenDaEdicao(input: { presente: boolean; informado: unknown; gerar: () => string }): TokenDaEdicao {
+  if (!input.presente || input.informado === undefined || input.informado === null) {
+    return { ok: true, valor: input.gerar(), daTela: false };
+  }
+  if (typeof input.informado !== "string" || !UUID_RE.test(input.informado)) {
+    return { ok: false, motivo: "identificador do salvamento inválido — atualize o app (recarregue a página) e tente de novo." };
+  }
+  return { ok: true, valor: input.informado.toLowerCase(), daTela: true };
+}
+
+export const MOTIVO_EDICAO_EM_CURSO =
+  "este pedido está sendo salvo agora em outra aba ou aparelho. Nada foi alterado no Omie por esta tela — " +
+  "aguarde alguns minutos e recarregue o pedido.";
+
+export const MOTIVO_EDICAO_DIVERGENTE =
+  "a última edição deste pedido pode ter alterado o Omie sem o app conseguir confirmar como ele ficou. " +
+  "Confira o pedido direto no Omie; um gestor libera a edição no app depois de conferir.";
+
+export type RecusaDaPosse = { bloqueio: "edicao_concorrente" | "edicao_em_curso" | "edicao_divergente"; motivo: string };
+
+/**
+ * Desfecho de `pedido_edicao_omie_reivindicar`. `null` = reivindicado (segue). Toda recusa vem ANTES de
+ * tocar o Omie. Resposta desconhecida LANÇA (fail-closed: nunca vira "reivindicado" por omissão).
+ */
+export function recusaDaReivindicacao(desfecho: unknown): RecusaDaPosse | null {
+  switch (desfecho) {
+    case "reivindicado": return null;
+    case "pedido_alterado":
+    case "excluido":
+    case "ausente":
+    case "sem_pv":
+    case "token_encerrado":
+      return { bloqueio: "edicao_concorrente", motivo: MOTIVO_EDICAO_CONCORRENTE };
+    case "em_edicao": return { bloqueio: "edicao_em_curso", motivo: MOTIVO_EDICAO_EM_CURSO };
+    case "divergente": return { bloqueio: "edicao_divergente", motivo: MOTIVO_EDICAO_DIVERGENTE };
+    default:
+      throw new Error(`Edição recusada: resposta inesperada ao reservar o pedido (${JSON.stringify(desfecho)}). Nada foi alterado no Omie.`);
+  }
+}
+
+/** Desfecho de `pedido_edicao_omie_despachar` (a fronteira da 1ª mutação no Omie). `null` = despachado. */
+export function recusaDoDespacho(desfecho: unknown): RecusaDaPosse | null {
+  switch (desfecho) {
+    case "despachado": return null;
+    case "pedido_alterado":
+    case "gemeo_alterado":
+    case "excluido":
+    case "ausente":
+    case "perdeu_posse":
+      return { bloqueio: "edicao_concorrente", motivo: MOTIVO_EDICAO_CONCORRENTE };
+    default:
+      throw new Error(`Edição recusada: resposta inesperada ao confirmar a reserva (${JSON.stringify(desfecho)}). Nada foi alterado no Omie.`);
+  }
+}
+
+/** Desfechos de `sales_order_excluir_conferido` que dão mensagem própria (os demais: ver a edge). */
+export function recusaDaExclusao(desfecho: unknown): string | null {
+  switch (desfecho) {
+    case "excluido":
+    case "ausente":
+      return null;
+    case "edicao_em_curso":
+      return "Exclusão recusada: este pedido está sendo salvo no Omie agora (edição em curso). Tente de novo em alguns minutos.";
+    case "envio_em_curso":
+      return "Exclusão recusada: o pedido está sendo enviado ao Omie agora. Tente de novo em alguns minutos.";
+    case "nao_e_orcamento":
+      return "Exclusão recusada: este registro não é mais um orçamento (virou pedido?). Recarregue a página.";
+    case "pedido_alterado":
+      return "Exclusão recusada: o pedido mudou (conta ou PV) depois da conferência. Recarregue a página.";
+    default:
+      return `Exclusão recusada: resposta inesperada ao apagar o pedido (${String(desfecho)}).`;
+  }
+}

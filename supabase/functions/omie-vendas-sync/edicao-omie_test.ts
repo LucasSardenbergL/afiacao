@@ -16,6 +16,12 @@ import {
   corpoDoErro,
   notasDaEdicao,
   observacaoParaOmie,
+  MOTIVO_EDICAO_DIVERGENTE,
+  MOTIVO_EDICAO_EM_CURSO,
+  recusaDaExclusao,
+  recusaDaReivindicacao,
+  recusaDoDespacho,
+  tokenDaEdicao,
   versaoDaEdicao,
 } from "./edicao-omie.ts";
 
@@ -268,4 +274,68 @@ Deno.test("obs_venda ao Omie: limpar volta o padrão, omitir preserva a viva (#1
   igual(observacaoParaOmie({ ...base, viva: "viva", notaLocal: "local", presente: false, informada: undefined }), "viva", "viva vence a local");
   igual(lerCabecalhoParaEdicao({ pedido_venda_produto: { observacoes: { obs_venda: "x" } } }).observacaoViva, "x", "lê a viva");
   igual(lerCabecalhoParaEdicao({ pedido_venda_produto: { observacoes: { obs_venda: "  " } } }).observacaoViva, null, "viva em branco = ausente");
+});
+
+// ── Posse durável (leva 1 PR 2) ──
+const UUID_TELA = "0F8FAD5B-D9CB-469F-A165-70867728950E";
+
+Deno.test("tokenDaEdicao: tela manda UUID → usa o dela, minúsculo", () => {
+  igual(tokenDaEdicao({ presente: true, informado: UUID_TELA, gerar: () => "x" }),
+    { ok: true, valor: UUID_TELA.toLowerCase(), daTela: true }, "uuid da tela");
+});
+
+Deno.test("tokenDaEdicao: tela antiga (sem chave) → a edge gera", () => {
+  igual(tokenDaEdicao({ presente: false, informado: undefined, gerar: () => "gerado" }),
+    { ok: true, valor: "gerado", daTela: false }, "sem chave");
+});
+
+Deno.test("tokenDaEdicao: malformado RECUSA (não troca por um gerado)", () => {
+  for (const ruim of ["", "abc", 42, "0f8fad5b-d9cb-469f-a165-70867728950", { a: 1 }]) {
+    const t = tokenDaEdicao({ presente: true, informado: ruim, gerar: () => "gerado" });
+    if (t.ok) throw new Error(`token ${JSON.stringify(ruim)}: deveria recusar`);
+    if (!t.motivo.includes("identificador do salvamento")) throw new Error(`motivo errado: ${t.motivo}`);
+  }
+});
+
+Deno.test("recusaDaReivindicacao: cada desfecho com a MARCA do ramo", () => {
+  igual(recusaDaReivindicacao("reivindicado"), null, "reivindicado segue");
+  for (const d of ["pedido_alterado", "excluido", "ausente", "sem_pv", "token_encerrado"]) {
+    igual(recusaDaReivindicacao(d)?.bloqueio, "edicao_concorrente", d);
+  }
+  igual(recusaDaReivindicacao("em_edicao"), { bloqueio: "edicao_em_curso", motivo: MOTIVO_EDICAO_EM_CURSO }, "em_edicao");
+  igual(recusaDaReivindicacao("divergente"), { bloqueio: "edicao_divergente", motivo: MOTIVO_EDICAO_DIVERGENTE }, "divergente");
+});
+
+Deno.test("recusaDaReivindicacao: resposta desconhecida LANÇA (nunca segue por omissão)", () => {
+  for (const d of [null, undefined, "REIVINDICADO", true, { desfecho: "reivindicado" }]) {
+    let msg = "";
+    try { recusaDaReivindicacao(d); } catch (e) { msg = e instanceof Error ? e.message : String(e); }
+    if (!msg.includes("resposta inesperada ao reservar")) throw new Error(`${JSON.stringify(d)}: deveria lançar a marca do ramo, veio [${msg}]`);
+  }
+});
+
+Deno.test("recusaDoDespacho: só 'despachado' segue; recusas conhecidas; desconhecida LANÇA", () => {
+  igual(recusaDoDespacho("despachado"), null, "despachado");
+  for (const d of ["pedido_alterado", "gemeo_alterado", "excluido", "ausente", "perdeu_posse"]) {
+    igual(recusaDoDespacho(d)?.bloqueio, "edicao_concorrente", d);
+  }
+  let msg = "";
+  try { recusaDoDespacho("reivindicado"); } catch (e) { msg = e instanceof Error ? e.message : String(e); }
+  if (!msg.includes("resposta inesperada ao confirmar a reserva")) throw new Error(`deveria lançar, veio [${msg}]`);
+});
+
+Deno.test("recusaDaExclusao: excluido/ausente seguem; edição em curso e identidade trocada recusam", () => {
+  igual(recusaDaExclusao("excluido"), null, "excluido");
+  igual(recusaDaExclusao("ausente"), null, "ausente");
+  const casos: Array<[string, string]> = [
+    ["edicao_em_curso", "edição em curso"],
+    ["envio_em_curso", "sendo enviado ao Omie"],
+    ["nao_e_orcamento", "não é mais um orçamento"],
+    ["pedido_alterado", "mudou (conta ou PV)"],
+    ["xyz", "resposta inesperada"],
+  ];
+  for (const [d, trecho] of casos) {
+    const m = recusaDaExclusao(d);
+    if (!m || !m.includes(trecho)) throw new Error(`${d}: esperava [${trecho}], veio [${m}]`);
+  }
 });

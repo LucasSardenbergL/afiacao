@@ -4389,41 +4389,63 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
     return src.slice(i, f);
   })();
 
-  // Única exceção (revisão /sales leva 1, #6/#7): a RESERVA pela versão — UPDATE só de `updated_at`, que
-  // não grava dado do pedido e tem de acontecer ANTES da 1ª mutação no Omie.
-  const RESERVA = '.update({ updated_at: new Date().toISOString() })';
-
   it('a edição NÃO volta a gravar o pedido por .update() do PostgREST', () => {
-    expect(
-      bloco.split(RESERVA).join(''),
-      'alterar_pedido voltou a escrever sales_orders por PostgREST — o cabeçalho iria sem as linhas',
-    ).not.toContain('.update(');
+    // Desde a v1.55 nem a reserva é `.update()`: a versão se move dentro da RPC de despacho (posse durável,
+    // migration 20261127100200), sob FOR UPDATE.
+    expect(bloco, 'alterar_pedido voltou a escrever sales_orders por PostgREST — o cabeçalho iria sem as linhas')
+      .not.toContain('.update(');
     expect(bloco, 'alterar_pedido escrevendo order_items solto: fora da transação do cabeçalho')
       .not.toContain('from("order_items")');
   });
 
-  it('a reserva pela versão vem UMA vez, antes da 1ª mutação no Omie, e exige 1 linha', () => {
-    const iReserva = bloco.indexOf(RESERVA);
-    expect(bloco.split(RESERVA).length - 1, 'reserva ausente ou duplicada').toBe(1);
+  it('a posse é reivindicada UMA vez, antes de ler o PV e de registrar a revisão de crédito', () => {
+    const REIV = 'rpc("pedido_edicao_omie_reivindicar"';
+    expect(bloco.split(REIV).length - 1, 'reivindicação ausente ou duplicada').toBe(1);
+    const iReiv = bloco.indexOf(REIV);
+    for (const depois of ['registrarRevisao(', '"ConsultarPedido"', '.eq("hash_payload", `omie_${editAccount}_']) {
+      const i = bloco.indexOf(depois);
+      expect(i, `${depois} sumiu do bloco`).toBeGreaterThan(-1);
+      expect(iReiv, `a reivindicação tem de vir antes de ${depois}`).toBeLessThan(i);
+    }
+    // A fase vai a "reservada" ANTES da chamada (resposta perdida ainda libera pelo token).
+    expect(bloco.slice(0, iReiv), 'a fase reservada tem de ser marcada antes da reivindicação')
+      .toContain('posseEdicao.fase = "reservada"');
+    expect(bloco.slice(iReiv, iReiv + 800), 'a reivindicação perdeu o veredito estrito').toContain('recusaDaReivindicacao(');
+  });
+
+  it('o despacho vem UMA vez, antes da 1ª mutação no Omie, com o gêmeo lido e a fase despachada', () => {
+    const DESP = 'rpc("pedido_edicao_omie_despachar"';
+    expect(bloco.split(DESP).length - 1, 'despacho ausente ou duplicado').toBe(1);
+    const iDesp = bloco.indexOf(DESP);
     for (const mutacao of ['"AlterarPedidoVenda"', '"ExcluirItemPedido"', '"IncluirItemPedido"']) {
       const iMut = bloco.indexOf(mutacao);
       expect(iMut, `${mutacao} sumiu do bloco`).toBeGreaterThan(-1);
-      expect(iReserva, `a reserva tem de vir antes de ${mutacao}`).toBeLessThan(iMut);
+      expect(iDesp, `o despacho tem de vir antes de ${mutacao}`).toBeLessThan(iMut);
     }
-    const trecho = bloco.slice(iReserva, bloco.indexOf('"AlterarPedidoVenda"'));
-    for (const filtro of ['.eq("updated_at", versaoEdit.valor)', '.is("updated_at", null)', '.is("deleted_at", null)', '.is("hash_payload", null)', '.eq("hash_payload", hashLidoEdit)', '.eq("omie_pedido_id"', '.eq("account"', '.eq("status"', '.length !== 1', 'edicaoReservada = true']) {
-      expect(trecho, `a reserva perdeu ${filtro}`).toContain(filtro);
+    const trecho = bloco.slice(iDesp, bloco.indexOf('"AlterarPedidoVenda"'));
+    for (const peca of ['p_versao: versaoEdit.valor', 'p_gemeo_presente:', 'p_gemeo_status:', 'recusaDoDespacho(', 'posseEdicao.fase = "despachada"', 'edicaoReservada = true']) {
+      expect(trecho, `o despacho perdeu ${peca}`).toContain(peca);
     }
   });
 
-  it('e chama a RPC atômica com as OITO chaves do contrato', () => {
+  it('e chama a RPC atômica com as OITO chaves do contrato + o token, e exige a posse concluída', () => {
     expect(bloco).toContain('rpc("aplicar_edicao_pedido_omie"');
     for (const chave of [
       'p_sales_order_id:', 'p_items:', 'p_itens:', 'p_total:',
-      'p_notes:', 'p_omie_payload:', 'p_omie_response:', 'p_lido_em:',
+      'p_notes:', 'p_omie_payload:', 'p_omie_response:', 'p_lido_em:', 'p_token: posseEdicao.token',
     ]) {
       expect(bloco, `chave ${chave} sumiu do payload da RPC`).toContain(chave);
     }
+    expect(bloco, 'o write-back aceitaria o overload SEM posse').toContain('editWbPosse !== "concluida"');
+  });
+
+  it('toda saída da action encerra a posse (recusa → libera, erro pós-despacho → divergente)', () => {
+    const fim = src.slice(src.indexOf('case "excluir_pedido"'));
+    const iSwitchFim = fim.indexOf('if (vendaLogId && !vendaSyncFinalized)');
+    expect(fim.slice(0, iSwitchFim), 'saída normal sem encerrar a posse').toContain('await encerrarPosseEdicao(');
+    const iCatch = fim.indexOf('console.error("[Omie Vendas] Erro:", error);');
+    expect(iCatch, 'catch da action não encontrado').toBeGreaterThan(-1);
+    expect(fim.slice(iCatch, iCatch + 400), 'catch sem encerrar a posse').toContain('await encerrarPosseEdicao(');
   });
 
   it('os DOIS espelhos carregam desconto/discount — NULL é distinto de 0 na invariante', () => {
@@ -4449,8 +4471,8 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
   });
 
   it('a falha do write-back segue devolvendo ERRO explícito (o Omie já foi mutado)', () => {
-    expect(bloco).toContain('if (editWbErr || editWbEco !== editSoId)');
-    const i = bloco.indexOf('if (editWbErr || editWbEco !== editSoId)');
+    expect(bloco).toContain('if (editWbErr || editWbEco !== editSoId || editWbPosse !== "concluida")');
+    const i = bloco.indexOf('if (editWbErr || editWbEco !== editSoId || editWbPosse !== "concluida")');
     const trecho = bloco.slice(i, i + 500);
     expect(trecho).toContain('throw new Error(');
     // A frase existe para o operador não re-salvar por cima de um Omie já na versão nova.
@@ -5199,7 +5221,7 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
 
   it('sentinela: recortou o criarPedidoVenda, o excluir_pedido e a edição', () => {
     expect(fn).toContain('"IncluirPedido"');
-    expect(exclusao).toContain('.rpc("sales_order_excluir_sem_envio"');
+    expect(exclusao).toContain('.rpc("sales_order_excluir_conferido"');
     expect(exclusao.length).toBeGreaterThan(1500);
     expect(edicao).toContain('existingOrder');
   });
@@ -5234,7 +5256,7 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
 
   it('a exclusão sem PID consulta a chave PV_<id> ANTES do DELETE e recusa quando o PV existe', () => {
     const consulta = exclusao.indexOf('"ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }');
-    const del = exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"');
+    const del = exclusao.indexOf('.rpc("sales_order_excluir_conferido"');
     expect(consulta, 'REGRESSÃO: excluir sem PID voltou a apagar sem consultar o Omie').toBeGreaterThan(-1);
     expect(consulta).toBeLessThan(del);
     const existe = exclusao.indexOf('consulta.tipo === "existe"');
@@ -5247,10 +5269,12 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
   // do envio, e o envio reivindica o pedido (RECUSANDO sem o claim) ANTES do IncluirPedido.
   it('exclusão só apaga pela RPC condicionada; o envio reivindica o pedido antes de criar no Omie', () => {
     expect(exclusao, 'REGRESSÃO: DELETE solto de sales_orders voltou ao excluir_pedido').not.toMatch(/\.delete\(\)/);
-    const rpcDel = exclusao.slice(exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"'));
-    expect(rpcDel, 'envio em curso RECUSA').toMatch(/"envio_em_curso"[\s\S]{0,40}throw new Error\(/);
+    const rpcDel = exclusao.slice(exclusao.indexOf('.rpc("sales_order_excluir_conferido"'));
+    // v1.55: o veredito do desfecho mora em ./edicao-omie.ts `recusaDaExclusao` (testado no Deno, desfecho a
+    // desfecho); aqui, que a edge o aplica e LANÇA, e que a identidade provada chega à RPC.
+    expect(rpcDel, 'desfecho da exclusão sem veredito estrito').toMatch(/recusaDaExclusao\(desfechoDel\)[\s\S]{0,60}throw new Error\(recusaDel\)/);
     expect(rpcDel, 'a intenção de orçamento chega à RPC').toMatch(/p_somente_orcamento: somenteOrcamento/);
-    expect(rpcDel, 'linha que deixou de ser orçamento RECUSA').toMatch(/"nao_e_orcamento"[\s\S]{0,40}throw new Error\(/);
+    expect(rpcDel, 'a identidade provada (conta, PV) chega à RPC').toMatch(/p_account: orderData\.account[\s\S]{0,80}p_omie_pedido_id: orderData\.omie_pedido_id/);
     const criar = removerComentarios(src.slice(src.indexOf('case "criar_pedido": {'), src.indexOf('case "excluir_pedido": {')));
     // v1.53: o claim é o CONFERIDO pelos itens (migration 20261126190127); o antigo fica só para a v1.51.
     const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio_conferido"');
@@ -5349,7 +5373,7 @@ describe('guardrail money-path: excluir pedido não finge cancelar no Omie', () 
   const exclusao = removerComentarios(src.slice(ex, src.indexOf('case "sync_pedidos": {', ex)));
 
   it('sentinela: recortou o excluir_pedido', () => {
-    expect(exclusao).toContain('.rpc("sales_order_excluir_sem_envio"');
+    expect(exclusao).toContain('.rpc("sales_order_excluir_conferido"');
   });
 
   it('nenhuma chamada de cancelamento/exclusão no Omie dentro do excluir_pedido', () => {
@@ -5360,7 +5384,7 @@ describe('guardrail money-path: excluir pedido não finge cancelar no Omie', () 
   it('pedido com PID só sai com o veredito (canônica cancelada; importado nunca), ANTES do DELETE', () => {
     const v = exclusao.indexOf('vereditoExclusaoNoOmie(');
     expect(v).toBeGreaterThan(-1);
-    expect(v).toBeLessThan(exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"'));
+    expect(v).toBeLessThan(exclusao.indexOf('.rpc("sales_order_excluir_conferido"'));
     expect(exclusao).toMatch(/if \(!veredito\.permitido\) throw new Error\(/);
   });
 
