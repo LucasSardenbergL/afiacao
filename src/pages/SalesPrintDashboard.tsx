@@ -208,7 +208,7 @@ const SalesPrintDashboard = () => {
   // pedido/OS impresso, nunca o cliente solto (onda D). Nome segue de `profiles` (identidade).
   const salesIdsImpressao = useMemo(() => salesOrders.map((o) => o.id), [salesOrders]);
   const osIdsImpressao = useMemo(() => afiacaoOrders.map((o) => o.id), [afiacaoOrders]);
-  const { data: contatoPorCliente, isError: contatoFalhou, refetch: recarregarContato } = useQuery({
+  const { data: contatoPorCliente, isError: contatoFalhou, isPending: contatoPendente, refetch: recarregarContato } = useQuery({
     queryKey: ['sales-print-contato', salesIdsImpressao, osIdsImpressao],
     queryFn: async () => {
       const [pedidos, oss] = await Promise.all([
@@ -222,7 +222,7 @@ const SalesPrintDashboard = () => {
     enabled: salesIdsImpressao.length + osIdsImpressao.length > 0,
   });
 
-  const { data: nomes = [], isError: nomesFalharam, refetch: recarregarNomes } = useQuery({
+  const { data: nomes = [], isError: nomesFalharam, isPending: nomesPendentes, refetch: recarregarNomes } = useQuery({
     queryKey: ['sales-print-profiles', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
@@ -477,9 +477,17 @@ const SalesPrintDashboard = () => {
 
   // L2-d: sem o nome (profiles) ou o contato (documento/endereço) a via sairia com "Cliente" e sem endereço —
   // a impressão espera a leitura, em vez de imprimir o que não leu.
+  // Enquanto a leitura ainda corre (1ª carga ou as novas tentativas do react-query) também espera — `isError` só
+  // acende quando as tentativas acabam, e até lá a via sairia com "Cliente" (revisão Caminho B, P3-1).
+  // `isPending` de query DESLIGADA (sem ids) é true para sempre: só conta com a query habilitada.
+  const lendoNomeOuContato =
+    (customerIds.length > 0 && nomesPendentes)
+    || (salesIdsImpressao.length + osIdsImpressao.length > 0 && contatoPendente);
   const bloqueioImpressao = nomesFalharam || contatoFalhou
     ? 'Não consegui ler o nome ou o contato dos clientes — a folha sairia sem esses dados. Tente de novo antes de imprimir.'
-    : null;
+    : lendoNomeOuContato
+      ? 'Ainda estou lendo o nome e o contato dos clientes. Aguarde um instante para imprimir.'
+      : null;
 
   const printSelected = () => {
     if (bloqueioImpressao) { toast.error(bloqueioImpressao); return; }

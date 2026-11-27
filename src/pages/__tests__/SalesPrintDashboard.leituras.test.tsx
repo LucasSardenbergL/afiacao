@@ -155,6 +155,37 @@ describe('SalesPrintDashboard — L2-d: a leitura que falha aparece', () => {
   });
 });
 
+describe('SalesPrintDashboard — P3-1: impressão espera a leitura do nome', () => {
+  it('nomes ainda lendo → a via NÃO sai com "Cliente"; quando chegam, imprime com o nome', async () => {
+    cenario([pedido('p1', 'oben', '1001', 'c1')]);
+    let liberar: () => void = () => {};
+    const nomes = h.estado.respostas.profiles;
+    const segura = new Promise<void>((r) => { liberar = r; });
+    // Builder de `profiles` só resolve quando o teste libera.
+    const original = h.builder;
+    h.builder = ((t: string) => {
+      const b = original(t) as Record<string, unknown>;
+      if (t === 'profiles') {
+        b.then = (ok: (r: unknown) => unknown, ko: (e: unknown) => unknown) => segura.then(() => nomes).then(ok, ko);
+      }
+      return b;
+    }) as typeof h.builder;
+    try {
+      renderizar();
+      await screen.findByText('#1001');
+      imprimirUm('1001');
+      expect(openPrintOrder).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+      liberar();
+      await screen.findByText('Nome c1');
+      imprimirUm('1001');
+      expect(JSON.stringify(vi.mocked(openPrintOrder).mock.calls.at(-1)?.[0])).toContain('Nome c1');
+    } finally {
+      h.builder = original;
+    }
+  });
+});
+
 describe('SalesPrintDashboard — L2-d: endereço do Omie', () => {
   function semEnderecoLocal() {
     cenario([pedido('p1', 'oben', '1001', 'c1')]);
