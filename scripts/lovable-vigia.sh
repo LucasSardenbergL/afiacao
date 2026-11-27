@@ -14,8 +14,13 @@
 #      `bash scripts/lovable-publish.sh --liberar <sha40>` — vale para descendentes sem migration nova;
 #   3. veredito PUBLICAR → `claude -p` (Haiku) com SÓ get_project+deploy_project, token de 1 ano
 #      no Keychain (`claude-vigia-lovable`);
+#      Store PRÓPRIO obrigatório; INTENÇÃO gravada antes da chamada (stream inconclusivo → o ar
+#      reconcilia antes de qualquer novo disparo); CONTROLE determinístico do stream (1 deploy, projeto
+#      e slug certos, get_project = main lido antes) — fora do roteiro = VIOLACAO, desiste do SHA;
 #   4. PROVA pelo ar: o carimbo `__BUILD_SHA__` servido tem de virar a main. Sem isso é falha:
-#      backoff 5/15/60 min no MESMO SHA e, na 3ª, aviso + Issue — nunca re-dispara em loop.
+#      backoff 5/15/60 min (do FIM da falha) no MESMO SHA e, na 3ª, aviso + Issue — nunca re-dispara
+#      em loop. O ar mudou para outro SHA → alvo / descendente limpo / com camada (aviso) / DIVERGENTE
+#      (alerta persistente em $EST/alerta-divergente). Lock = PID do tick vivo.
 #
 # Estado/log: $EST (~/.local/state/afiacao/lovable-vigia). Pausar: `touch $EST/pausado`.
 # Instalação: scripts/lovable-vigia-instalar.sh. LV_RAMO=<ramo> = julga outro ramo (teste). LV_SECO=1 = julga e decide, mas não chama o claude. LV_CLAUDE=<binário> = claude falso (ensaio). LV_CLAUDE_DIR = store próprio do claude.
@@ -50,16 +55,33 @@ avisa_uma_vez() {
 # dono morreu (kill -0 falha ou o PID foi reciclado por algo que não é o vigia) — nunca pela idade, que
 # roubava o lock de um tick vivo esperando o ar. Sem pid: tick nascendo (ou lock do formato antigo) —
 # só vence com >20 min. A troca é rename atômico: dois ticks não removem o lock um do outro.
+# Dono = o COMANDO é `bash …/<este script>` (Codex PR3 #7: casar só "vigia" deixava um `tail -f vigia.log`
+# com o PID reciclado travar todo tick). A tomada é serializada por `lock.tomada` e re-confere o PID dentro
+# dela (Codex PR3 #2: dois ticks que leram o mesmo PID morto renomeavam um o lock NOVO do outro).
 toma_lock() { mkdir "$EST/lock" 2>/dev/null && echo $$ > "$EST/lock/pid"; }
+EU_NOME="${BASH_SOURCE[0]##*/}"
+dono_vivo() {
+  kill -0 "$1" 2>/dev/null || return 1
+  ps -p "$1" -o command= 2>/dev/null | grep -qE "^([^ ]*/)?bash( [^ ]+)* ([^ ]*/)?${EU_NOME//./\\.}( |$)"
+}
 if ! toma_lock; then
   DONO=$(cat "$EST/lock/pid" 2>/dev/null)
   if [ -n "$DONO" ]; then
-    kill -0 "$DONO" 2>/dev/null && ps -p "$DONO" -o command= 2>/dev/null | grep -q vigia && exit 0
+    if dono_vivo "$DONO"; then
+      # vivo há mais de 60 min = tick preso (a espera do ar + 2 chamadas cabem em ~20 min): avisa 1x, não rouba
+      [ -n "$(find "$EST/lock" -maxdepth 0 -mmin +60 2>/dev/null)" ] && avisa_uma_vez "lock-preso-$DONO" "tick do vigia (PID $DONO) preso há >60 min segurando o lock"
+      exit 0
+    fi
   else
     [ -n "$(find "$EST/lock" -maxdepth 0 -mmin +20 2>/dev/null)" ] || exit 0
   fi
-  mv "$EST/lock" "$EST/lock.morto.$$" 2>/dev/null && rm -rf "$EST/lock.morto.$$"
-  toma_lock || exit 0; log "lock de processo morto (${DONO:-sem pid}) removido"
+  [ -n "$(find "$EST/lock.tomada" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rm -rf "$EST/lock.tomada"
+  mkdir "$EST/lock.tomada" 2>/dev/null || exit 0
+  if [ "$(cat "$EST/lock/pid" 2>/dev/null)" = "$DONO" ] && mv "$EST/lock" "$EST/lock.morto.$$" 2>/dev/null; then
+    rm -rf "$EST/lock.morto.$$"
+  fi
+  toma_lock || { rmdir "$EST/lock.tomada"; exit 0; }
+  rmdir "$EST/lock.tomada"; log "lock de processo morto (${DONO:-sem pid}) removido"
 fi
 trap '[ "$(cat "$EST/lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$EST/lock"' EXIT
 
@@ -82,6 +104,17 @@ fi
 # main sem o --decidir (vigia mais novo que o lovable-publish.sh do clone) → espera calado, sem aviso
 grep -q -- '--decidir' "$WT/scripts/lovable-publish.sh" 2>/dev/null || { log "main sem lovable-publish.sh --decidir — aguardando"; exit 0; }
 
+# Issue de desistência: se o `gh` falhar (rede/auth), fica PENDENTE e cada tick re-tenta (Codex PR3 #10)
+abre_issue() {  # [tick] — no início do tick, no máx. 1 tentativa a cada 15 min
+  [ -f "$EST/issue-pendente" ] || return 0
+  [ "${1:-}" = tick ] && [ -n "$(find "$EST/issue-tentada" -mmin -15 2>/dev/null)" ] && return 0
+  touch "$EST/issue-tentada"
+  if (cd "$WT" && gh issue create --title "$(cat "$EST/issue-pendente")" --body-file "$EST/issue-corpo") >>"$LOG" 2>&1; then
+    log "Issue aberta: $(cat "$EST/issue-pendente")"; rm -f "$EST/issue-pendente" "$EST/issue-corpo"
+  else
+    log "Issue NÃO abriu (gh falhou) — fica pendente: $(cat "$EST/issue-pendente")"
+  fi
+}
 # grava <arquivo> <conteúdo> — atômico (tmp + mv): um tick morto no meio nunca deixa meia linha
 grava() { printf '%s\n' "$2" > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
 julgar() { (cd "$WT" && LP_LIBERAR_SHA='' bash scripts/lovable-publish.sh --julgar "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
@@ -112,6 +145,7 @@ fim_episodio() {
   rm -f "$EST/retido-episodio" "$EST/retido-chave"
 }
 
+abre_issue tick
 decidir
 VER=$(veredito)
 # o --decidir só LÊ caches; quem os renova é este tick, e decide de novo (recibos → ledger)
@@ -153,11 +187,37 @@ LIBERADO=$(linha LIBERADO)
 # 2º deploy às cegas.
 INTENCAO_S=${LV_INTENCAO_S:-1200}
 campo() { tr ' ' '\n' 2>/dev/null < "$2" | sed -n "s/^$1=//p" | head -1; }
+# classifica <ar8> <alvo40> — o SHA que entrou no ar contra o alvo de um deploy (Codex PR2 #9/PR3 #5): alvo ·
+# descendente limpo · descendente COM camada (aviso por SHA) · DIVERGENTE (alerta persistente + aviso por
+# episódio). Usada na prova pelo ar E quando uma intenção pendente se resolve num tick posterior.
+classifica() {
+  local a cam; a=$(git -C "$WT" rev-parse -q --verify "$1^{commit}" 2>/dev/null)
+  [ -n "$a" ] || { git -C "$WT" fetch -q origin 2>>"$LOG"; a=$(git -C "$WT" rev-parse -q --verify "$1^{commit}" 2>/dev/null); }
+  if [ "$a" = "$2" ]; then
+    CLASSE=alvo
+  elif [ -n "$a" ] && git -C "$WT" merge-base --is-ancestor "$2" "$a" 2>/dev/null; then
+    cam=$(git -C "$WT" diff --name-only "$2" "$a" -- supabase/migrations supabase/functions 2>/dev/null | head -3 | paste -sd, -)
+    if [ -z "$cam" ]; then
+      CLASSE=adiante; log "PUBLICADO_ADIANTE ar=$1 descende de ${2:0:8} sem camada no meio — o próximo tick re-julga"
+    else
+      CLASSE=camada; log "ar=$1 descende de ${2:0:8} COM camada no meio ($cam) — o próximo tick re-julga"
+      avisa_uma_vez "camada-$a" "o ar foi a $1 (adiante da main) com camada de banco/edge no meio: $cam — conferir a ordem DDL → edge → Publish"
+    fi
+  else
+    CLASSE=divergente; log "AR DIVERGENTE ar=$1 não descende de ${2:0:8} após o deploy"
+    if [ "$(campo ar "$EST/alerta-divergente")" != "$1" ]; then
+      grava "$EST/alerta-divergente" "ar=$1 main=$2 hora=$(date +%s)"
+      avisa "o ar foi a $1, que NÃO descende da main ${2:0:8} — conferir o Lovable (alerta em $EST/alerta-divergente)"
+    fi
+  fi
+}
 INT_PENDENTE=0
 if [ -f "$EST/intencao" ]; then
-  I_AR=$(campo ar "$EST/intencao"); I_HORA=$(campo hora "$EST/intencao")
+  I_AR=$(campo ar "$EST/intencao"); I_HORA=$(campo hora "$EST/intencao"); I_SHA=$(campo sha "$EST/intencao")
   if [ -n "$(ar_curto)" ] && [ "$(ar_curto)" != "$I_AR" ]; then
-    log "intenção resolvida pelo ar: $(cat "$EST/intencao") → ar=$(ar_curto)"; rm -f "$EST/intencao"
+    log "intenção resolvida pelo ar: $(cat "$EST/intencao") → ar=$(ar_curto)"
+    case "$I_SHA" in [0-9a-f]*) [ ${#I_SHA} = 40 ] && classifica "$(ar_curto)" "$I_SHA" ;; esac
+    rm -f "$EST/intencao"
   elif [ $(( $(date +%s) - ${I_HORA:-0} )) -ge "$INTENCAO_S" ]; then
     log "intenção expirou sem efeito no ar após ${INTENCAO_S}s: $(cat "$EST/intencao")"; rm -f "$EST/intencao"
   else
@@ -200,8 +260,9 @@ falhou() {
   log "FALHOU ($N/3) ${HEAD_SHA:0:8}: $1"
   if [ "$N" -ge 3 ]; then
     avisa "Publish de ${HEAD_SHA:0:8} falhou 3x — clique Publish no Lovable. Último: $1"
-    (cd "$WT" && gh issue create --title "Vigia Lovable: Publish de ${HEAD_SHA:0:8} falhou 3x" \
-      --body "O vigia local (scripts/lovable-vigia.sh) desistiu deste SHA. Último erro: $1. Log: $LOG" >>"$LOG" 2>&1) || true
+    grava "$EST/issue-pendente" "Vigia Lovable: Publish de ${HEAD_SHA:0:8} falhou 3x"
+    printf 'O vigia local (scripts/lovable-vigia.sh) desistiu deste SHA. Último erro: %s. Log: %s\n' "$1" "$LOG" > "$EST/issue-corpo"
+    abre_issue
   fi
 }
 
@@ -249,9 +310,10 @@ EU_USER=$(id -un)
 # needs-auth só dele — 1 escritor (o lock acima). Ativação única: scripts/lovable-vigia-instalar.sh --login.
 CFG_ENV=(CLAUDE_CONFIG_DIR="$CFG_DIR")
 # resultado_de <ferramenta> → texto dos tool_result SEM erro daquela ferramenta (casados por tool_use_id)
+# — só de chamadas com input.project_id = PROJETO (Codex PR3 #8: ler OUTRO projeto virava NAO_SINCRONIZADO eterno)
 resultado_de() {
-  jq -rs --arg n "mcp__lovable__$1" '
-    [.[] | select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name==$n) | .id] as $ids
+  jq -rs --arg n "mcp__lovable__$1" --arg p "$PROJETO" '
+    [.[] | select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name==$n and (.input.project_id // "")==$p) | .id] as $ids
     | .[] | select(.type=="user") | .message.content[]?
     | select(.type=="tool_result" and (.is_error != true) and ((.tool_use_id as $i | $ids | index($i)) != null))
     | if (.content|type)=="string" then .content else ([.content[]? | select(.type=="text") | .text] | join("")) end
@@ -279,14 +341,16 @@ controle() {
         | ($r | map(select((.tool_use_id as $i | $g | index($i)) != null and .is_error != true and .pos < $d[0].pos) | txt)) as $t
         | if ($g|length)==0 then "VIOLACAO deploy_project sem get_project do projeto antes"
           elif ($t|length)==0 then "VIOLACAO deploy_project sem resultado do get_project antes"
-          elif ($t[-1] | test("\"latest_commit_sha\" *: *\"" + $h + "\"")) then "OK"
+          elif (($t[-1] | sub("^[^{]*"; "") | fromjson? | .latest_commit_sha) // "") == $h then "OK"
           else "VIOLACAO deploy_project com latest_commit_sha do get_project ≠ main" end
       end
   ' "$EST/claude.jsonl" 2>/dev/null || echo "VIOLACAO stream ilegível"
 }
 # intenção gravada ATOMICAMENTE antes de qualquer chamada que pode publicar; o deployment_id é anexado
 # quando lido do tool_result. Sobrevive a timeout/tick morto: o próximo tick reconcilia pelo ar.
-grava "$EST/intencao" "sha=$HEAD_SHA hora=$(date +%s) tentativa=$((N + 1)) ar=$AR_ANTES"
+grava "$EST/intencao" "sha=$HEAD_SHA hora=$(date +%s) tentativa=$((N + 1)) ar=$AR_ANTES" && [ -s "$EST/intencao" ] \
+  || { avisa_uma_vez "intencao-$(date +%F)" "não consegui gravar $EST/intencao — não disparo sem intenção"; exit 0; }
+LIDO=0
 for TENT in 1 2; do
   (cd "$EST" && printf '%s' "$PROMPT" | USER="$EU_USER" LOGNAME="$EU_USER" CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" \
     ENABLE_TOOL_SEARCH=false MCP_TIMEOUT=60000 timeout 300 env -u ANTHROPIC_BASE_URL "${CFG_ENV[@]}" \
@@ -297,12 +361,17 @@ for TENT in 1 2; do
   MCP_ST=$(jq -r 'select(.type=="system" and .subtype=="init") | (.mcp_servers[]? | select(.name=="lovable") | .status)' "$EST/claude.jsonl" 2>/dev/null | head -1)
   USOS=$(jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .name' "$EST/claude.jsonl" 2>/dev/null | sed 's/^mcp__lovable__//' | paste -sd, -)
   TXT=$(jq -r 'select(.type=="result") | .result // empty' "$EST/claude.jsonl" 2>/dev/null | grep -oE 'VIGIA=[A-Z_]+.*' | head -1)
-  SHA_LOV=$(resultado_de get_project | grep -oE '"latest_commit_sha" *: *"[0-9a-f]{40}"' | head -1 | grep -oE '[0-9a-f]{40}')
+  SHA_LOV=$(resultado_de get_project | jq -Rr 'sub("^[^{]*"; "") | fromjson? | .latest_commit_sha // empty | select(test("^[0-9a-f]{40}$"))' 2>/dev/null | head -1)
   DEP_ID=$(resultado_de deploy_project | grep -oE '"deployment_id" *: *"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
   CTRL=$(controle)
+  # stream COMPLETO = tem o evento `result`. Truncado (timeout, morte) sem deploy visível NÃO prova que não
+  # houve deploy (Codex PR3 #1): o tool_use pode ter ido ao Lovable sem chegar ao arquivo.
+  COMPLETO=0; jq -e 'select(.type=="result")' "$EST/claude.jsonl" >/dev/null 2>&1 && COMPLETO=1
+  [ -n "$SHA_LOV" ] && LIDO=1
+  if [ "$CTRL" = SEM_DEPLOY ] && [ "$COMPLETO" = 0 ] && [ -z "$DEP_ID" ]; then CTRL=TRUNCADO; fi
   if case "$CTRL" in VIOLACAO*) true ;; *) false ;; esac; then RES="$CTRL"
   elif [ -n "$DEP_ID" ]; then RES="DISPARADO $DEP_ID"
-  elif [ "$CTRL" = OK ]; then RES="INDETERMINADO"   # deploy no roteiro, sem aceite lido
+  elif [ "$CTRL" = OK ] || [ "$CTRL" = TRUNCADO ]; then RES="INDETERMINADO"   # deploy no roteiro sem aceite lido, ou stream truncado
   elif [ -n "$SHA_LOV" ] && [ "$SHA_LOV" != "$HEAD_SHA" ]; then RES="NAO_SINCRONIZADO ${SHA_LOV:0:8}"
   elif [ "$MCP_ST" = needs-auth ]; then RES="NEEDS_AUTH"
   else RES="ERRO"
@@ -314,8 +383,8 @@ for TENT in 1 2; do
 done
 unset TOKEN
 # needs-auth é por EPISÓDIO: acaba na 1ª leitura bem-sucedida do projeto, qualquer que seja o SHA lido
-[ -n "$SHA_LOV" ] && rm -f "$EST/needs-auth"
-# sem deploy_project no stream = prova de que nada foi escrito: a intenção se resolve aqui mesmo
+[ "$LIDO" = 1 ] && rm -f "$EST/needs-auth"   # (de QUALQUER das 2 chamadas — Codex PR3 #9)
+# stream COMPLETO sem deploy_project = prova de que nada foi escrito: a intenção se resolve aqui mesmo
 [ "$CTRL" = SEM_DEPLOY ] && rm -f "$EST/intencao"
 [ -n "$DEP_ID" ] && [ -f "$EST/intencao" ] && grava "$EST/intencao" "$(cat "$EST/intencao") dep=$DEP_ID"
 
@@ -342,6 +411,8 @@ while [ $(( $(date +%s) - INI_AR )) -lt "$ESPERA_AR" ]; do
   sleep "$PASSO"
   julgar
   AR_AGORA=$(ar_curto)
+  # carimbo que o clone não conhece (merge entrou depois do fetch — Codex PR3 #6): o curto cru vale como ar
+  [ -n "$AR_AGORA" ] || AR_AGORA=$(sed -n 's/^CARIMBO_NAO_RESOLVE: *\([0-9a-f]\{7,40\}\).*/\1/p' "$EST/julgar.txt" | head -1)
   [ -n "$AR_AGORA" ] && [ "$AR_AGORA" != "$AR_ANTES" ] && break
 done
 t=$(( $(date +%s) - INI_AR ))
@@ -353,22 +424,6 @@ if [ -z "$AR_AGORA" ] || [ "$AR_AGORA" = "$AR_ANTES" ]; then
 fi
 # ── o ar MUDOU, mas não para a main: reconciliar o SHA que entrou (PR 3, Codex #9) ─────────────────────
 rm -f "$EST/tentativa" "$EST/intencao"
-AR_INT=$(git -C "$WT" rev-parse -q --verify "$AR_AGORA^{commit}" 2>/dev/null)
-if [ "$AR_INT" = "$HEAD_SHA" ]; then
-  log "PUBLICADO ${HEAD_SHA:0:8} — ar=$AR_AGORA é o alvo (veredito $(veredito)) em ${t}s"
-elif [ -n "$AR_INT" ] && git -C "$WT" merge-base --is-ancestor "$HEAD_SHA" "$AR_INT" 2>/dev/null; then
-  CAM=$(git -C "$WT" diff --name-only "$HEAD_SHA" "$AR_INT" -- supabase/migrations supabase/functions 2>/dev/null | head -3 | paste -sd, -)
-  if [ -z "$CAM" ]; then
-    log "PUBLICADO_ADIANTE ar=$AR_AGORA descende de ${HEAD_SHA:0:8} sem camada no meio — o próximo tick re-julga"
-  else
-    log "ar=$AR_AGORA descende de ${HEAD_SHA:0:8} COM camada no meio ($CAM) — o próximo tick re-julga"
-    avisa_uma_vez "camada-$AR_INT" "o ar foi a ${AR_AGORA} (adiante da main) com camada de banco/edge no meio: $CAM — conferir a ordem DDL → edge → Publish"
-  fi
-else
-  # divergente: o ar não é a main nem descendente dela — alerta PERSISTENTE (arquivo; aviso por episódio)
-  log "AR DIVERGENTE ar=$AR_AGORA não descende de ${HEAD_SHA:0:8} após o deploy"
-  if [ "$(campo ar "$EST/alerta-divergente")" != "$AR_AGORA" ]; then
-    grava "$EST/alerta-divergente" "ar=$AR_AGORA main=$HEAD_SHA hora=$(date +%s)"
-    avisa "o ar foi a $AR_AGORA, que NÃO descende da main ${HEAD_SHA:0:8} — conferir o Lovable (alerta em $EST/alerta-divergente)"
-  fi
-fi
+classifica "$AR_AGORA" "$HEAD_SHA"
+[ "$CLASSE" = alvo ] && log "PUBLICADO ${HEAD_SHA:0:8} — ar=$AR_AGORA é o alvo (veredito $(veredito)) em ${t}s"
+exit 0

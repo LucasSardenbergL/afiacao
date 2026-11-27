@@ -20,7 +20,8 @@ nok()  { printf 'FALHA %s\n' "$1"; FALHAS=$((FALHAS + 1)); }
 mkdir -p "$TMP/bin"
 printf '#!/bin/sh\necho token-falso\n' > "$TMP/bin/security"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/osascript"
-printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/gh"
+# shellcheck disable=SC2016  # $LVT expande quando o gh FALSO roda
+printf '#!/bin/sh\necho "$*" >> "$LVT/gh"\n[ -f "$LVT/gh-falha" ] && exit 1\nexit 0\n' > "$TMP/bin/gh"
 # shellcheck disable=SC2016  # o $* e o $LVT são do bun FALSO, expandem quando ele roda
 printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\n[ -f "$LVT/bun_anda" ] && git -C "$LVT/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m anda\nexit 0\n' > "$TMP/bin/bun"
 # claude falso: conta chamadas, emite $CENARIO.jsonl; "deploy" real = cria $TMP/ar-novo
@@ -31,8 +32,10 @@ echo x >> "$LVT/chamadas"
 printf '%s\n' "$*" > "$LVT/args"
 printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$LVT/cfgdir"
 cp intencao "$LVT/intencao-visto" 2>/dev/null || : > "$LVT/intencao-visto"   # cwd = $EST
-sed "s/@HEAD@/$(cat "$LVT/head")/g" "$LVT/stream-$LVT_CENARIO.jsonl"
-case "$LVT_CENARIO" in fabricado|divergente|needs_auth|sem_ar) ;; *) touch "$LVT/ar-novo" ;; esac
+n=$(wc -l < "$LVT/chamadas" | tr -d ' '); f="$LVT/stream-$LVT_CENARIO.jsonl"; [ -f "$LVT/stream-$LVT_CENARIO-$n.jsonl" ] && f="$LVT/stream-$LVT_CENARIO-$n.jsonl"
+sed "s/@HEAD@/$(cat "$LVT/head")/g" "$f"
+case "$LVT_CENARIO" in fabricado|divergente|needs_auth|sem_ar|gp_outro|le_e_cai) ;; *) touch "$LVT/ar-novo" ;; esac
+[ "$LVT_CENARIO" = truncado ] && exit 124
 [ "$LVT_CENARIO" = timeout_pos_deploy ] && exit 124
 exit 0
 EOF
@@ -60,6 +63,18 @@ DEPR='{\"status\":\"pending\",\"deployment_id\":\"dep-9\"}'
 { init connected; uso t2 deploy_project; res t2 "$DEPR"; } > "$TMP/stream-viol_sem_gp.jsonl"
 { init connected; uso t1 get_project; res t1 "$(gp "$OUTRO")"; uso t2 deploy_project; res t2 "$DEPR"; } > "$TMP/stream-viol_sha.jsonl"
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project; res t2 "$DEPR"; uso t3 deploy_project; res t3 "$DEPR"; } > "$TMP/stream-viol_2x.jsonl"
+# Codex PR3 #4: a main só num objeto ANINHADO; o latest_commit_sha da raiz é outro
+{ init connected; uso t1 get_project; res t1 "{\\\"latest_commit_sha\\\":\\\"$OUTRO\\\",\\\"x\\\":{\\\"latest_commit_sha\\\":\\\"@HEAD@\\\"}}"; uso t2 deploy_project; res t2 "$DEPR"; } > "$TMP/stream-viol_campo.jsonl"
+# formato REAL do texto (claude 2.1.x): "[Image: source: …]" colado antes do JSON
+{ init connected; uso t1 get_project; res t1 "[Image: source: /x/blob.png]$(gp @HEAD@)"; uso t2 deploy_project; res t2 "$DEPR"; fim "VIGIA=DISPARADO dep-9"; } > "$TMP/stream-prefixo.jsonl"
+# Codex PR3 #1: stream truncado (timeout) sem deploy visível e sem `result`
+{ init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; } > "$TMP/stream-truncado.jsonl"
+# Codex PR3 #8: get_project de OUTRO projeto não vale como leitura
+{ init connected; uso t1 get_project '{"project_id":"x"}'; res t1 "$(gp "$OUTRO")"; fim "VIGIA=NAO_SINCRONIZADO"; } > "$TMP/stream-gp_outro.jsonl"
+# Codex PR3 #9: 1ª chamada lê a main e cai sem deploy; a 2ª volta em needs-auth
+{ init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; fim "VIGIA=ERRO x"; } > "$TMP/stream-le_e_cai-1.jsonl"
+cp "$TMP/stream-needs_auth.jsonl" "$TMP/stream-le_e_cai-2.jsonl"; cp "$TMP/stream-needs_auth.jsonl" "$TMP/stream-le_e_cai.jsonl"
+for c in issue tardia; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
 { init connected; fim "VIGIA=DISPARADO inventado"; } > "$TMP/stream-fabricado.jsonl"
 { init connected; uso t1 get_project; res t1 "$(gp "$OUTRO")"; fim "VIGIA=DISPARADO x"; } > "$TMP/stream-divergente.jsonl"
 { init needs-auth; fim "VIGIA=ERRO ferramentas_mcp_nao_disponiveis"; } > "$TMP/stream-needs_auth.jsonl"
@@ -195,15 +210,31 @@ avisos() { grep -c 'AVISO: ' "$LOGV"; }
 r_store && ok "sem store próprio → PARA sem chamar o claude, 1 aviso por episódio, fim ao voltar" || nok "store obrigatório"
 
 # controle determinístico: deploy aceito mas fora do roteiro → VIOLACAO, sem PUBLICADO, desiste do SHA
-for c in viol_nome viol_projeto viol_ordem viol_sem_gp viol_sha viol_2x; do
+for c in viol_nome viol_projeto viol_ordem viol_sem_gp viol_sha viol_2x viol_campo; do
   roda "$c"
   { [ "$CHAMADAS" = 1 ] && tem "→ VIOLACAO" && ! tem "PUBLICADO" && tem "FALHOU (3/3)" && tem "AVISO: claude -p saiu do roteiro" \
     && [ -f "$TMP/est-$c/intencao" ]; } \
     && ok "controle: $c → VIOLACAO ($(sed -n 's/.*→ VIOLACAO \(.*\) (modelo.*/\1/p' "$LOGV" | head -1))" || nok "$c: $(tail -2 "$LOGV")"
 done
+# shellcheck disable=SC2329  # chamada via falsifica "$3"
 r_controle() { roda viol_nome; tem "→ VIOLACAO" && ! tem "PUBLICADO"; }
+roda prefixo; tem "→ DISPARADO dep-9" && tem "PUBLICADO" && ok "texto real com prefixo [Image: …] → controle OK, PUBLICADO" || nok "prefixo: $(tail -2 "$LOGV")"
+r_truncado() { roda truncado; [ "$CHAMADAS" = 1 ] && tem "rc=124" && tem "→ INDETERMINADO" && ! tem "intenção" ; }
+r_truncado && ok "stream truncado sem deploy visível → INDETERMINADO, SEM 2ª chamada" || nok "truncado: chamadas=$CHAMADAS $(tail -2 "$LOGV")"
+roda gp_outro
+{ [ "$CHAMADAS" = 2 ] && tem "→ ERRO" && ! tem "NAO_SINCRONIZADO" && tem "FALHOU (1/3)"; } \
+  && ok "get_project de outro projeto não vale como leitura (ERRO, não NAO_SINCRONIZADO eterno)" || nok "gp_outro: chamadas=$CHAMADAS $(tail -2 "$LOGV")"
+r_le_e_cai() { local e="$TMP/est-le_e_cai"; rm -rf "$e"; mkdir -p "$e"; date +%s > "$e/needs-auth"
+  LVT_MANTEM=1 roda le_e_cai; [ "$CHAMADAS" = 2 ] && tem "→ NEEDS_AUTH" && tem "AVISO: MCP lovable em needs-auth"; }
+r_le_e_cai && ok "leitura OK na 1ª chamada encerra o episódio needs-auth mesmo se a 2ª cair nele (novo aviso)" || nok "le_e_cai: $(tail -2 "$LOGV")"
+# Issue de desistência: gh falhou → fica pendente; o tick seguinte re-tenta e abre
+r_issue() { local e="$TMP/est-issue"; rm -f "$TMP/gh"; touch "$TMP/gh-falha"; roda viol_nome; cp -R "$TMP/est-viol_nome/." "$e/" 2>/dev/null || { mkdir -p "$e"; cp -R "$TMP/est-viol_nome/." "$e/"; }
+  rm -f "$TMP/gh-falha"; [ -f "$e/issue-pendente" ] && tem "Issue NÃO abriu" || return 1
+  rm -f "$e/issue-tentada" "$e/vigia.log"; LVT_MANTEM=1 roda issue; tem "Issue aberta" && [ ! -f "$e/issue-pendente" ] && [ "$(grep -c 'issue create' "$TMP/gh")" = 2 ]; }
+r_issue && ok "Issue que não abriu fica pendente e o tick seguinte a abre" || nok "issue: $(tail -2 "$LOGV") | gh=$(cat "$TMP/gh" 2>&1 | head -c 200)"
 
 # intenção: disparado sem o ar mudar → fica com o deployment_id; bloqueia redisparo até o ar mudar ou vencer
+# shellcheck disable=SC2329  # chamada via falsifica "$3"
 r_backoff() { LVT_ESPERA=4 roda sem_ar; FIM=$(date +%s); PROX=$(cut -d' ' -f3 "$TMP/est-sem_ar/tentativa"); [ "$PROX" -ge $((FIM + 299)) ]; }
 LVT_ESPERA=4 roda sem_ar; FIM=$(date +%s)
 { tem "→ DISPARADO dep-123" && tem "FALHOU (1/3)" && grep -q ' dep=dep-123$' "$TMP/est-sem_ar/intencao"; } \
@@ -222,6 +253,10 @@ LVT_MANTEM=1 roda intencao
 echo "sha=x hora=$(date +%s) tentativa=1 ar=bbbbbbbb" > "$TMP/est-intencao/intencao"
 LVT_MANTEM=1 roda intencao
 { tem "intenção resolvida pelo ar" && [ "$CHAMADAS" = 1 ]; } && ok "intenção resolvida pelo ar (ar ≠ ar da intenção) → segue" || nok "resolvida: $(tail -2 "$LOGV")"
+e="$TMP/est-tardia"; rm -rf "$e"; mkdir -p "$e"; echo "sha=$(cat "$TMP/head") hora=$(date +%s) tentativa=1 ar=aaaaaaaa" > "$e/intencao"
+echo deadbeef > "$TMP/ar-fixo"; LVT_MANTEM=1 roda tardia; rm -f "$TMP/ar-fixo"
+{ tem "intenção resolvida pelo ar" && tem "AR DIVERGENTE ar=deadbeef" && [ -f "$e/alerta-divergente" ] && [ ! -f "$e/intencao" ]; } \
+  && ok "intenção resolvida num tick POSTERIOR por ar divergente → alerta persistente" || nok "tardia: $(tail -2 "$LOGV")"
 roda fabricado; [ ! -f "$TMP/est-fabricado/intencao" ] && ok "stream sem deploy_project → intenção resolvida (nada escrito)" || nok "fabricado deixou intenção"
 
 # reconciliação do SHA que entrou no ar: descendente limpo / com camada / divergente (alerta persistente)
@@ -248,10 +283,10 @@ rm -f "$TMP/ar-fixo"; LVT_MANTEM=1 roda ar_divergente
 { tem "fim do alerta de ar divergente" && [ ! -f "$E/alerta-divergente" ]; } && ok "ar sai do SHA divergente → fim do alerta logado" || nok "fim do alerta: $(tail -2 "$LOGV")"
 
 # lock vinculado ao processo: dono vivo (vigia) segura; dono morto ou PID reciclado (não-vigia) libera
-printf 'sleep 30\n' > "$TMP/vigia-dono.sh"
+mkdir -p "$TMP/dono"; printf 'sleep 30\n' > "$TMP/dono/vigia.sh"
 r_lock() {
   local e="$TMP/est-lock" d; rm -rf "$e"; mkdir -p "$e/lock"
-  bash "$TMP/vigia-dono.sh" & d=$!; echo "$d" > "$e/lock/pid"
+  bash "$TMP/dono/vigia.sh" & d=$!; echo "$d" > "$e/lock/pid"
   LVT_MANTEM=1 roda lock; local r=0
   { [ "$CHAMADAS" = "" ] && [ ! -s "$LOGV" ] && [ "$(cat "$e/lock/pid")" = "$d" ]; } || r=1
   kill "$d" 2>/dev/null; wait "$d" 2>/dev/null; return $r
@@ -261,6 +296,9 @@ sleep 30 & D=$!; echo "$D" > "$TMP/est-lock/lock/pid" 2>/dev/null || { mkdir -p 
 LVT_MANTEM=1 roda lock; kill "$D" 2>/dev/null; wait "$D" 2>/dev/null
 { tem "lock de processo morto ($D) removido" && tem "PUBLICADO" && [ ! -d "$TMP/est-lock/lock" ]; } \
   && ok "PID reciclado por não-vigia → lock tomado, tick roda, lock solto no fim" || nok "lock reciclado: $(tail -2 "$LOGV")"
+touch "$TMP/est-lock/vigia.log"; tail -f "$TMP/est-lock/vigia.log" > /dev/null & D=$!
+mkdir -p "$TMP/est-lock/lock"; echo "$D" > "$TMP/est-lock/lock/pid"; LVT_MANTEM=1 roda lock; kill "$D" 2>/dev/null; wait "$D" 2>/dev/null
+tem "lock de processo morto ($D) removido" && ok "PID reciclado por \`tail -f vigia.log\` → não segura o lock (Codex #7)" || nok "lock tail: $(tail -2 "$LOGV")"
 mkdir -p "$TMP/est-lock/lock"; echo 999999 > "$TMP/est-lock/lock/pid"; LVT_MANTEM=1 roda lock
 tem "lock de processo morto (999999) removido" && ok "PID morto → lock tomado" || nok "lock morto: $(tail -2 "$LOGV")"
 
@@ -278,6 +316,9 @@ falsifica intencao 's/^    INT_PENDENTE=1$/    INT_PENDENTE=0/' r_intencao
 falsifica lock 's/grep -q vigia && exit 0/grep -q vigia \&\& true/' r_lock
 # shellcheck disable=SC2016
 falsifica backoff 's/^adia() { grava "\$EST\/tentativa" "\$HEAD_SHA \$N \$(( \$(date +%s) + \$1 ))"; }/adia() { grava "$EST\/tentativa" "$HEAD_SHA $N $((AGORA + $1))"; }/' r_backoff
+falsifica truncado 's/then CTRL=TRUNCADO; fi/then true; fi/' r_truncado
+falsifica le_e_cai 's/^  \[ -n "\$SHA_LOV" \] \&\& LIDO=1$/  true/' r_le_e_cai
+falsifica issue 's/^abre_issue tick$/true/' r_issue
 # shellcheck disable=SC2016
 falsifica store 's/^if \[ ! -f "\$CFG_DIR\/.vigia-pronto" \]; then$/if false; then/' r_store
 
