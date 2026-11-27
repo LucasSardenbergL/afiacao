@@ -23,6 +23,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { submitOrder } from '../submitOrder';
+import { buildPrintData } from '../buildPrintData';
 import { syncOrderToOmie } from '@/services/omieService';
 import type { SubmitOrderParams, SubmitClient } from '../types';
 import type { OmieCustomer, ProductCartItem, ServiceCartItem } from '@/hooks/unifiedOrder/types';
@@ -269,6 +270,9 @@ describe('submitOrder', () => {
     expect(r.errors.some((e) => e.step === 'sync_oben_omie')).toBe(true);
     // Pendente ERP → NÃO é confirmação total → o caller mantém o carrinho/checkout_id p/ retry idempotente.
     expect(r.allConfirmed).toBe(false);
+    // L2-b: o cupom recebe a confirmação POR CONTA — a Oben pendente não imprime via.
+    expect(vi.mocked(buildPrintData).mock.calls.at(-1)?.[0].contasConfirmadas)
+      .toEqual({ oben: false, colacor: true, afiacao: true });
   });
 
   it('Colacor produto acabado + responsável setado → cria ordem de produção', async () => {

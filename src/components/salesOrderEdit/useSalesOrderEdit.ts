@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
   bloqueioDaEdicao,
@@ -18,6 +19,8 @@ import {
   type SalesOrder,
   type FormasPagamentoResponse,
   type OmieProduct,
+  type EstadoCatalogo,
+  type CargaDoPedido,
 } from './types';
 import {
   invalidPricedOrderItemIndices, invalidOrderPriceMessage, invalidQuantityOrderItemIndices, subtotalDaEdicao,
@@ -117,6 +120,11 @@ export function useSalesOrderEdit() {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
+  // #28: o catálogo tem estado PRÓPRIO — antes ele carregava acoplado às formas num `Promise.all`, e a
+  // falha de qualquer um deixava `catalogProducts = []`: a busca dizia "Nenhum produto encontrado".
+  const [estadoCatalogo, setEstadoCatalogo] = useState<EstadoCatalogo>('carregando');
+  // #40: "não existe" ≠ "não consegui ler". Sem pedido montado, a tela escolhe pela carga, não pelo `!order`.
+  const [cargaDoPedido, setCargaDoPedido] = useState<CargaDoPedido>({ estado: 'carregando' });
   // Tint color dialog
   const [tintPendingProduct, setTintPendingProduct] = useState<OmieProduct | null>(null);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
@@ -155,6 +163,8 @@ export function useSalesOrderEdit() {
     setFormasErro(false);
     setFormasMotivo(null);
     setCatalogProducts([]);
+    setEstadoCatalogo('carregando');
+    setCargaDoPedido({ estado: 'carregando' });
     setTintPendingProduct(null);
     setShowAddProduct(false);
     setProductSearch('');
@@ -189,8 +199,10 @@ export function useSalesOrderEdit() {
         .select('id, customer_user_id, created_by, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, updated_at, hash_payload')
         .eq('id', id)
         .single();
-      if (error) throw error;
       if (velha()) return;
+      // Busca pela PK: PGRST116 aqui só pode ser 0 linhas (excluído/inexistente) — nunca "mais de uma".
+      if (error?.code === 'PGRST116') { setCargaDoPedido({ estado: 'nao-encontrado' }); return; }
+      if (error) throw error;
       const row = data;
       // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
       // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
@@ -236,6 +248,7 @@ export function useSalesOrderEdit() {
         }
       }
       setOrder(o);
+      setCargaDoPedido({ estado: 'ok' });
       setItems(o.items || []);
       setNotes(o.notes || '');
       const parcela = o.omie_payload?.cabecalho?.codigo_parcela;
@@ -262,72 +275,106 @@ export function useSalesOrderEdit() {
       const account = contaDaEdicao(o.account);
       if (!account) return;
 
-      // Load formas + products in parallel.
-      const [formasRes, products] = await Promise.all([
+      // #28: formas e catálogo são fontes INDEPENDENTES — `allSettled`, cada uma com o seu estado. A falha
+      // de uma não apaga a outra, nem vira "nenhum produto" / "sem condição" (modelo: estadoCatalogoOben).
+      const [formasLida, catalogoLido] = await Promise.allSettled([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'listar_formas_pagamento', account },
         }),
-        // Catálogo vendável PAGINADO (.range): o PostgREST capa em 1000 linhas/request
-        // e a busca "Adicionar produto" é client-side sobre `catalogProducts` — um único
-        // .limit(1000) deixaria ~1140 produtos colacor (2140 ativos) invisíveis pra venda.
-        // `account` já é a conta NORMALIZADA ('colacor'|'oben'), a MESMA que
-        // omie_products.account armazena (analytics-sync grava 'colacor'/'oben'; NÃO
-        // re-mapear p/ 'colacor_vendas' — não existe nesta coluna → 0 vendáveis). Espelha
-        // o catálogo de criação (useProductCatalog: paginateAll + buildExclusionQuery).
-        paginateAll(async (from, to) => {
-          const base = supabase.from('omie_products')
-            .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
-            .eq('account', account)
-            .eq('ativo', true);
-          const { data, error } = await buildExclusionQuery(base)
-            .order('descricao')
-            .order('id')
-            .range(from, to);
-          if (error) throw error;
-          // data null SEM error = malformada, não página vazia: devolvê-la ao paginateAll
-          // encerraria o catálogo de edição PARCIAL em silêncio (classe #1338→#1564).
-          if (data == null) throw new Error('omie_products (edição): data null sem error — malformada, não é fim');
-          return data;
-        }),
+        buscarCatalogoDaConta(account),
       ]);
       if (velha()) return; // catálogo/formas da conta do pedido anterior não publicam
+
+      if (catalogoLido.status === 'fulfilled') {
+        setCatalogProducts(catalogoLido.value);
+        setEstadoCatalogo('ok');
+      } else {
+        console.error('[edição] catálogo da conta', catalogoLido.reason);
+        setEstadoCatalogo('falhou');
+      }
 
       // ── Duas metades do mesmo site, de PRs diferentes (money-path §9). Elas não são
       // alternativas: tratam falhas DIFERENTES, e resolver por um lado reverteria a outra.
       //
       // (a) #1605 — TRANSPORTE falhou. `functions.invoke` NÃO lança: devolve
-      // `{ data: null, error }`. Sem esta linha a falha escapava do `catch` abaixo,
-      // `setFormas` nunca era chamado e o editor abria com a lista VAZIA — indistinguível
-      // de "esta conta não tem forma cadastrada". Lançar leva ao toast "Erro ao carregar
-      // pedido", que é a verdade.
-      // ⚠️ Mas o `setOrder` acima já rodou: o throw NÃO impede a tela de abrir, só pula o
-      // resto do load. O toast some em segundos e o que fica é uma tela sem card de
-      // pagamento — a mesma omissão, agora silenciosa. Por isso o estado de erro é gravado
-      // ANTES de lançar: o aviso persiste na tela depois que o toast passa (§7).
-      if (formasRes.error) {
+      // `{ data: null, error }`. Sem tratar, `setFormas` nunca era chamado e o editor abria com a
+      // lista VAZIA — indistinguível de "esta conta não tem forma cadastrada". O estado de erro
+      // fica na tela (o toast some em segundos, o aviso persiste — §7). Rejeição (o invoke lançou)
+      // é a mesma falha de transporte.
+      const transporte = formasLida.status === 'rejected'
+        ? { error: { message: mensagemDeErro(formasLida.reason) ?? 'falha ao chamar a listagem de condições' }, data: null }
+        : formasLida.value;
+      if (transporte.error) {
         setFormasErro(true);
-        setFormasMotivo(formasRes.error.message ?? null);
-        throw formasRes.error;
+        setFormasMotivo(transporte.error.message ?? null);
+        toast.error('Condições de pagamento não carregaram', {
+          description: 'A condição salva do pedido continua valendo. Recarregue para poder trocá-la.',
+        });
+        return;
       }
-      // (b) este PR — transporte OK, o OMIE é que degradou. O edge #1597 responde 200 com 8
+      // (b) transporte OK, o OMIE é que degradou. O edge #1597 responde 200 com 8
       // condições genéricas hardcoded e declara `degraded`/`source`/`motivo`. Ler só
       // `formas` devolveria uma lista indistinguível da real; aqui a tela ABRE e avisa.
-      const estadoFormas = lerRespostaFormas(formasRes.data as FormasPagamentoResponse | null);
+      const estadoFormas = lerRespostaFormas(transporte.data as FormasPagamentoResponse | null);
       if (estadoFormas.formas.length > 0) setFormas(estadoFormas.formas);
       setFormasDegradadas(estadoFormas.degradado);
       // Sem erro de transporte e sem degradação declarada, lista vazia é ambígua (edge
       // antiga com 200 vazio) — avisa em vez de sumir o card e sugerir "não tem condição".
       setFormasErro(!estadoFormas.degradado && estadoFormas.formas.length === 0);
       setFormasMotivo(estadoFormas.motivo);
-      setCatalogProducts(products);
     } catch (e) {
       if (velha()) return; // a falha do pedido anterior não é notícia sobre o aberto agora
       console.error(e);
+      // #40: falha ANTES de montar o pedido = tela de "não consegui ler" com tentar de novo — nunca o
+      // "Pedido não encontrado" que o `!order` dava. Depois de montado, o formulário fica e o toast avisa.
+      setCargaDoPedido((atual) => (atual.estado === 'ok' ? atual : { estado: 'falhou', erro: e }));
       toast.error('Erro ao carregar pedido');
     } finally {
       // Só a carga ATUAL encerra o carregamento: a anterior terminando antes deixaria a tela de B
       // "pronta" sem o pedido B.
       if (!velha()) setLoading(false);
+    }
+  };
+
+  // Catálogo vendável PAGINADO (.range): o PostgREST capa em 1000 linhas/request
+  // e a busca "Adicionar produto" é client-side sobre `catalogProducts` — um único
+  // .limit(1000) deixaria ~1140 produtos colacor (2140 ativos) invisíveis pra venda.
+  // `account` já é a conta NORMALIZADA ('colacor'|'oben'), a MESMA que
+  // omie_products.account armazena (analytics-sync grava 'colacor'/'oben'; NÃO
+  // re-mapear p/ 'colacor_vendas' — não existe nesta coluna → 0 vendáveis). Espelha
+  // o catálogo de criação (useProductCatalog: paginateAll + buildExclusionQuery).
+  const buscarCatalogoDaConta = (account: 'oben' | 'colacor') =>
+    paginateAll(async (from, to) => {
+      const base = supabase.from('omie_products')
+        .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
+        .eq('account', account)
+        .eq('ativo', true);
+      const { data, error } = await buildExclusionQuery(base)
+        .order('descricao')
+        .order('id')
+        .range(from, to);
+      if (error) throw error;
+      // data null SEM error = malformada, não página vazia: devolvê-la ao paginateAll
+      // encerraria o catálogo de edição PARCIAL em silêncio (classe #1338→#1564).
+      if (data == null) throw new Error('omie_products (edição): data null sem error — malformada, não é fim');
+      return data;
+    });
+
+  // #28: o catálogo que falhou tem "tentar de novo" próprio — sem recarregar o pedido nem as formas.
+  const tentarCatalogoDeNovo = async () => {
+    const account = contaDaEdicao(order?.account);
+    if (!account) return;
+    const carga = cargaPrecoRef.current;
+    setEstadoCatalogo('carregando');
+    try {
+      const produtos = await buscarCatalogoDaConta(account);
+      if (cargaPrecoRef.current !== carga) return;
+      setCatalogProducts(produtos);
+      setEstadoCatalogo('ok');
+    } catch (e) {
+      if (cargaPrecoRef.current !== carga) return;
+      console.error('[edição] catálogo da conta (nova tentativa)', e);
+      setEstadoCatalogo('falhou');
     }
   };
 
@@ -1006,6 +1053,10 @@ export function useSalesOrderEdit() {
     notes,
     setNotes,
     loading,
+    cargaDoPedido,
+    recarregarPedido: loadOrder,
+    estadoCatalogo,
+    tentarCatalogoDeNovo,
     saving,
     formas,
     selectedParcela,

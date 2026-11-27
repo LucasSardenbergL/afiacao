@@ -26,6 +26,12 @@ import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } fr
 import { PrintFilters } from '@/components/sales/print/PrintFilters';
 import { OrderGroup } from '@/components/sales/print/OrderGroup';
 import { toast } from 'sonner';
+import { chaveParcela, descricaoDaParcela } from '@/components/sales/print/parcelas';
+import { coletarEmLotesConcorrente, CONCORRENCIA_LOTES } from '@/lib/lotes';
+
+// #36: `.in('user_id', ids)` com o dia inteiro de clientes estoura a URL do PostgREST (~8 KB) em dia cheio —
+// a leitura falhava inteira. Mesmo lote de `IDS_POR_LOTE_EXCLUSAO` (useSalesOrders): 100 UUIDs ≈ 3,7 KB.
+const IDS_POR_LOTE = 100;
 
 const SalesPrintDashboard = () => {
   const navigate = useNavigate();
@@ -60,7 +66,7 @@ const SalesPrintDashboard = () => {
   // do Omie — usá-las aqui fabricaria um rótulo ("30/60 dias") para um código cuja
   // descrição real ninguém leu. Money-path §2, ausente ≠ zero: a conta degradada não entra
   // no mapa, o código cru aparece na via (dado bruto verdadeiro) e a tela avisa o porquê.
-  const { data: formasPagamento, refetch: recarregarFormas } = useQuery({
+  const { data: formasPagamento, isError: formasFalharam, refetch: recarregarFormas } = useQuery({
     queryKey: ['sales-print-formas-pagamento'],
     queryFn: async () => {
       const mapa: Record<string, string> = {};
@@ -72,7 +78,8 @@ const SalesPrintDashboard = () => {
           });
           const estado = lerRespostaFormas(data);
           if (estado.degradado) { contasDegradadas.push(acc); continue; }
-          estado.formas.forEach((f) => { mapa[f.codigo] = f.descricao; });
+          // L2-c: chave POR CONTA — o código da Colacor não sobrescreve o da Oben.
+          estado.formas.forEach((f) => { mapa[chaveParcela(acc, f.codigo)] = f.descricao; });
         } catch (_) { contasDegradadas.push(acc); }
       }
       return { mapa, contasDegradadas };
@@ -82,9 +89,10 @@ const SalesPrintDashboard = () => {
   // useMemo estabiliza a referência: `?? {}` criaria um objeto novo a cada render e
   // invalidaria o useMemo de `filteredOrders`, que tem `formasMap` nas deps.
   const formasMap = useMemo(() => formasPagamento?.mapa ?? {}, [formasPagamento]);
-  const contasComFormasDegradadas = formasPagamento?.contasDegradadas ?? [];
+  // L2-d: a query que FALHOU (sem `data`) é as duas contas sem descrição — nunca "nenhuma degradada".
+  const contasComFormasDegradadas = formasFalharam ? ['oben', 'colacor'] : (formasPagamento?.contasDegradadas ?? []);
 
-  const { data: salesOrders = [], isLoading: loadingSales } = useQuery({
+  const { data: salesOrders = [], isLoading: loadingSales, error: erroSales, refetch: recarregarSales } = useQuery({
     queryKey: ['sales-print', 'sales', dayStart],
     queryFn: async () => {
       // Colunas explícitas (PR0.0-bis): omie_payload fechado à leitura de `authenticated` —
@@ -131,7 +139,7 @@ const SalesPrintDashboard = () => {
   });
 
   // Fetch afiação orders for the selected date
-  const { data: afiacaoOrders = [], isLoading: loadingAfiacao } = useQuery({
+  const { data: afiacaoOrders = [], isLoading: loadingAfiacao, error: erroAfiacao, refetch: recarregarAfiacao } = useQuery({
     queryKey: ['sales-print', 'afiacao', dayStart],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -200,7 +208,7 @@ const SalesPrintDashboard = () => {
   // pedido/OS impresso, nunca o cliente solto (onda D). Nome segue de `profiles` (identidade).
   const salesIdsImpressao = useMemo(() => salesOrders.map((o) => o.id), [salesOrders]);
   const osIdsImpressao = useMemo(() => afiacaoOrders.map((o) => o.id), [afiacaoOrders]);
-  const { data: contatoPorCliente } = useQuery({
+  const { data: contatoPorCliente, isError: contatoFalhou, isPending: contatoPendente, refetch: recarregarContato } = useQuery({
     queryKey: ['sales-print-contato', salesIdsImpressao, osIdsImpressao],
     queryFn: async () => {
       const [pedidos, oss] = await Promise.all([
@@ -214,15 +222,19 @@ const SalesPrintDashboard = () => {
     enabled: salesIdsImpressao.length + osIdsImpressao.length > 0,
   });
 
-  const { data: nomes = [] } = useQuery({
+  const { data: nomes = [], isError: nomesFalharam, isPending: nomesPendentes, refetch: recarregarNomes } = useQuery({
     queryKey: ['sales-print-profiles', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
-      const { data } = await supabase
-        .from('profiles')
-        .select('user_id, name')
-        .in('user_id', customerIds);
-      return data || [];
+      // L2-d: o erro LANÇA — antes `{ data }` sem `error` virava [] e a folha saía com "Cliente" no lugar do nome.
+      return coletarEmLotesConcorrente(customerIds, IDS_POR_LOTE, CONCORRENCIA_LOTES, async (lote) => {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('user_id, name')
+          .in('user_id', lote);
+        if (error) throw error;
+        return data ?? [];
+      });
     },
     enabled: customerIds.length > 0,
   });
@@ -237,7 +249,7 @@ const SalesPrintDashboard = () => {
   [contatoPorCliente]);
 
   // Código do cliente (conta colacor_sc) p/ address lookup — via view fresca account-correta.
-  const { data: omieClientes = [] } = useQuery({
+  const { data: omieClientes = [], isError: codigosOmieFalharam, refetch: recarregarCodigosOmie } = useQuery({
     queryKey: ['sales-print-omie-map-fresco', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
@@ -245,12 +257,15 @@ const SalesPrintDashboard = () => {
       // colacor_sc) → lê da view fresca omie_customer_account_map_fresco com account=colacor_sc
       // (document-first, TTL 7d). O filtro antigo .eq('empresa_omie','colacor') era inócuo (o espelho é
       // 100% 'colacor' rotulado). Miss na fresca → sem código → cai no fallback por documento (fail-closed).
-      const { data } = await supabase
-        .from('omie_customer_account_map_fresco')
-        .select('user_id, omie_codigo_cliente')
-        .eq('account', 'colacor_sc')
-        .in('user_id', customerIds);
-      return data || [];
+      return coletarEmLotesConcorrente(customerIds, IDS_POR_LOTE, CONCORRENCIA_LOTES, async (lote) => {
+        const { data, error } = await supabase
+          .from('omie_customer_account_map_fresco')
+          .select('user_id, omie_codigo_cliente')
+          .eq('account', 'colacor_sc')
+          .in('user_id', lote);
+        if (error) throw error;
+        return data ?? [];
+      });
     },
     enabled: customerIds.length > 0,
   });
@@ -304,10 +319,12 @@ const SalesPrintDashboard = () => {
   }, [salesOrders]);
 
   // Fetch addresses from Omie for ALL customers missing local address
-  const { data: omieAddresses = {} } = useQuery({
+  const { data: leituraEnderecosOmie, isError: enderecosOmieFalharam, refetch: recarregarEnderecosOmie } = useQuery({
     queryKey: ['sales-print-omie-addresses', customersMissingAddress, Array.from(omieClienteMap.entries()), Array.from(pedidoPorCliente.entries())],
     queryFn: async () => {
       const result: Record<string, string> = {};
+      // L2-d: o cliente cuja consulta FALHOU é contado — "sem endereço" calado não é a mesma coisa.
+      let falhas = 0;
       for (const userId of customersMissingAddress) {
         const codigoCliente = omieClienteMap.get(userId);
 
@@ -318,13 +335,14 @@ const SalesPrintDashboard = () => {
         // (`contato_cliente_operacional`, ledger), e só se o documento do pedido casar com o da Omie.
         const pedidoId = pedidoPorCliente.get(userId);
         try {
-          const { data } = await supabase.functions.invoke('omie-cliente', {
+          const { data, error } = await supabase.functions.invoke('omie-cliente', {
             body: {
               action: 'consultar_cliente',
               codigo_cliente: codigoCliente,
               ...(pedidoId ? { operacional: { objeto_tipo: 'pedido', objeto_id: pedidoId, motivo: 'impressao_pedido' } } : {}),
             },
           });
+          if (error) { falhas++; continue; }
           // Resposta mascarada (fora da carteira, sem exceção) não tem rua: não imprime só cidade/UF como
           // se fosse o endereço de entrega (Codex P2) — a folha fica "sem endereço", como antes da Omie.
           if (data?.cliente?.endereco) {
@@ -341,12 +359,15 @@ const SalesPrintDashboard = () => {
           }
         } catch (e) {
           console.warn('Failed to fetch Omie address for', userId, e);
+          falhas++;
         }
       }
-      return result;
+      return { enderecos: result, falhas };
     },
     enabled: customersMissingAddress.length > 0,
   });
+  const omieAddresses = useMemo(() => leituraEnderecosOmie?.enderecos ?? {}, [leituraEnderecosOmie]);
+  const enderecosOmieSemLeitura = enderecosOmieFalharam ? customersMissingAddress.length : (leituraEnderecosOmie?.falhas ?? 0);
 
   const addressMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -383,7 +404,7 @@ const SalesPrintDashboard = () => {
         // Extract cond_pagamento description from formas map
         const parcelaCode = o.omie_payload?.cabecalho?.codigo_parcela;
         const condPagamento = o.cond_pagamento
-          || (parcelaCode && formasMap[parcelaCode])
+          || descricaoDaParcela(formasMap, o._company, parcelaCode)
           || parcelaCode
           || undefined;
 
@@ -454,7 +475,22 @@ const SalesPrintDashboard = () => {
     if (aviso) toast.warning(aviso.titulo, { description: aviso.descricao });
   };
 
+  // L2-d: sem o nome (profiles) ou o contato (documento/endereço) a via sairia com "Cliente" e sem endereço —
+  // a impressão espera a leitura, em vez de imprimir o que não leu.
+  // Enquanto a leitura ainda corre (1ª carga ou as novas tentativas do react-query) também espera — `isError` só
+  // acende quando as tentativas acabam, e até lá a via sairia com "Cliente" (revisão Caminho B, P3-1).
+  // `isPending` de query DESLIGADA (sem ids) é true para sempre: só conta com a query habilitada.
+  const lendoNomeOuContato =
+    (customerIds.length > 0 && nomesPendentes)
+    || (salesIdsImpressao.length + osIdsImpressao.length > 0 && contatoPendente);
+  const bloqueioImpressao = nomesFalharam || contatoFalhou
+    ? 'Não consegui ler o nome ou o contato dos clientes — a folha sairia sem esses dados. Tente de novo antes de imprimir.'
+    : lendoNomeOuContato
+      ? 'Ainda estou lendo o nome e o contato dos clientes. Aguarde um instante para imprimir.'
+      : null;
+
   const printSelected = () => {
+    if (bloqueioImpressao) { toast.error(bloqueioImpressao); return; }
     const toPrint = filteredOrders.filter(o => selectedOrders.has(o.id));
     if (toPrint.length === 0) return;
 
@@ -473,12 +509,28 @@ const SalesPrintDashboard = () => {
   };
 
   const printSingle = (order: EnrichedOrder) => {
+    if (bloqueioImpressao) { toast.error(bloqueioImpressao); return; }
     const printData = buildPrintData(order, order._company, companyLogos, leituraDescontosDo(order));
     openPrintOrder(printData);
     avisarDescontos([printData.avisoDesconto]);
   };
 
   const isLoading = loadingSales || loadingAfiacao;
+  // L2-d: a falha de qualquer das duas leituras do dia NÃO é "Nenhum pedido encontrado".
+  const leiturasDoDiaFalharam = [
+    erroSales ? 'pedidos de venda' : null,
+    erroAfiacao ? 'ordens de serviço de afiação' : null,
+  ].filter((x): x is string => x !== null);
+  const avisosDeLeitura = [
+    nomesFalharam ? { chave: 'nomes', texto: 'Os nomes dos clientes não carregaram.', recarregar: recarregarNomes } : null,
+    contatoFalhou ? { chave: 'contato', texto: 'O documento, o telefone e o endereço dos clientes não carregaram.', recarregar: recarregarContato } : null,
+    codigosOmieFalharam ? { chave: 'codigos', texto: 'Os códigos Omie dos clientes não carregaram: o endereço do Omie pode faltar na folha.', recarregar: recarregarCodigosOmie } : null,
+    enderecosOmieSemLeitura > 0 ? {
+      chave: 'enderecos',
+      texto: `${enderecosOmieSemLeitura === 1 ? '1 endereço do Omie não carregou' : `${enderecosOmieSemLeitura} endereços do Omie não carregaram`}: a folha desses clientes sai sem endereço.`,
+      recarregar: recarregarEnderecosOmie,
+    } : null,
+  ].filter((x): x is NonNullable<typeof x> => x !== null);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-6">
@@ -508,6 +560,25 @@ const SalesPrintDashboard = () => {
           }
         />
 
+        {leiturasDoDiaFalharam.length > 0 && (
+          <div role="alert" data-testid="leitura-do-dia-falhou" className="rounded-md border border-status-error/40 p-3 text-sm text-status-error space-y-2">
+            <p>
+              Não consegui ler os {leiturasDoDiaFalharam.join(' e as ')} deste dia — a lista abaixo está incompleta
+              {leiturasDoDiaFalharam.length === 2 ? ' (vazia)' : ''}, não é "sem pedido".
+            </p>
+            <Button variant="outline" size="sm" onClick={() => { if (erroSales) void recarregarSales(); if (erroAfiacao) void recarregarAfiacao(); }}>
+              Tentar de novo
+            </Button>
+          </div>
+        )}
+
+        {avisosDeLeitura.map((a) => (
+          <div key={a.chave} role="alert" data-testid={`aviso-leitura-${a.chave}`} className="rounded-md border border-status-warning/40 p-3 text-sm text-status-warning flex items-center justify-between gap-3">
+            <span>{a.texto}</span>
+            <Button variant="outline" size="sm" onClick={() => { void a.recarregar(); }}>Tentar de novo</Button>
+          </div>
+        ))}
+
         {foraDaImpressao.length > 0 && (
           <div role="alert" data-testid="fora-da-impressao" className="rounded-md border border-status-warning/40 p-3 text-sm text-status-warning">
             {foraDaImpressao.length === 1 ? '1 pedido do dia ficou' : `${foraDaImpressao.length} pedidos do dia ficaram`} fora
@@ -532,7 +603,7 @@ const SalesPrintDashboard = () => {
           </Button>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">{selectedOrders.size} selecionado(s)</span>
-            <Button onClick={printSelected} disabled={selectedOrders.size === 0} className="gap-2">
+            <Button onClick={printSelected} disabled={selectedOrders.size === 0 || bloqueioImpressao !== null} className="gap-2">
               <Printer className="h-4 w-4" />
               Imprimir selecionados
             </Button>
@@ -542,7 +613,7 @@ const SalesPrintDashboard = () => {
         {/* Orders grouped by company + period */}
         {isLoading ? (
           <PageSkeleton variant="list" />
-        ) : filteredOrders.length === 0 ? (
+        ) : filteredOrders.length === 0 && leiturasDoDiaFalharam.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
               Nenhum pedido encontrado para esta data e filtros.
