@@ -114,11 +114,22 @@ export function chavesClienteCheckout(id: IdentidadeClienteCheckout): { canonica
   return { canonica, aliases: [...new Set(aliases)] };
 }
 
+/** A parte dos ITENS da fp (`<chave>#<itens>`): chave é UUID ou inteiro, nunca contém `#`. */
+const itensDaFingerprint = (fp: string): string | null => {
+  const i = fp.indexOf('#');
+  return i < 0 ? null : fp.slice(i + 1);
+};
+
 /**
- * Decide o envelope pelo cliente (chave estável + aliases do formato antigo). Devolve a decisão e a
- * fp a gravar num envelope NOVO (sempre a canônica). O `reuse` por ALIAS só vale se o envelope não
- * congelou OUTRO usuário (`customerUserId` gravado na criação) — fail-closed: na dúvida, a decisão
- * cai na regra de sempre (`conflict` se committed), nunca reusa o checkoutId de outro cliente.
+ * Decide o envelope pelo cliente (chave estável + formato antigo). Devolve a decisão e a fp a gravar
+ * num envelope NOVO (sempre a canônica). Ordem, toda fail-closed (na dúvida cai na regra de sempre:
+ * `conflict` se committed — nunca reusa o checkoutId de outro cliente):
+ *  1. o envelope congelou OUTRO usuário (`customerUserId` da criação ≠ o confirmado agora) → nunca
+ *     reusa, nem por fp igual (Codex r1 do #4271: a chave antiga e o titular eram campos distintos);
+ *  2. mesma fp canônica → reuse;
+ *  3. o envelope congelou ESTE usuário e os itens batem → reuse, qualquer que seja a chave antiga (o
+ *     código Oben pode faltar na seleção de agora — cliente reaberto pelo 360, PV só da Colacor);
+ *  4. envelope sem usuário congelado (legado) → reuse só por alias (código Oben > 0 / vínculo igual).
  */
 export function decidirEnvelopeDoCliente(
   stored: CheckoutEnvelope | null,
@@ -127,15 +138,20 @@ export function decidirEnvelopeDoCliente(
 ): { decision: CheckoutDecision; fingerprint: string } {
   const { canonica, aliases } = chavesClienteCheckout(id);
   const fingerprint = computeCheckoutFingerprint(canonica, items);
-  const base = decideCheckoutEnvelope(stored, fingerprint);
-  if (base === 'reuse' || !stored) return { decision: base, fingerprint };
+  if (!stored) return { decision: 'new', fingerprint };
+  const semReuso: CheckoutDecision = stored.committed ? 'conflict' : 'new';
   const congelado = textoOuNulo(stored.customerUserId ?? null);
   const atual = textoOuNulo(id.customerUserId);
-  const mesmoUsuario = congelado === null || congelado === atual;
-  if (mesmoUsuario && aliases.some(k => computeCheckoutFingerprint(k, items) === stored.fingerprint)) {
+  if (congelado !== null && congelado !== atual) return { decision: semReuso, fingerprint };
+  if (stored.fingerprint === fingerprint) return { decision: 'reuse', fingerprint };
+  if (congelado !== null) {
+    const mesmosItens = itensDaFingerprint(stored.fingerprint) === itensDaFingerprint(fingerprint);
+    return { decision: mesmosItens ? 'reuse' : semReuso, fingerprint };
+  }
+  if (aliases.some(k => computeCheckoutFingerprint(k, items) === stored.fingerprint)) {
     return { decision: 'reuse', fingerprint };
   }
-  return { decision: base, fingerprint };
+  return { decision: semReuso, fingerprint };
 }
 
 /**

@@ -34,6 +34,12 @@ describe('chave do cliente no fingerprint', () => {
     expect(b.fingerprint).toBe(a.fingerprint);
   });
 
+  it('legado SEM titular congelado: casa só pelo alias do código Oben (ALIAS-LEGADO)', () => {
+    const gravado = env(computeCheckoutFingerprint(chaveLegada(undefined, 173), itens), null);
+    expect(decidirEnvelopeDoCliente(gravado, { customerUserId: U, localUserId: U, codigoCliente: 173 }, itens).decision).toBe('reuse');
+    expect(decidirEnvelopeDoCliente(gravado, { customerUserId: U, localUserId: U, codigoCliente: 174 }, itens).decision).toBe('conflict');
+  });
+
   it('formato antigo pelo UUID do vínculo também casa (chave canônica)', () => {
     const gravado = env(computeCheckoutFingerprint(chaveLegada(U, 173), itens), U);
     expect(decidirEnvelopeDoCliente(gravado, { customerUserId: U, localUserId: undefined, codigoCliente: 173 }, itens).decision).toBe('reuse');
@@ -69,6 +75,16 @@ describe('chave do cliente no fingerprint', () => {
   it('sem usuário confirmado (legado/autoatendimento): mantém a regra antiga', () => {
     expect(chavesClienteCheckout({ customerUserId: null, localUserId: U, codigoCliente: 173 }).canonica).toBe(U);
     expect(chavesClienteCheckout({ customerUserId: null, localUserId: null, codigoCliente: 173 }).canonica).toBe('173');
+  });
+
+  it('formato antigo 173 com o MESMO titular congelado e a seleção sem código Oben (360) → reuse', () => {
+    const gravado = env(computeCheckoutFingerprint(chaveLegada(undefined, 173), itens), U);
+    expect(decidirEnvelopeDoCliente(gravado, { customerUserId: U, localUserId: U, codigoCliente: 0 }, itens).decision).toBe('reuse');
+  });
+
+  it('fp igual à canônica mas titular congelado DIVERGENTE → conflict (nunca reusa outro titular)', () => {
+    const gravado = env(computeCheckoutFingerprint(chaveLegada(U, 173), itens), W);
+    expect(decidirEnvelopeDoCliente(gravado, { customerUserId: U, localUserId: U, codigoCliente: 173 }, itens).decision).toBe('conflict');
   });
 
   it('não committed com fp diferente segue "new" (nada pendente a proteger)', () => {

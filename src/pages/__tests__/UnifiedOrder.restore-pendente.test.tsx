@@ -42,7 +42,13 @@ vi.mock('@/integrations/supabase/client', () => ({
       return ch;
     },
     removeChannel: () => undefined,
-    functions: { invoke: () => Promise.resolve({ data: null, error: null }) },
+    functions: {
+      invoke: (_nome: string, opts?: { body?: { action?: string } }) => Promise.resolve(
+        opts?.body?.action === 'listar_clientes'
+          ? { data: { clientes: [{ codigo_cliente: 999, razao_social: 'Outra Empresa B', nome_fantasia: 'Outra Empresa B', cnpj_cpf: '11', codigo_vendedor: null }] }, error: null }
+          : { data: null, error: null },
+      ),
+    },
     auth: { getSession: () => Promise.resolve({ data: { session: null }, error: null }) },
   },
 }));
@@ -105,7 +111,22 @@ describe('UnifiedOrder — restaurar com envio pendente e sem cliente na tela', 
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     expect(screen.queryByText(TITULO), 'o diálogo reabriu com a restauração pendente').toBeNull();
     expect(screen.queryByText('Descartar mesmo assim')).toBeNull();
-    // O envelope (proteção contra o 2º PV) continua intacto.
-    expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')?.checkoutId).toBe('chk-1');
+    // O envelope (proteção contra o 2º PV) continua intacto — INTEIRO, não só o checkoutId.
+    expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
+  });
+
+  it('selecionar o cliente ERRADO mantém a espera — o diálogo (e o descarte do envelope) não volta', async () => {
+    montar();
+    fireEvent.click(await screen.findByRole('button', { name: /Restaurar/ }));
+    // A pré-busca pelo nome do rascunho lista OUTRO cliente (código 999 ≠ 173); a vendedora o escolhe.
+    fireEvent.click(await screen.findByText('Outra Empresa B', {}, { timeout: 3000 }));
+    await screen.findByRole('button', { name: 'Trocar cliente' }, { timeout: 3000 });
+    await waitFor(() => {
+      expect(vi.mocked(toast.info)).toHaveBeenCalledWith('Rascunho não restaurado', expect.anything());
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    expect(screen.queryByText(TITULO), 'o diálogo reabriu sobre o cliente errado').toBeNull();
+    expect(screen.queryByText('Descartar mesmo assim')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
   });
 });

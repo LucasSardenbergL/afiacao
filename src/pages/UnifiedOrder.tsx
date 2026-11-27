@@ -461,13 +461,26 @@ const UnifiedOrder = () => {
     if (!pendente) return;
     const decisao = resolverRestorePendente(pendente.codigoCliente, codigoClienteSelecionado);
     if (decisao === 'esperar') return;
-    restorePendenteRef.current = null;
-    setRestoreEsperandoCliente(false);
-    if (decisao === 'aplicar') { aplicarDadosRef.current(pendente.dados, true); return; }
+    if (decisao === 'aplicar') {
+      restorePendenteRef.current = null;
+      setRestoreEsperandoCliente(false);
+      aplicarDadosRef.current(pendente.dados, true);
+      return;
+    }
+    // Cliente ERRADO selecionado (Codex r1 do #4271): a pendência CONTINUA à espera do cliente do
+    // rascunho. Soltá-la reabria o diálogo por cima de "Trocar cliente" e a única saída nele era o
+    // "Descartar mesmo assim", que apaga o envelope do envio pendente (2º PV no reenvio).
     toast.info('Rascunho não restaurado', {
-      description: `Ele é de ${pendente.nome ?? 'outro cliente'}. Selecione esse cliente e restaure de novo.`,
+      description: `Ele é de ${pendente.nome ?? 'outro cliente'}. Troque para esse cliente — o carrinho volta quando ele for selecionado.`,
     });
   }, [codigoClienteSelecionado]);
+  // A vendedora começou OUTRO carrinho (no cliente errado): o rascunho em disco passa a ser esse, e a
+  // pendência em memória (o carrinho antigo) não pode voltar por cima dele numa troca futura.
+  useEffect(() => {
+    if (h.cart.length === 0 || !restorePendenteRef.current) return;
+    restorePendenteRef.current = null;
+    setRestoreEsperandoCliente(false);
+  }, [h.cart.length]);
 
   const handleRestore = () => {
     if (!draft) return;
