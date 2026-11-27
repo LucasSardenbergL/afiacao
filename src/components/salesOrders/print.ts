@@ -28,12 +28,34 @@ export function itemTotal(item: {
   return totalLinhaOuAusente(item.quantidade, item.valor_unitario);
 }
 
-// sales_orders.account → empresa do cupom. colacor_sc é a entidade Colacor S.C.
-// (mesma chave 'afiacao' do companyMap em buildPrintData).
-export function resolveCompanyForPrint(account?: string): CompanyFilter {
-  if (account === 'colacor') return 'colacor';
-  if (account === 'colacor_sc') return 'afiacao';
-  return 'oben';
+// sales_orders.account → empresa do DOCUMENTO (cupom e mensagem de WhatsApp). colacor_sc é a entidade
+// Colacor S.C. (chave 'afiacao' do companyMap em buildPrintData).
+//
+// Conta desconhecida → `null`, nunca Oben (revisão /sales #24/#26): antes qualquer outra conta caía em
+// Oben e o cupom saía com o CNPJ e o endereço da Oben para um pedido de outra empresa. Mesma regra de
+// `contaDaEdicao` na edição e de `rotuloEmpresa` na lista.
+export function empresaDoDocumento(account: unknown): { cupom: CompanyFilter; nome: string } | null {
+  if (account === 'oben') return { cupom: 'oben', nome: 'Oben' };
+  if (account === 'colacor') return { cupom: 'colacor', nome: 'Colacor' };
+  if (account === 'colacor_sc') return { cupom: 'afiacao', nome: 'Colacor SC' };
+  return null;
+}
+
+export function resolveCompanyForPrint(account: unknown): CompanyFilter | null {
+  return empresaDoDocumento(account)?.cupom ?? null;
+}
+
+/**
+ * Por que este pedido NÃO pode virar documento para o cliente (cupom ou WhatsApp), ou `null`.
+ * Itens ilegíveis (jsonb que não é lista, #27) não são "sem itens": o documento sairia vazio sob um
+ * total positivo. Conta desconhecida não sai como outra empresa.
+ */
+export function motivoSemDocumento(order: Pick<SalesOrder, 'account' | 'itensIlegiveis'>): string | null {
+  if (order.itensIlegiveis) return 'Não foi possível ler os itens deste pedido — o documento sairia incompleto.';
+  if (empresaDoDocumento(order.account) === null) {
+    return `A empresa deste pedido não é reconhecida (conta "${order.account ?? 'vazia'}") — o documento não sai como outra empresa.`;
+  }
+  return null;
 }
 
 // Adapta o pedido da listagem para o shape do pipeline de impressão. Preserva o
@@ -52,7 +74,8 @@ export function buildSalesOrderPrintRow(
     // Sem `?? 0`: `sales_orders.subtotal/total` são NOT NULL (o tipo já é `number`).
     subtotal: order.subtotal,
     total: order.total,
-    desconto: order.discount ?? 0,
+    // Sem `?? 0` (#26): desconto do cabeçalho ausente atravessa ausente; o cupom só mostra a linha > 0.
+    desconto: order.discount ?? undefined,
     status: order.status,
     omie_numero_pedido: order.omie_numero_pedido,
     created_at: order.created_at,
@@ -76,7 +99,11 @@ export function printSalesOrder(
   logos: Record<string, string | null> | undefined,
   descontos: LeituraDescontosItens,
 ): string | null {
+  // Fail-closed: quem chama confere `motivoSemDocumento` antes e avisa a tela; chegar aqui com o
+  // pedido recusado é bug, e o cupom não abre com outra empresa nem com itens que não se leram.
+  const motivo = motivoSemDocumento(order);
   const company = resolveCompanyForPrint(order.account);
+  if (motivo !== null || company === null) throw new Error(motivo ?? 'empresa do pedido não reconhecida');
   const row = buildSalesOrderPrintRow(order, customerName, customerDocument);
   const data = buildPrintData(row, company, logos, descontos);
   openPrintOrder(data);

@@ -17,7 +17,7 @@ import {
   type SalesOrderItem,
   type SalesOrderRow,
 } from './types';
-import { totalLinhaOuAusente, precoUtilizavel } from '@/lib/format';
+import { totalLinhaOuAusente, precoServicoDaOs } from '@/lib/format';
 
 // Normaliza pra busca: minúsculas + sem diacríticos ("afiacao" acha "Afiação").
 const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -331,11 +331,13 @@ export type LinhaDetalheVenda = Pick<
 >;
 
 // sales_orders → SalesOrder: marca a origem e lê `items` por forma. jsonb que NÃO é array (objeto no
-// lugar da lista) segue virando [] — o painel/impressão não podem crashar (achado do codex).
+// lugar da lista) vira `[]` para o painel/impressão não crasharem (achado do codex) — MARCADO
+// `itensIlegiveis`: não é "sem itens", e o documento ao cliente não sai (revisão /sales #27).
 export function mapSalesDetail(row: LinhaDetalheVenda): SalesOrder {
-  const items = Array.isArray(row.items)
-    ? row.items.map((it, i) => itemDetalheDoJson(it, `sales_orders ${row.id} item ${i}`))
-    : [];
+  if (!Array.isArray(row.items)) {
+    return { ...row, discount: row.discount ?? undefined, items: [], itensIlegiveis: true, _source: 'sales' };
+  }
+  const items = row.items.map((it, i) => itemDetalheDoJson(it, `sales_orders ${row.id} item ${i}`));
   return { ...row, discount: row.discount ?? undefined, items, _source: 'sales' };
 }
 
@@ -355,10 +357,12 @@ function itemAfiacaoDoJson(item: Json, onde: string): AfiacaoItemRaw {
 // orders (afiação).* → SalesOrder. Mesma normalização que a listagem antiga fazia
 // inline (category||name → descricao; quantity default 1; account = entidade SC).
 export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
-  const rawItems = Array.isArray(row.items)
-    ? row.items.map((it, i) => itemAfiacaoDoJson(it, `orders ${row.id} item ${i}`))
+  const legivel = Array.isArray(row.items);
+  const rawItems = legivel
+    ? (row.items as Json[]).map((it, i) => itemAfiacaoDoJson(it, `orders ${row.id} item ${i}`))
     : [];
   return {
+    ...(legivel ? {} : { itensIlegiveis: true as const }),
     id: row.id,
     customer_user_id: row.user_id,
     items: rawItems.map((i) => ({
@@ -368,8 +372,8 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
       // Serviço de AFIAÇÃO (tabela `orders`), não pedido Omie — mas o mesmo `|| 0` e a mesma
       // tela. O item alimenta `SalesOrderItem`, que passou a admitir `null`, e o DetailSheet
       // já sabe mostrar "—". Preço 0 aqui costuma ser "a orçar", que é ausência, não brinde.
-      valor_unitario: precoUtilizavel(i.unitPrice),
-      valor_total: totalLinhaOuAusente(i.quantity ?? 1, precoUtilizavel(i.unitPrice)),
+      valor_unitario: precoServicoDaOs(i.unitPrice),
+      valor_total: totalLinhaOuAusente(i.quantity ?? 1, precoServicoDaOs(i.unitPrice)),
     })),
     // Sem o `|| 0` final: `orders.subtotal/total` são NOT NULL DEFAULT 0 (conferido em prod), então
     // ele nunca disparava, e um null futuro sairia R$ 0,00 em vez de "—". O `subtotal || total` fica:

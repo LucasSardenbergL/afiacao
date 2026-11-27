@@ -1,5 +1,6 @@
 import { escapeHtml } from '@/lib/escape-html';
 import { formatPrecoOuAusente } from '@/lib/format';
+import { textoDaCor } from '@/lib/cor-tinta';
 
 export interface PrintOrderData {
   companyName: string;
@@ -19,7 +20,8 @@ export interface PrintOrderData {
   items: Array<{
     codigo: string;
     descricao: string;
-    quantidade: number;
+    /** `null` = quantidade NÃO SABIDA: sai "—" no cupom, nunca 1 (ausente ≠ inventado). */
+    quantidade: number | null;
     unidade: string;
     /** `null` = preco NAO SABIDO. Sai "-" no cupom, nunca R$ 0,00 (ausente != zero). */
     valorUnitario: number | null;
@@ -30,7 +32,8 @@ export interface PrintOrderData {
     tintNomeCor?: string;
   }>;
   subtotal: number;
-  desconto: number;
+  /** Desconto do CABEÇALHO; `null` = não informado (não vira 0). Só aparece no cupom quando > 0. */
+  desconto: number | null;
   frete: number;
   total: number;
   observacoes?: string;
@@ -99,14 +102,15 @@ export function thDescontoHtml(data: PrintOrderData): string {
 }
 
 /** Célula de desconto da linha: R$ da linha, ou "—" quando não apurado (nunca R$ 0,00). */
-export function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items'][number]): string {
+function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items'][number]): string {
   if (!data.quebraDesconto) return '';
   return `<td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.descontoValor)}</td>`;
 }
 
 /** B4 (Codex P2): item sem preço (serviço a orçar) não entra na soma — rotular "TOTAL" seria
- *  afirmar um total que não existe. Ausente ≠ zero: diz quantos itens ficaram de fora. */
-function totalDoCupomHtml(data: Pick<PrintOrderData, 'items' | 'total'>): string {
+ *  afirmar um total que não existe. Ausente ≠ zero: diz quantos itens ficaram de fora. ÚNICO para as
+ *  duas vias: o lote (`buildSingleOrderHtml`) imprimia "TOTAL" fixo (Codex, revisão /sales #11). */
+export function totalDoCupomHtml(data: Pick<PrintOrderData, 'items' | 'total'>): string {
   const semPreco = data.items.filter(i => i.valorUnitario === null).length;
   if (semPreco === 0) return `<div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>`;
   return `<div class="row total-row"><span>SUBTOTAL CONHECIDO:</span><span>${fmt(data.total)}</span></div>`
@@ -122,35 +126,36 @@ export function totaisComDescontoHtml(data: PrintOrderData): string {
     + `<div class="row"><span>Desconto${parcial}:</span><span>- ${fmt(q.descontoTotal)}</span></div>`;
 }
 
+/**
+ * Linha de ITEM do cupom — ÚNICA para as duas vias (`openPrintOrder` e `buildSingleOrderHtml`), que
+ * antes a copiavam byte a byte (revisão /sales #53). Cor: o que se sabe dela (`textoDaCor`, #24 — antes
+ * exigia id E nome, e o sync grava quase sempre só o nome). Quantidade ausente sai "—", nunca 1 (#26).
+ */
+export function linhaItemCupomHtml(data: PrintOrderData, item: PrintOrderData['items'][number], i: number): string {
+  const descLines = [escapeHtml(item.descricao)];
+  const cor = textoDaCor(item.tintCorId, item.tintNomeCor, item.descricao);
+  if (cor !== null) descLines.push(`Cor: ${escapeHtml(cor)}`);
+  const quantidade = item.quantidade === null ? '—' : String(item.quantidade);
+  return `<tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${quantidade}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>${tdDescontoHtml(data, item)}
+      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
+    </tr>`;
+}
+
 export function openPrintOrder(data: PrintOrderData) {
   const obs = buildObsText(data);
   const installmentText = textoVencimentosDoCupom(data);
-  const itemsRows = data.items.map((item, i) => {
-    const descLines = [escapeHtml(item.descricao)];
-    if (item.tintCorId && item.tintNomeCor) {
-      const corParts = item.tintNomeCor.split(' - ');
-      const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
-      const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
-      const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
-      descLines.push(`Cor: ${escapeHtml(item.tintCorId)} - ${escapeHtml(simplified)}${embalagem ? ' - ' + escapeHtml(embalagem) : ''}`);
-    }
-    return `
-      <tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>${tdDescontoHtml(data, item)}
-        <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
-      </tr>
-    `;
-  }).join('');
+  const itemsRows = data.items.map((item, i) => linhaItemCupomHtml(data, item, i)).join('');
 
   const cnpjsComDesconto = ['15.422.799/0001-81', '51.027.034/0001-00', '55.555.305/0001-51'];
   // Com a quebra de desconto de item, a linha legada (que lê o `discount` do cabeçalho, sempre 0)
   // não entra: o "Desconto" do rodapé é um só.
-  const showDesconto = !data.quebraDesconto && data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
+  const showDesconto = !data.quebraDesconto && data.desconto !== null && data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Pedido ${escapeHtml(data.orderNumber)}</title>

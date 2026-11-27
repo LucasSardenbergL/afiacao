@@ -184,18 +184,20 @@ const EditorDoPedido = () => {
         {/* Forma de Pagamento — o card aparece também quando a listagem degradou ou
             falhou, mesmo sem opções: sumir levaria o aviso junto e a tela diria, por
             omissão, que este pedido não tem condição de pagamento (§7). */}
-        {(formas.length > 0 || formasDegradadas || formasErro) && (
+        {(formas.length > 0 || formasDegradadas || formasErro || selectedParcela) && (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Forma de Pagamento</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {formas.length > 0 && (
+              {/* Com a lista vazia (falhou/degradou), a condição SALVA continua visível (revisão /sales #29). */}
+              {(formas.length > 0 || selectedParcela) && (
                 <PaymentComboboxEdit
                   formas={formas}
                   selected={selectedParcela}
                   onSelect={setSelectedParcela}
-                  disabled={formularioTravado || parcelaTravada}
+                  disabled={formularioTravado || parcelaTravada || formas.length === 0}
+                  listaCompleta={formas.length > 0 && !formasDegradadas && !formasErro}
                 />
               )}
               <AvisoFormasPagamento

@@ -198,3 +198,15 @@ export function precoUtilizavel(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
+
+/**
+ * Preço de SERVIÇO da OS de afiação (`orders.items[].unitPrice`) na RELEITURA — a régua da criação
+ * (revisão /sales #11). O envio grava `price || 0` e apresenta ≤ 0 como "A orçar"
+ * (`precoServicoParaExibicao` em services/orderSubmission/helpers); reler o 0 como preço devolvia ao
+ * WhatsApp/cupom uma linha de R$ 0,00 sob um "Total" definitivo. ≤ 0 ou ausente → `null` (a orçar).
+ * Só para serviço: no produto, o 0 informado é brinde/bonificação e segue sendo preço.
+ */
+export function precoServicoDaOs(raw: unknown): number | null {
+  const n = precoUtilizavel(raw);
+  return n !== null && n > 0 ? n : null;
+}

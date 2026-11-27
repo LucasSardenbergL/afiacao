@@ -1,4 +1,5 @@
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
+import { textoDaCor } from '@/lib/cor-tinta';
 
 interface OrderItem {
   description: string;
@@ -15,6 +16,12 @@ interface OrderItem {
 }
 
 interface ShareOrderParams {
+  /**
+   * Nome curto da empresa do pedido ("Oben", "Colacor", "Colacor SC") para o cabeçalho, ou `null`
+   * quando o envio junta mais de uma (cada número já diz a sua). Obrigatório: o cabeçalho era
+   * "Pedido Colacor" fixo, inclusive para pedido da Oben (revisão /sales #24).
+   */
+  empresa: string | null;
   customerName: string;
   items: OrderItem[];
   total: number;
@@ -37,6 +44,7 @@ interface ShareOrderParams {
 }
 
 export function shareOrderViaWhatsApp({
+  empresa,
   customerName,
   items,
   total,
@@ -48,7 +56,9 @@ export function shareOrderViaWhatsApp({
   const itemsList = items
     .map(
       (item) => {
-        const tintInfo = item.tintCorId ? ` (Cor: ${item.tintCorId} — ${item.tintNomeCor})` : '';
+        // A cor que se sabe (o sync grava quase sempre só o nome) — a mesma régua do cupom.
+        const cor = textoDaCor(item.tintCorId, item.tintNomeCor, item.description);
+        const tintInfo = cor !== null ? ` (Cor: ${cor})` : '';
         // `quantity * unitPrice` com unitPrice null da 0 em JavaScript — a linha sairia como
         // "R$ 0,00" numa mensagem que vai PARA O CLIENTE, afirmando preco que ninguem apurou.
         // `lineTotal` null também não cai na conta bruta: é "não sei o líquido", e sai "—".
@@ -86,7 +96,8 @@ export function shareOrderViaWhatsApp({
     ? `*Subtotal conhecido: ${totalFmt}*\nTotal a definir: ${itensAOrcar} ${itensAOrcar === 1 ? 'item' : 'itens'} a orçar`
     : `*Total: ${totalFmt}*`;
 
-  const msg = `*Pedido Colacor*\n\nCliente: ${customerName}${orderInfo}\n\nItens:\n${itemsList}\n\n${descontoInfo}${totalInfo}\n\nData: ${dateStr}`;
+  const titulo = empresa ? `*Pedido ${empresa}*` : '*Pedido*';
+  const msg = `${titulo}\n\nCliente: ${customerName}${orderInfo}\n\nItens:\n${itemsList}\n\n${descontoInfo}${totalInfo}\n\nData: ${dateStr}`;
 
   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
   window.open(whatsappUrl, '_blank');

@@ -2,6 +2,7 @@
 // Extraídos de src/pages/SalesPrintDashboard.tsx (god-component split).
 import type { Json } from '@/integrations/supabase/types';
 import { ehDataPuraUtc } from '@/lib/pedido/data-pedido';
+import { precoServicoDaOs, totalLinhaOuAusente } from '@/lib/format';
 
 export type CompanyFilter = 'oben' | 'colacor' | 'afiacao';
 
@@ -45,6 +46,8 @@ export interface SalesOrderRow {
   id: string;
   customer_user_id: string;
   items: OrderItem[];
+  /** `true` = o jsonb `items` não se leu: `items` é `[]` e o pedido NÃO vira cupom (revisão /sales #27). */
+  itensIlegiveis?: true;
   subtotal: number;
   total: number;
   desconto?: number;
@@ -100,7 +103,7 @@ export function getPeriod(dateStr: string): 'manha' | 'tarde' {
  * frouxo de propósito, porque a folha imprime pedido de venda e pedido de AFIAÇÃO (`orders.items`,
  * outra forma: category/name/quantity/unitPrice). NULL = sem itens; não-array ou item não-objeto lança.
  */
-export function itensImpressaoDoJson(v: Json | null, fonte: string): OrderItem[] {
+function itensImpressaoDoJson(v: Json | null, fonte: string): OrderItem[] {
   if (v === null) return [];
   if (!Array.isArray(v)) throw new Error(`${fonte}: items não é array`);
   return v.map((item, i) => {
@@ -109,4 +112,34 @@ export function itensImpressaoDoJson(v: Json | null, fonte: string): OrderItem[]
     }
     return item;
   });
+}
+
+/**
+ * Leitura dos itens POR PEDIDO para a folha do dia: jsonb ilegível marca SÓ aquele pedido
+ * (`itensIlegiveis`), em vez de lançar e tirar da tela todos os pedidos do dia da mesma origem — e
+ * nunca vira "pedido sem itens" impresso com total positivo (revisão /sales #27).
+ */
+export function itensOuIlegivel(v: Json | null, fonte: string): { items: OrderItem[]; itensIlegiveis?: true } {
+  try {
+    return { items: itensImpressaoDoJson(v, fonte) };
+  } catch (e) {
+    console.warn('[impressão] itens ilegíveis — o pedido fica fora do cupom:', e);
+    return { items: [], itensIlegiveis: true };
+  }
+}
+
+/**
+ * Item da OS de afiação (`orders.items`: category/name/quantity/unitPrice) na forma que o cupom lê —
+ * a mesma normalização do painel de /sales (`mapAfiacaoDetail`). Antes a folha lia a OS com os nomes
+ * do pedido de venda: descrição vazia e preço ausente.
+ */
+export function itemDaOsParaImpressao(item: OrderItem): OrderItem {
+  const texto = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v : null);
+  const quantidade = typeof item.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : 1;
+  return {
+    descricao: texto(item.category) ?? texto(item.name) ?? 'Afiação',
+    quantidade,
+    valor_unitario: precoServicoDaOs(item.unitPrice),
+    valor_total: totalLinhaOuAusente(quantidade, precoServicoDaOs(item.unitPrice)),
+  };
 }

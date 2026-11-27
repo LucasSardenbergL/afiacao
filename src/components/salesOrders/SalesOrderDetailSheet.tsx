@@ -15,7 +15,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { resolverDescontoCupom } from '@/components/sales/print/descontoCupom';
 import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
 import { podeEditarPedido, rotuloEmpresa, statusDoPedido, type SalesOrder } from './types';
-import { itemTotal } from './print';
+import { itemTotal, motivoSemDocumento } from './print';
 import { descontosDoPainel, type FatiaDescontosItens } from './descontosDoPainel';
 import { formatPrecoOuAusente } from '@/lib/format';
 
@@ -114,6 +114,9 @@ export function SalesOrderDetailSheet({
   const desconto = order && leituraDesconto ? resolverDescontoCupom(order.items || [], leituraDesconto.leitura, order.total) : null;
   const quebra = desconto && desconto.quebra ? desconto : null;
   const falhaDesconto = leituraDesconto?.falha ?? null;
+  // Cupom/WhatsApp não saem com itens ilegíveis nem como outra empresa — a mesma recusa do clique.
+  const motivoBloqueio = order ? motivoSemDocumento(order) : null;
+  const documentoBloqueado = motivoBloqueio !== null;
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
@@ -216,7 +219,12 @@ export function SalesOrderDetailSheet({
                       </span>
                     </div>
                   ))}
-                  {(order.items?.length || 0) === 0 && (
+                  {/* Ilegível ≠ vazio (revisão /sales #27): o jsonb não é lista — não se sabe o que há. */}
+                  {order.itensIlegiveis ? (
+                    <p role="alert" data-testid="itens-ilegiveis" className="text-sm text-status-error">
+                      Não foi possível ler os itens deste pedido. Cupom e WhatsApp ficam bloqueados até a leitura voltar.
+                    </p>
+                  ) : (order.items?.length || 0) === 0 && (
                     <p className="text-sm text-muted-foreground">Sem itens neste pedido.</p>
                   )}
                 </div>
@@ -257,8 +265,11 @@ export function SalesOrderDetailSheet({
             </div>
 
             {/* Ações */}
+            {motivoBloqueio && !order.itensIlegiveis && (
+              <p data-testid="documento-bloqueado" className="text-xs text-status-warning">{motivoBloqueio}</p>
+            )}
             <div className="flex gap-2 border-t border-border pt-4">
-              <Button onClick={onPrint} className="flex-1 gap-2">
+              <Button onClick={onPrint} className="flex-1 gap-2" disabled={documentoBloqueado}>
                 <Printer className="w-4 h-4" />
                 Imprimir
               </Button>
@@ -269,7 +280,7 @@ export function SalesOrderDetailSheet({
                   Repetir
                 </Button>
               )}
-              <Button variant="outline" onClick={onShare} className="gap-2">
+              <Button variant="outline" onClick={onShare} className="gap-2" disabled={documentoBloqueado}>
                 <Share2 className="w-4 h-4" />
                 Compartilhar
               </Button>

@@ -32,6 +32,7 @@ const fixedDate = new Date(2026, 4, 15, 9, 30); // 15/05/2026 09:30 (TZ local �
 describe('shareOrderViaWhatsApp', () => {
   it('abre wa.me/?text= num _blank com a mensagem codificada', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'ACME LTDA',
       items: [{ description: 'Lixa', quantity: 2, unitPrice: 10 }],
       total: 20,
@@ -46,6 +47,7 @@ describe('shareOrderViaWhatsApp', () => {
 
   it('formata cada item: • qtd x descrição - total em BRL (qtd × preço)', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'Disco', quantity: 3, unitPrice: 50 }],
       total: 150,
@@ -60,6 +62,7 @@ describe('shareOrderViaWhatsApp', () => {
 
   it('inclui a cor da tinta quando tintCorId está presente', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'Base', quantity: 1, unitPrice: 100, tintCorId: 'COR123', tintNomeCor: 'Azul Profundo' }],
       total: 100,
@@ -72,6 +75,7 @@ describe('shareOrderViaWhatsApp', () => {
 
   it('omite a cor quando não há tintCorId', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'Base', quantity: 1, unitPrice: 100 }],
       total: 100,
@@ -82,6 +86,7 @@ describe('shareOrderViaWhatsApp', () => {
 
   it('lista os números de pedido quando fornecidos (juntos por " + ")', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'A', quantity: 1, unitPrice: 1 }],
       total: 1,
@@ -93,6 +98,7 @@ describe('shareOrderViaWhatsApp', () => {
 
   it('omite a linha de pedido quando orderNumbers está vazio', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'A', quantity: 1, unitPrice: 1 }],
       total: 1,
@@ -103,6 +109,7 @@ describe('shareOrderViaWhatsApp', () => {
 
   it('múltiplos itens viram múltiplas linhas', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [
         { description: 'A', quantity: 1, unitPrice: 1 },
@@ -126,6 +133,7 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
 
   it('sem lineTotal nem quebraDesconto, a mensagem é a de sempre, byte a byte', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'ACME LTDA',
       items: [
         { description: 'BASE METALIZADA', quantity: 1, unitPrice: 460.25 },
@@ -144,6 +152,7 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
 
   it('lineTotal informado substitui quantidade × preço na linha, sem inventar Subtotal/Desconto', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'BASE METALIZADA', quantity: 1, unitPrice: 460.25, lineTotal: 437.24 }],
       total: 437.24,
@@ -158,6 +167,7 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
 
   it('lineTotal null (líquido não sabido) sai "—" — nunca a conta bruta, nunca R$ 0,00', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [{ description: 'BASE BRANCA', quantity: 2, unitPrice: 584.5, lineTotal: null }],
       total: 1052.1,
@@ -168,6 +178,7 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
 
   it('com quebraDesconto, Subtotal e Desconto entram antes do Total — os rótulos do cupom', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'ACME LTDA',
       items: [
         { description: 'BASE METALIZADA', quantity: 1, unitPrice: 460.25, lineTotal: 437.24 },
@@ -188,6 +199,7 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
 
   it('desconto parcial: o rótulo diz quantos itens entraram e a linha não apurada sai "—"', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'X',
       items: [
         { description: 'BASE METALIZADA', quantity: 1, unitPrice: 460.25, lineTotal: 437.24 },
@@ -209,6 +221,7 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
 describe('shareOrderViaWhatsApp — itens a orçar (B4)', () => {
   it('linha sem preço sai "A orçar" e o total vira "Subtotal conhecido" + "Total a definir"', () => {
     shareOrderViaWhatsApp({
+      empresa: 'Colacor',
       customerName: 'ACME',
       items: [{ description: 'Lixa', quantity: 2, unitPrice: 10 }, { description: 'Afiação serra', quantity: 1, unitPrice: null }],
       total: 20,
@@ -223,9 +236,28 @@ describe('shareOrderViaWhatsApp — itens a orçar (B4)', () => {
   });
 
   it('sem itensAOrcar: mensagem de sempre ("*Total:")', () => {
-    shareOrderViaWhatsApp({ customerName: 'ACME', items: [{ description: 'Lixa', quantity: 2, unitPrice: 10 }], total: 20, date: '21/11/2026' });
+    shareOrderViaWhatsApp({ empresa: 'Colacor', customerName: 'ACME', items: [{ description: 'Lixa', quantity: 2, unitPrice: 10 }], total: 20, date: '21/11/2026' });
     const msg = decodedMessage();
     expect(msg).toContain('*Total: R$');
     expect(msg).not.toContain('Subtotal conhecido');
   });
+
+  // ── Revisão /sales #24: empresa e cor ────────────────────────────────────────────────────────
+  it('cabecalho e o da empresa do pedido, nunca Colacor fixo', () => {
+    shareOrderViaWhatsApp({ empresa: 'Oben', customerName: 'X', items: [{ description: 'L', quantity: 1, unitPrice: 1 }], total: 1, date: 'D' });
+    const msg = decodedMessage();
+    expect(msg.startsWith('*Pedido Oben*\n')).toBe(true);
+    expect(msg).not.toContain('Colacor');
+  });
+
+  it('envio que junta empresas tem cabecalho neutro', () => {
+    shareOrderViaWhatsApp({ empresa: null, customerName: 'X', items: [{ description: 'L', quantity: 1, unitPrice: 1 }], total: 1, orderNumbers: ['PV Oben 1', 'PV Colacor 2'], date: 'D' });
+    expect(decodedMessage().startsWith('*Pedido*\n')).toBe(true);
+  });
+
+  it('cor so com o nome (caso dominante do sync) aparece na mensagem', () => {
+    shareOrderViaWhatsApp({ empresa: 'Oben', customerName: 'X', items: [{ description: 'BASE ACRIL QT', quantity: 1, unitPrice: 10, tintNomeCor: '652J ACRIL BS - COBRE MEL - BS' }], total: 10, date: 'D' });
+    expect(decodedMessage()).toContain('BASE ACRIL QT (Cor: 652J ACRIL BS - COBRE MEL - QT)');
+  });
 });
+
