@@ -46,13 +46,13 @@ describe('8.2 — a busca do cadastro distingue erro de ausência', () => {
 
 describe('8.2 — caminho de envio do staff confere o cadastro ANTES da trava', () => {
   it('o submit chama o guard e retorna quando bloqueia', () => {
-    expect(corpoDoSubmit()).toMatch(/const bloqueioCadastro = bloqueioDoCadastro\(\);\s*if \(bloqueioCadastro\) \{\s*toast\.error\(bloqueioCadastro\);\s*return;/);
+    expect(corpoDoSubmit()).toMatch(/const bloqueioCadastro = bloqueioDoCadastro\(titularReenvio\);\s*if \(bloqueioCadastro\) \{\s*toast\.error\(bloqueioCadastro\);\s*return;/);
   });
 
   it('o guard: autoatendimento passa; "confirmado" sem id conta como não identificado; mensagem do puro', () => {
     const ini = hook.indexOf('const bloqueioDoCadastro = useCallback(');
     const g = hook.slice(ini, hook.indexOf('}, [', ini));
-    expect(g).toContain('if (isCustomerMode) return null;');
+    expect(g).toContain('if (isCustomerMode || titularDoReenvio) return null;');
     expect(g).toContain("!customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel'");
     expect(g).toContain('return mensagemBloqueioCadastro(estadoEfetivo);');
   });
@@ -76,6 +76,22 @@ describe('8.2 — o orçamento também confere o cadastro (Codex r1 P0-2: virava
   it('o service do orçamento recebe isCustomerMode (2ª camada)', () => {
     const ini = hook.indexOf('submitQuoteService(');
     expect(hook.slice(ini, ini + 200)).toContain('isCustomerMode,');
+  });
+});
+
+describe('8.2 — reenvio do mesmo envelope usa o titular congelado (Codex r3 P0: "Trocar" → 2º PV)', () => {
+  it('o submit libera o guard SÓ com o titular do reenvio e o envia ao service', () => {
+    expect(corpoDoSubmit()).toMatch(/const titularReenvio = titularDoReenvio\(\);\s*const bloqueioCadastro = bloqueioDoCadastro\(titularReenvio\);/);
+    expect(hook).toContain('customerUserId: customerUserId ?? titularReenvio,');
+  });
+  it('o titular do reenvio vem do puro, com a MESMA fp do envelope', () => {
+    expect(hook).toContain('return titularDoReenvioPuro(checkoutEnvRef.current, fingerprintDoPedido());');
+    expect(hook).toContain('const fingerprint = fingerprintDoPedido();');
+    expect(hook).not.toContain('const customerKey = String(selectedCustomer.local_user_id');
+  });
+  it('o orçamento NÃO usa o envelope (guard sem titular)', () => {
+    const ini = hook.indexOf('const submitQuote = useCallback(');
+    expect(hook.slice(ini, hook.indexOf('submitQuoteService(', ini))).toContain('bloqueioDoCadastro();');
   });
 });
 

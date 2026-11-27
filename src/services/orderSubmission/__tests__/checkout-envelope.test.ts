@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeCheckoutFingerprint, decideCheckoutEnvelope, avisoOsAfiacaoDesatualizada } from '../checkout-envelope';
+import { computeCheckoutFingerprint, decideCheckoutEnvelope, avisoOsAfiacaoDesatualizada, titularDoReenvio } from '../checkout-envelope';
 
 describe('computeCheckoutFingerprint', () => {
   const a = { account: 'oben', omie_codigo_produto: 1, quantity: 2, unit_price: 10 };
@@ -58,5 +58,23 @@ describe('avisoOsAfiacaoDesatualizada', () => {
   it('observação da OS desconhecida (reconciliada / marca antiga) → não inventa aviso', () => {
     expect(avisoOsAfiacaoDesatualizada({ assinatura: 'x', numero: null, observacao: null }, 'qualquer')).toBeNull();
     expect(avisoOsAfiacaoDesatualizada({ assinatura: 'x', numero: null }, 'qualquer')).toBeNull();
+  });
+});
+
+// 8.2 (Codex r3 P0): o reenvio do MESMO envelope comprometido usa o titular congelado — sem depender da
+// busca do cadastro de agora (a saída "Trocar" zeraria o checkoutId → 2º PV).
+describe('titularDoReenvio (8.2)', () => {
+  const env = (o: Partial<{ fingerprint: string; committed: boolean; customerUserId: string | null }>) =>
+    ({ checkoutId: 'ck', fingerprint: 'fp', committed: true, customerUserId: 'cu-1', ...o });
+  it('mesmo envelope comprometido com titular → o titular congelado', () => {
+    expect(titularDoReenvio(env({}), 'fp')).toBe('cu-1');
+  });
+  it.each([
+    ['sem envelope', null, 'fp'],
+    ['não comprometido', env({ committed: false }), 'fp'],
+    ['sem titular congelado (envelope antigo)', env({ customerUserId: null }), 'fp'],
+    ['outro carrinho/cliente (fp diferente)', env({}), 'outra'],
+  ] as const)('%s → null (segue o guard do cadastro)', (_n, e, fp) => {
+    expect(titularDoReenvio(e, fp)).toBeNull();
   });
 });
