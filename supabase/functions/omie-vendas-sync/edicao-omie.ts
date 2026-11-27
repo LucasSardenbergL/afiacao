@@ -477,6 +477,8 @@ export function recusaDaExclusao(desfecho: unknown): string | null {
       return "Exclusão recusada: este registro não é mais um orçamento (virou pedido?). Recarregue a página.";
     case "pedido_alterado":
       return "Exclusão recusada: o pedido mudou (conta ou PV) depois da conferência. Recarregue a página.";
+    case "gemeo_alterado":
+      return "Exclusão recusada: o status do pedido no Omie mudou depois da conferência (o cancelamento não vale mais). Recarregue a página.";
     default:
       return `Exclusão recusada: resposta inesperada ao apagar o pedido (${String(desfecho)}).`;
   }

@@ -69,7 +69,29 @@ ALTER TABLE public.pedido_edicao_omie_tentativa ENABLE ROW LEVEL SECURITY;
 -- Nenhuma policy: anon/authenticated não leem nem escrevem a tabela; a equipe passa pelas RPCs
 -- SECURITY DEFINER com gate de papel.
 REVOKE ALL ON TABLE public.pedido_edicao_omie_tentativa FROM PUBLIC, anon, authenticated;
+-- Fecho por ALLOWLIST (Codex no diff): o default ACL de public dá escrita também a sandbox_exec* (BYPASSRLS) —
+-- quem escrevesse direto aqui tiraria um PV de "divergente" sem o master. Fica só o dono, service_role e claude_ro.
+DO $acl_tabela$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT DISTINCT a.grantee::regrole::text AS papel
+             FROM pg_catalog.pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+            WHERE c.oid = 'public.pedido_edicao_omie_tentativa'::regclass
+              AND a.grantee <> 0 AND a.grantee <> c.relowner
+              AND a.grantee::regrole::text NOT IN ('service_role', 'claude_ro') LOOP
+    EXECUTE format('REVOKE ALL ON public.pedido_edicao_omie_tentativa FROM %s', r.papel);
+  END LOOP;
+END
+$acl_tabela$;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.pedido_edicao_omie_tentativa TO service_role;
+DO $acl_leitor$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT SELECT ON TABLE public.pedido_edicao_omie_tentativa TO claude_ro;  -- diagnóstico read-only
+  END IF;
+END
+$acl_leitor$;
 
 -- Situação de uma tentativa. Só CLASSIFICA os valores (não lê tabela): quem relê a linha é o
 -- chamador, num comando próprio. STABLE por now(). Desfecho desconhecido (o CHECK impede) cai em
@@ -171,6 +193,44 @@ BEGIN
    WHERE t.account = v_conta AND t.omie_pedido_id = v_pv
      AND (t.desfecho IS NULL OR t.desfecho = 'divergente');
   RETURN CASE WHEN v_situacao = 'divergente' THEN 'divergente' ELSE 'em_edicao' END;
+END;
+$$;
+
+-- ── 1b) Revisão de crédito COM posse (Codex no diff): a tentativa reservada fica presa (FOR UPDATE) na MESMA
+--       transação que grava a revisão. Encerrar o token (tela que desistiu) espera esta gravação; tentativa já
+--       encerrada, vencida ou de outro pedido não grava revisão nenhuma — sem isto, a revisão de um save
+--       abandonado podia ganhar a `seq` depois da do save que o substituiu. A credito_registrar_revisao é intacta.
+CREATE OR REPLACE FUNCTION public.pedido_edicao_omie_registrar_revisao(
+  p_token               uuid,
+  p_sales_order_id      uuid,
+  p_company             text,
+  p_contexto            text,
+  p_omie_codigo_cliente bigint,
+  p_codigo_parcela      text,
+  p_parcela_origem      text,
+  p_itens               jsonb,
+  p_user_id             uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM 1
+     FROM public.pedido_edicao_omie_tentativa
+    WHERE token = p_token
+      AND sales_order_id = p_sales_order_id
+      AND despachada_em IS NULL
+      AND desfecho IS NULL
+      AND reivindicada_em >= clock_timestamp() - interval '10 minutes'
+      FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'pedido_edicao_omie_registrar_revisao: a tentativa nao esta mais reservada (encerrada, vencida ou de outro pedido) — revisao nao registrada'
+      USING ERRCODE = '55000';
+  END IF;
+  RETURN public.credito_registrar_revisao(
+    p_sales_order_id, p_company, p_contexto, p_omie_codigo_cliente, p_codigo_parcela, p_parcela_origem, p_itens, p_user_id);
 END;
 $$;
 
@@ -353,7 +413,9 @@ CREATE OR REPLACE FUNCTION public.sales_order_excluir_conferido(
   p_sales_order_id    uuid,
   p_somente_orcamento boolean,
   p_account           text,
-  p_omie_pedido_id    bigint
+  p_omie_pedido_id    bigint,
+  p_gemeo_presente    boolean,
+  p_gemeo_status      text
 )
 RETURNS text
 LANGUAGE plpgsql
@@ -365,6 +427,8 @@ DECLARE
   v_pv     bigint;
   v_status text;
   v_envio  timestamptz;
+  v_gemeo_status text;
+  v_gemeo_achou  boolean;
 BEGIN
   SELECT account, omie_pedido_id, status, envio_omie_reivindicado_em
     INTO v_conta, v_pv, v_status, v_envio
@@ -376,6 +440,22 @@ BEGIN
   END IF;
   IF v_conta IS DISTINCT FROM p_account OR v_pv IS DISTINCT FROM p_omie_pedido_id THEN
     RETURN 'pedido_alterado';
+  END IF;
+  -- Com PV, a prova que autorizou a exclusão é o status do GÊMEO (cancelado no Omie, trazido pelo sync):
+  -- reconferida sob lock — o sync pode tê-lo reativado depois da leitura da edge (Codex no diff).
+  IF v_pv IS NOT NULL THEN
+    IF p_gemeo_presente IS NULL THEN
+      RAISE EXCEPTION 'sales_order_excluir_conferido: pedido com PV exige o gêmeo lido' USING ERRCODE = '22023';
+    END IF;
+    SELECT status INTO v_gemeo_status
+      FROM public.sales_orders
+     WHERE account = v_conta AND hash_payload = 'omie_' || v_conta || '_' || v_pv
+       FOR SHARE;
+    v_gemeo_achou := FOUND;
+    IF v_gemeo_achou IS DISTINCT FROM p_gemeo_presente
+       OR (v_gemeo_achou AND v_gemeo_status IS DISTINCT FROM p_gemeo_status) THEN
+      RETURN 'gemeo_alterado';
+    END IF;
   END IF;
   IF EXISTS (
     SELECT 1 FROM public.pedido_edicao_omie_tentativa t
@@ -579,14 +659,16 @@ COMMENT ON FUNCTION public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz,
   'Grava o despacho (antes da 1ª mutação no Omie) e move a versão do pedido: despachado | ausente | excluido | pedido_alterado | gemeo_alterado | perdeu_posse. Só service_role. Migration 20261127100200.';
 COMMENT ON FUNCTION public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid) IS
   'Write-back da edição com posse: confere deleted_at e a tentativa despachada deste token sob FOR UPDATE, grava pela versão de 8 args e conclui a tentativa na mesma transação. Só service_role. Migration 20261127100200.';
-COMMENT ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint) IS
-  'Exclusão do pedido com identidade (conta, PV) conferida sob lock e respeitando edição em curso: excluido | ausente | pedido_alterado | edicao_em_curso | envio_em_curso | nao_e_orcamento. Só service_role. Migration 20261127100200.';
+COMMENT ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text) IS
+  'Exclusão do pedido com identidade (conta, PV) e status do gêmeo conferidos sob lock, respeitando edição em curso: excluido | ausente | pedido_alterado | gemeo_alterado | edicao_em_curso | envio_em_curso | nao_e_orcamento. Só service_role. Migration 20261127100200.';
 
 -- ── Privilégios: o default do Supabase concede EXECUTE a anon/authenticated em função nova. ──
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_situacao(timestamptz, timestamptz, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_situacao(timestamptz, timestamptz, text) TO service_role;
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.pedido_edicao_omie_registrar_revisao(uuid, uuid, text, text, bigint, text, text, jsonb, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_registrar_revisao(uuid, uuid, text, text, bigint, text, text, jsonb, uuid) TO service_role;
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text) TO service_role;
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_liberar(uuid) FROM PUBLIC, anon, authenticated;
@@ -595,8 +677,8 @@ REVOKE ALL ON FUNCTION public.pedido_edicao_omie_marcar_divergente(uuid, text) F
 GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_marcar_divergente(uuid, text) TO service_role;
 REVOKE ALL ON FUNCTION public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid) TO service_role;
-REVOKE ALL ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint) TO service_role;
+REVOKE ALL ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text) TO service_role;
 REVOKE ALL ON FUNCTION public.sales_orders_exclusao_respeita_edicao() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_exige_equipe(boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_estado(uuid) FROM PUBLIC, anon;
@@ -605,6 +687,38 @@ REVOKE ALL ON FUNCTION public.pedido_edicao_omie_encerrar_envio(uuid, uuid) FROM
 GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_encerrar_envio(uuid, uuid) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.pedido_edicao_omie_resolver(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_resolver(uuid, uuid) TO authenticated, service_role;
+
+-- Fecho por ALLOWLIST também no EXECUTE (o default ACL concede a sandbox_exec*): fica o dono, service_role e,
+-- nas 3 RPCs da tela, authenticated (o gate de papel é dentro delas).
+DO $acl_funcoes$
+DECLARE
+  f text;
+  r record;
+BEGIN
+  FOREACH f IN ARRAY ARRAY[
+    'public.pedido_edicao_omie_situacao(timestamptz, timestamptz, text)',
+    'public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid)',
+    'public.pedido_edicao_omie_registrar_revisao(uuid, uuid, text, text, bigint, text, text, jsonb, uuid)',
+    'public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text)',
+    'public.pedido_edicao_omie_liberar(uuid)',
+    'public.pedido_edicao_omie_marcar_divergente(uuid, text)',
+    'public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid)',
+    'public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text)',
+    'public.sales_orders_exclusao_respeita_edicao()',
+    'public.pedido_edicao_omie_exige_equipe(boolean)',
+    'public.pedido_edicao_omie_estado(uuid)',
+    'public.pedido_edicao_omie_encerrar_envio(uuid, uuid)',
+    'public.pedido_edicao_omie_resolver(uuid, uuid)'] LOOP
+    FOR r IN SELECT DISTINCT a.grantee::regrole::text AS papel
+               FROM pg_catalog.pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+              WHERE p.oid = f::regprocedure
+                AND a.grantee <> 0 AND a.grantee <> p.proowner
+                AND a.grantee::regrole::text NOT IN ('service_role', 'authenticated') LOOP
+      EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %s', f, r.papel);
+    END LOOP;
+  END LOOP;
+END
+$acl_funcoes$;
 
 -- ── PÓS: existência, privilégios, as funções da edge no ar preservadas, e a régua EXECUTADA. ──
 DO $post$
@@ -632,7 +746,7 @@ BEGIN
      OR to_regprocedure('public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text)') IS NULL
      OR to_regprocedure('public.pedido_edicao_omie_liberar(uuid)') IS NULL
      OR to_regprocedure('public.pedido_edicao_omie_marcar_divergente(uuid, text)') IS NULL
-     OR to_regprocedure('public.sales_order_excluir_conferido(uuid, boolean, text, bigint)') IS NULL
+     OR to_regprocedure('public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text)') IS NULL
      OR to_regprocedure('public.pedido_edicao_omie_estado(uuid)') IS NULL
      OR to_regprocedure('public.pedido_edicao_omie_encerrar_envio(uuid, uuid)') IS NULL
      OR to_regprocedure('public.pedido_edicao_omie_resolver(uuid, uuid)') IS NULL THEN
@@ -644,7 +758,7 @@ BEGIN
      OR has_function_privilege('authenticated', 'public.pedido_edicao_omie_liberar(uuid)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.pedido_edicao_omie_marcar_divergente(uuid, text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid)', 'EXECUTE')
-     OR has_function_privilege('authenticated', 'public.sales_order_excluir_conferido(uuid, boolean, text, bigint)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.pedido_edicao_omie_exige_equipe(boolean)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.pedido_edicao_omie_estado(uuid)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.pedido_edicao_omie_encerrar_envio(uuid, uuid)', 'EXECUTE')
@@ -654,7 +768,7 @@ BEGIN
   IF NOT has_function_privilege('service_role', 'public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid)', 'EXECUTE')
      OR NOT has_function_privilege('service_role', 'public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text)', 'EXECUTE')
      OR NOT has_function_privilege('service_role', 'public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid)', 'EXECUTE')
-     OR NOT has_function_privilege('service_role', 'public.sales_order_excluir_conferido(uuid, boolean, text, bigint)', 'EXECUTE')
+     OR NOT has_function_privilege('service_role', 'public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.pedido_edicao_omie_estado(uuid)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.pedido_edicao_omie_encerrar_envio(uuid, uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'A7 FALHOU: quem precisa chamar ficou sem EXECUTE';
@@ -673,6 +787,34 @@ BEGIN
      OR public.pedido_edicao_omie_situacao(now(), NULL, 'abandonada') <> 'encerrada'
      OR public.pedido_edicao_omie_situacao(now(), now(), 'resolvida') <> 'encerrada' THEN
     RAISE EXCEPTION 'A9 FALHOU: régua da situação errada — posse presa para sempre ou liberada com o Omie mexido';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+              WHERE c.oid = 'public.pedido_edicao_omie_tentativa'::regclass
+                AND a.grantee <> c.relowner
+                AND (a.grantee = 0 OR a.grantee::regrole::text NOT IN ('service_role', 'claude_ro'))) THEN
+    RAISE EXCEPTION 'A10 FALHOU: algum papel fora da allowlist acessa a tabela de tentativas (sandbox_exec?) — tiraria um PV de divergente sem o master';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+              WHERE p.oid IN (SELECT x::regprocedure FROM unnest(ARRAY[
+    'public.pedido_edicao_omie_situacao(timestamptz, timestamptz, text)',
+    'public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid)',
+    'public.pedido_edicao_omie_registrar_revisao(uuid, uuid, text, text, bigint, text, text, jsonb, uuid)',
+    'public.pedido_edicao_omie_despachar(uuid, uuid, timestamptz, boolean, text)',
+    'public.pedido_edicao_omie_liberar(uuid)',
+    'public.pedido_edicao_omie_marcar_divergente(uuid, text)',
+    'public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz, uuid)',
+    'public.sales_order_excluir_conferido(uuid, boolean, text, bigint, boolean, text)',
+    'public.sales_orders_exclusao_respeita_edicao()',
+    'public.pedido_edicao_omie_exige_equipe(boolean)',
+    'public.pedido_edicao_omie_estado(uuid)',
+    'public.pedido_edicao_omie_encerrar_envio(uuid, uuid)',
+    'public.pedido_edicao_omie_resolver(uuid, uuid)']) x)
+                AND a.grantee <> p.proowner
+                AND (a.grantee = 0 OR a.grantee::regrole::text NOT IN ('service_role', 'authenticated'))) THEN
+    RAISE EXCEPTION 'A11 FALHOU: alguma RPC da posse executável por papel fora da allowlist';
+  END IF;
+  IF to_regprocedure('public.pedido_edicao_omie_registrar_revisao(uuid, uuid, text, text, bigint, text, text, jsonb, uuid)') IS NULL THEN
+    RAISE EXCEPTION 'A12 FALHOU: revisão de crédito com posse ausente — a edge v1.55 registraria revisão de save abandonado';
   END IF;
   RAISE NOTICE 'posse durável: tentativas (RLS, sem acesso direto, 1 viva por PV) + 10 RPCs + trigger do soft-delete; funções da edge no ar preservadas';
 END

@@ -27,7 +27,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     aplicar_nao_conclui:W3b excluir_sem_edicao:X1 excluir_sem_identidade:X2 trigger_sem_filtro:S1
     trigger_invoker:S1 estado_sem_gate:G1 resolver_sem_master:V1 resolver_sem_token:V2
     resolver_sem_bump:V4 encerrar_sem_cancelar:E4 lapide_outro_token:E2 grant_vaza_sem_post:G3
-    regua_100min:A0"
+    regua_100min:A0 revisao_sem_posse:Q2 allowlist_fora_sem_post:G7 excluir_sem_gemeo:X5"
   LOGDIR="$(mktemp -d "/tmp/falsifica-pedido-edicao-posse.XXXXXX")"
   falhas=0; vermelhas=0
   for loc in C pt_BR.UTF-8; do
@@ -110,6 +110,10 @@ case "${SABOTAGEM:-}" in
   lapide_outro_token)     sab "s/^    VALUES (p_token, v_conta, v_pv, p_sales_order_id, v_uid, now(), 'abandonada'/    VALUES (gen_random_uuid(), v_conta, v_pv, p_sales_order_id, v_uid, now(), 'abandonada'/" ;;
   grant_vaza_sem_post)    antes_do_post 'GRANT EXECUTE ON FUNCTION public.pedido_edicao_omie_reivindicar(uuid, timestamptz, uuid, uuid) TO authenticated;'
                           sab "s/RAISE EXCEPTION 'A6 FALHOU/RAISE NOTICE 'A6 FALHOU/" ;;
+  revisao_sem_posse)      sab '/pedido_edicao_omie_registrar_revisao($/,/^\$\$;/ s/^  IF NOT FOUND THEN$/  IF false THEN/' ;;
+  allowlist_fora_sem_post) sab "s/AND a.grantee::regrole::text NOT IN ('service_role', 'claude_ro') LOOP/AND false LOOP/"
+                          sab "s/RAISE EXCEPTION 'A10 FALHOU/RAISE NOTICE 'A10 FALHOU/" ;;
+  excluir_sem_gemeo)      sab 's/^  IF v_pv IS NOT NULL THEN$/  IF false THEN/' ;;
   regua_100min)           sab "/FUNCTION public.pedido_edicao_omie_situacao(/,/^\$\$;/ s/interval '10 minutes'/interval '100 minutes'/g" ;;
   *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
@@ -188,6 +192,20 @@ CREATE TRIGGER update_sales_orders_updated_at BEFORE UPDATE ON public.sales_orde
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.sales_orders, public.order_items TO service_role;
 GRANT SELECT, UPDATE ON public.sales_orders TO authenticated;
+-- PROD: o default ACL de public concede tudo a sandbox_exec* (BYPASSRLS) — o fecho por allowlist tem de tirar.
+CREATE ROLE sandbox_exec BYPASSRLS;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO sandbox_exec;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO sandbox_exec;
+-- Dependência (não sob teste): a RPC de revisão de crédito VIVA tem esta assinatura (pré-flight 2026-11-27);
+-- o stub grava cada chamada para provar se a revisão foi ou não registrada.
+CREATE TABLE public.revisoes_registradas (sales_order_id uuid, em timestamptz DEFAULT clock_timestamp());
+CREATE FUNCTION public.credito_registrar_revisao(p_sales_order_id uuid, p_company text, p_contexto text,
+  p_omie_codigo_cliente bigint, p_codigo_parcela text, p_parcela_origem text, p_itens jsonb, p_user_id uuid)
+  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+  AS $f$ BEGIN INSERT INTO public.revisoes_registradas (sales_order_id) VALUES (p_sales_order_id);
+            RETURN jsonb_build_object('revisao', gen_random_uuid(), 'seq', 1); END $f$;
+REVOKE ALL ON FUNCTION public.credito_registrar_revisao(uuid, text, text, bigint, text, text, jsonb, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.credito_registrar_revisao(uuid, text, text, bigint, text, text, jsonb, uuid) TO service_role;
 SQL
 P -f "$FIX_8ARGS" >/dev/null
 P -c "REVOKE ALL ON FUNCTION public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz) FROM PUBLIC, anon, authenticated; GRANT EXECUTE ON FUNCTION public.aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamptz) TO service_role;"
@@ -329,13 +347,34 @@ eq "E7 token de outro pedido -> 22023" "$(estado_sql authenticated "$EMP" "SELEC
 eq "E8 cliente nao encerra (42501)" "$(estado_sql authenticated "$CLI" "SELECT public.pedido_edicao_omie_encerrar_envio('$EN3', '$T10')")" "42501"
 
 echo "── exclusão ──"
-eq "X1 exclusao conferida com edicao em voo recusa" "$(SR "SELECT public.sales_order_excluir_conferido('$EN3', false, 'oben', 908)")" "edicao_em_curso"
-eq "X2 identidade diferente da provada recusa" "$(SR "SELECT public.sales_order_excluir_conferido('$B', false, 'oben', 999)")" "pedido_alterado"
-eq "X3 divergente nao segura a exclusao (PV ja cancelado no Omie)" "$(SR "SELECT public.sales_order_excluir_conferido('$DV2', false, 'oben', 905)")" "excluido"
+eq "X1 exclusao conferida com edicao em voo recusa" "$(SR "SELECT public.sales_order_excluir_conferido('$EN3', false, 'oben', 908, false, NULL)")" "edicao_em_curso"
+eq "X2 identidade diferente da provada recusa" "$(SR "SELECT public.sales_order_excluir_conferido('$B', false, 'oben', 999, false, NULL)")" "pedido_alterado"
+eq "X3 divergente nao segura a exclusao (PV ja cancelado no Omie)" "$(SR "SELECT public.sales_order_excluir_conferido('$DV2', false, 'oben', 905, false, NULL)")" "excluido"
 eq "X3b a tentativa divergente fica (sem FK)" "$(sit_tok "$T7")" "despachada"
-eq "X4 orcamento: so apaga se ainda e orcamento" "$(SR "SELECT public.sales_order_excluir_conferido('$B', true, 'oben', 901)")" "nao_e_orcamento"
+eq "X4 orcamento: so apaga se ainda e orcamento" "$(SR "SELECT public.sales_order_excluir_conferido('$B', true, 'oben', 901, false, NULL)")" "nao_e_orcamento"
 eq "S1 soft-delete do front com edicao em voo -> 55P03" "$(estado_sql authenticated "$EMP" "UPDATE public.sales_orders SET deleted_at = now() WHERE id = '$EN3'")" "55P03"
 eq "S2 soft-delete sem edicao em curso passa" "$(estado_sql authenticated "$EMP" "UPDATE public.sales_orders SET deleted_at = now() WHERE id = '$SEMPV'")" "SEM_ERRO"
+
+XG=aaaaaaaa-0000-0000-0000-000000000015
+XGG=aaaaaaaa-0000-0000-0000-000000000016
+novo "$XG" oben 911
+novo "$XGG" oben 911 "'omie_oben_911'"
+P -c "UPDATE public.sales_orders SET status = 'enviado' WHERE id = '$XGG'"
+eq "X5 gemeo reativado pelo sync depois da prova de cancelamento recusa" "$(SR "SELECT public.sales_order_excluir_conferido('$XG', false, 'oben', 911, true, 'cancelado')")" "gemeo_alterado"
+eq "X6 com o gemeo como lido, exclui" "$(SR "SELECT public.sales_order_excluir_conferido('$XG', false, 'oben', 911, true, 'enviado')")" "excluido"
+eq "X7 pedido com PV sem o gemeo lido -> 22023" "$(estado_sql service_role "$EMP" "SELECT public.sales_order_excluir_conferido('$B', false, 'oben', 901, NULL, NULL)")" "22023"
+
+echo "── revisão de crédito com posse ──"
+RV=aaaaaaaa-0000-0000-0000-000000000017
+novo "$RV" oben 912
+TR="$(tok)"; reiv "$RV" "$TR" >/dev/null
+revisao_sql() { echo "SELECT (public.pedido_edicao_omie_registrar_revisao('$1', '$2', 'oben', 'edicao', 1, '000', 'informada', '[]', NULL)) ? 'revisao'"; }
+eq "Q1 tentativa reservada registra a revisao" "$(SR "$(revisao_sql "$TR" "$RV")")" "t"
+eq "Q1b uma revisao gravada" "$(Pq -c "SELECT count(*) FROM public.revisoes_registradas WHERE sales_order_id = '$RV'")" "1"
+AU "$EMP" "SELECT public.pedido_edicao_omie_encerrar_envio('$RV', '$TR')" >/dev/null
+eq "Q2 tentativa abandonada NAO registra revisao (55000)" "$(estado_sql service_role "$EMP" "$(revisao_sql "$TR" "$RV")")" "55000"
+eq "Q2b continua uma revisao so" "$(Pq -c "SELECT count(*) FROM public.revisoes_registradas WHERE sales_order_id = '$RV'")" "1"
+eq "Q2c token de outro pedido nao registra (55000)" "$(estado_sql service_role "$EMP" "$(revisao_sql "$TR" "$A")")" "55000"
 
 echo "── papéis e privilégios ──"
 eq "G1 cliente nao le o estado (42501)" "$(estado_sql authenticated "$CLI" "SELECT public.pedido_edicao_omie_estado('$A')")" "42501"
@@ -343,6 +382,8 @@ eq "G2 anon nao le o estado (42501)" "$(estado_sql anon "$EMP" "SELECT public.pe
 eq "G3 authenticated nao reivindica (42501)" "$(estado_sql authenticated "$EMP" "SELECT public.pedido_edicao_omie_reivindicar('$B', now(), gen_random_uuid(), NULL)")" "42501"
 eq "G4 authenticated nao le a tabela (42501)" "$(estado_sql authenticated "$EMP" "SELECT count(*) FROM public.pedido_edicao_omie_tentativa")" "42501"
 eq "G5 authenticated nao grava write-back (42501)" "$(estado_sql authenticated "$EMP" "$(aplicar_sql "$A" "$T3")")" "42501"
+eq "G7 sandbox_exec (BYPASSRLS, default ACL) NAO escreve a tabela (42501)" "$(estado_sql sandbox_exec "$EMP" "UPDATE public.pedido_edicao_omie_tentativa SET desfecho = 'resolvida', desfecho_em = now()")" "42501"
+eq "G8 sandbox_exec NAO executa a reivindicacao (42501)" "$(estado_sql sandbox_exec "$EMP" "SELECT public.pedido_edicao_omie_reivindicar('$B', now(), gen_random_uuid(), NULL)")" "42501"
 eq "G6 estado de PV livre" "$(AU "$EMP" "SELECT r->>'situacao' FROM public.pedido_edicao_omie_estado('$SEMPV') r")" "livre"
 
 echo "── corridas (duas sessões reais) ──"
@@ -379,6 +420,20 @@ if espera "query LIKE '%k2-disputa%' AND wait_event_type = 'Lock'"; then ok "K2a
 wait "$PA"; wait "$PB"
 eq "K2 o gemeo que esperava fica em_edicao" "$(cat "$TMPD/k2b.out")" "em_edicao"
 eq "K2b uma so tentativa viva no PV" "$(Pq -c "SELECT count(*) FROM public.pedido_edicao_omie_tentativa WHERE account = 'oben' AND omie_pedido_id = 910 AND desfecho IS NULL")" "1"
+
+# K3: a revisão de crédito segura a tentativa; o encerramento da tela que esperava só abandona DEPOIS dela.
+K3=aaaaaaaa-0000-0000-0000-000000000018
+novo "$K3" oben 913
+T3K="$(tok)"; reiv "$K3" "$T3K" >/dev/null
+( P -c "BEGIN" -c "SET ROLE service_role" -c "$(revisao_sql "$T3K" "$K3")" -c "SELECT pg_sleep(1.5) /* k3-segura */" -c "COMMIT" > "$TMPD/k3a.log" 2>&1 ) &
+PA=$!
+espera "query LIKE '%k3-segura%' AND state = 'active'" || bad "K3 sessao A nao chegou ao sleep"
+( AU "$EMP" "SELECT public.pedido_edicao_omie_encerrar_envio('$K3', '$T3K') /* k3-encerra */" > "$TMPD/k3b.out" 2>&1 ) &
+PB=$!
+if espera "query LIKE '%k3-encerra%' AND wait_event_type = 'Lock'"; then ok "K3a o encerramento esperou a revisao em curso"; else bad "K3a o encerramento esperou a revisao em curso — nao esperou"; fi
+wait "$PA"; wait "$PB"
+eq "K3 depois da revisao, a tentativa e abandonada" "$(cat "$TMPD/k3b.out")" "abandonada"
+eq "K3b e o despacho dela nao passa" "$(desp "$K3" "$T3K")" "perdeu_posse"
 
 echo "RESULTADO: $PASS OK / $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

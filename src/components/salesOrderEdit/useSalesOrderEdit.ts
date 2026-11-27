@@ -26,7 +26,7 @@ import { totalLinhaOuAusente } from '@/lib/format';
 import { mesmosItens, valoresDaEdicaoLocal } from './edicaoLocal';
 import {
   comPrazo, desfechoDoEnvioPeloBanco, type DivergenciaDuravel, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS,
-  TRAVA_CONCORRENTE, TRAVA_DIVERGENTE, TRAVA_EM_CURSO, travaDaPosse, type TravaDoEnvio,
+  TRAVA_CONCORRENTE, TRAVA_DIVERGENTE, TRAVA_EM_ANDAMENTO, TRAVA_EM_CURSO, travaDaPosse, type TravaDoEnvio,
 } from './envioEdicao';
 import { encerrarEnvio, estadoDoPedido, iniciarEnvio, liberarDivergente, marcarDivergente, ouvirRegistro } from './registroEnvios';
 import { precoDeNascimento, type InsumosDoNascimento } from '@/lib/pricing/precoDeNascimento';
@@ -187,6 +187,12 @@ export function useSalesOrderEdit() {
         if (velha()) return;
         setPrecisaRecarregar(posse.trava);
         setDivergenciaDuravel(posse.divergencia);
+        // O banco é a verdade: PV livre ⇒ o "divergente" que esta aba guardou (resposta perdida, `em_voo` na hora)
+        // já se resolveu — concluído, liberado ou resolvido pelo master. Sai da memória, e o cache relê os valores.
+        if (posse.trava === null && estadoDoPedido(o.id).divergente) {
+          liberarDivergente(o.id);
+          void invalidarCachesDoPedido(queryClient, o.id);
+        }
       }
       setOrder(o);
       setItems(o.items || []);
@@ -563,17 +569,21 @@ export function useSalesOrderEdit() {
     // Desfecho desconhecido (#30; Codex no desenho do PR 2): o banco decide, e a consulta ENCERRA o token — se a
     // edge ainda não despachou, nada deste save vai mais ao Omie. Leitura que falha ou não fecha = divergente.
     const desfechoDesconhecido = async (titulo: string) => {
-      let desfecho: 'concluido' | 'nao_alterado' | 'divergente' = 'divergente';
-      if (tokenEnvio) {
+      let desfecho: 'concluido' | 'nao_alterado' | 'em_voo' | 'divergente' = 'divergente';
+      // `em_voo` = a edge ainda está no Omie: reconsulta algumas vezes antes de desistir (Codex no diff — virar
+      // divergente na hora perdia o sucesso que chega logo depois).
+      for (let tentativa = 0; tokenEnvio && tentativa <= PRAZOS.reconsultas; tentativa++) {
+        if (tentativa > 0) await new Promise((r) => setTimeout(r, PRAZOS.reconsultaMs));
         try {
           const lido = await comPrazo(
             Promise.resolve(supabase.rpc('pedido_edicao_omie_encerrar_envio', { p_sales_order_id: pedidoEnviado, p_token: tokenEnvio })),
             PRAZOS.corpoMs,
           );
-          if (lido.ok) desfecho = desfechoDoEnvioPeloBanco(lido.valor);
+          desfecho = lido.ok ? desfechoDoEnvioPeloBanco(lido.valor) : 'divergente';
         } catch {
           desfecho = 'divergente';
         }
+        if (desfecho !== 'em_voo') break;
       }
       if (desfecho === 'divergente') marcarDivergente(pedidoEnviado);
       // Concluído: o refetch disparado no despacho pode ter relido o total de ANTES do write-back.
@@ -592,6 +602,13 @@ export function useSalesOrderEdit() {
           description: 'O banco confirmou: este salvamento não alterou o Omie. Recarregue o pedido e salve de novo.',
           duration: 12000,
         });
+        setSaving(false);
+        return;
+      }
+      if (desfecho === 'em_voo') {
+        // Nem sucesso nem divergência: recarregar mais tarde lê o banco (livre ⇒ edita; divergente ⇒ trava durável).
+        setPrecisaRecarregar(TRAVA_EM_ANDAMENTO);
+        toast.error(titulo, { description: TRAVA_EM_ANDAMENTO.mensagem, duration: 12000 });
         setSaving(false);
         return;
       }
@@ -771,8 +788,11 @@ export function useSalesOrderEdit() {
           });
           setSaving(false);
           if (recusa.blocked === 'edicao_divergente') {
-            // Relê o pedido: a trava durável e o token que o master precisa para liberar vêm do banco.
-            void loadOrder();
+            // A trava durável e o token que o master precisa vêm do banco. Só a posse — o `loadOrder` aqui zeraria
+            // a tela enquanto este envio ainda consta em voo (Codex no diff).
+            setPrecisaRecarregar(TRAVA_DIVERGENTE);
+            const posse = travaDaPosse(await supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: pedidoEnviado }));
+            if (naTela()) setDivergenciaDuravel(posse.divergencia);
           } else {
             setPrecisaRecarregar(TRAVA_EM_CURSO);
           }

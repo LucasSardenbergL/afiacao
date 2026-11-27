@@ -332,6 +332,7 @@ Deno.test("recusaDaExclusao: excluido/ausente seguem; edição em curso e identi
     ["envio_em_curso", "sendo enviado ao Omie"],
     ["nao_e_orcamento", "não é mais um orçamento"],
     ["pedido_alterado", "mudou (conta ou PV)"],
+    ["gemeo_alterado", "o cancelamento não vale mais"],
     ["xyz", "resposta inesperada"],
   ];
   for (const [d, trecho] of casos) {

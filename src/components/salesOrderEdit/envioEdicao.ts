@@ -6,7 +6,7 @@ import type { QueryClient } from '@tanstack/react-query';
  * para sempre — e a tela do pedido presa em "carregando". A edge tem teto de ~150 s; passou disso, o desfecho
  * é desconhecido. Objeto mutável só para os testes encurtarem.
  */
-export const PRAZOS = { envioMs: 180_000, corpoMs: 10_000 };
+export const PRAZOS = { envioMs: 180_000, corpoMs: 10_000, reconsultaMs: 5_000, reconsultas: 4 };
 
 /** `{ ok: false }` se a promessa não terminar no prazo (ela segue rodando; o resultado é descartado). */
 export async function comPrazo<T>(p: Promise<T>, ms: number): Promise<{ ok: true; valor: T } | { ok: false }> {
@@ -42,6 +42,12 @@ export const TRAVA_DIVERGENTE: TravaDoEnvio = {
 export const TRAVA_EM_CURSO: TravaDoEnvio = {
   tipo: 'concorrente',
   mensagem: 'Este pedido está sendo salvo agora em outra aba ou aparelho. Aguarde alguns minutos e recarregue o pedido antes de editar.',
+};
+
+/** O banco diz que ESTE salvamento ainda está no Omie (despachado, sem desfecho): nem sucesso, nem divergência. */
+export const TRAVA_EM_ANDAMENTO: TravaDoEnvio = {
+  tipo: 'concorrente',
+  mensagem: 'O Omie ainda está processando este salvamento. Recarregue o pedido em alguns minutos para ver como ele ficou — não salve de novo antes disso.',
 };
 
 export const TRAVA_POSSE_ILEGIVEL: TravaDoEnvio = {
@@ -86,15 +92,18 @@ export function travaDaPosse(resp: { data: unknown; error: unknown }): {
  * Desfecho de UM salvamento pelo banco (`pedido_edicao_omie_encerrar_envio`), quando a resposta da edge se
  * perdeu ou não prova nada (#30; Codex no desenho do PR 2). A RPC ENCERRA o token: se a edge ainda não
  * despachou, nada desse save vai mais ao Omie — "não alterou" vira fato. Só `concluida` é sucesso; só
- * abandonada/liberada/expirada (e pedido sem PV/ausente) provam que nada mudou; o resto — em voo, divergente,
+ * abandonada/liberada/expirada (e pedido sem PV/ausente) provam que nada mudou; `em_voo` = ainda no Omie (a tela
+ * reconsulta e, se seguir assim, manda recarregar depois — o banco decide na abertura); o resto — divergente,
  * resolvida por outro, leitura que falhou ou forma desconhecida — é divergente (fail-closed). A resposta
  * `success: true` que chegue DEPOIS disto é descartada (`comPrazo`): o banco já respondeu.
  */
-export function desfechoDoEnvioPeloBanco(resp: { data: unknown; error: unknown }): 'concluido' | 'nao_alterado' | 'divergente' {
+export function desfechoDoEnvioPeloBanco(resp: { data: unknown; error: unknown }): 'concluido' | 'nao_alterado' | 'em_voo' | 'divergente' {
   if (resp.error) return 'divergente';
   switch (resp.data) {
     case 'concluida':
       return 'concluido';
+    case 'em_voo':
+      return 'em_voo';
     case 'abandonada':
     case 'liberada':
     case 'expirada':

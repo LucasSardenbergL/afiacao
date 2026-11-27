@@ -4407,10 +4407,16 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
       expect(i, `${depois} sumiu do bloco`).toBeGreaterThan(-1);
       expect(iReiv, `a reivindicação tem de vir antes de ${depois}`).toBeLessThan(i);
     }
-    // A fase vai a "reservada" ANTES da chamada (resposta perdida ainda libera pelo token).
-    expect(bloco.slice(0, iReiv), 'a fase reservada tem de ser marcada antes da reivindicação')
-      .toContain('posseEdicao.fase = "reservada"');
-    expect(bloco.slice(iReiv, iReiv + 800), 'a reivindicação perdeu o veredito estrito').toContain('recusaDaReivindicacao(');
+    // Só quem recebeu `reivindicado` marca (e libera) a posse: um reenvio do mesmo token não solta a do original.
+    expect(bloco.slice(0, iReiv), 'a posse marcada ANTES da reivindicação liberaria a reserva de outra invocação')
+      .not.toContain('posseEdicao.fase = "reservada"');
+    const depois = bloco.slice(iReiv, iReiv + 1200);
+    const iVeredito = depois.indexOf('recusaDaReivindicacao(');
+    expect(iVeredito, 'a reivindicação perdeu o veredito estrito').toBeGreaterThan(-1);
+    expect(depois.indexOf('posseEdicao.fase = "reservada"'), 'a posse tem de ser marcada DEPOIS do veredito').toBeGreaterThan(iVeredito);
+    // A revisão de crédito leva o token: só grava se esta tentativa ainda está reservada (mesma transação).
+    const iRev = bloco.indexOf('registrarRevisao(');
+    expect(bloco.slice(iRev, iRev + 600), 'a revisão da edição perdeu a posse').toContain('tokenEdicao: posseEdicao.token');
   });
 
   it('o despacho vem UMA vez, antes da 1ª mutação no Omie, com o gêmeo lido e a fase despachada', () => {

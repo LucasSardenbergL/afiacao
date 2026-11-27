@@ -17,6 +17,8 @@ const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
     encerrar: { data: 'divergente', error: null } as unknown,
     resolver: { data: 'resolvida', error: null } as unknown,
     chamadas: [] as Array<{ nome: string; args: unknown }>,
+    // Banco COERENTE: o pedido cujo encerramento respondeu `divergente` passa a ler divergente na abertura.
+    divergentesNoBanco: new Set<string>(),
   };
   const RESPOSTA: Record<string, keyof typeof posseMock> = {
     pedido_edicao_omie_estado: 'estado',
@@ -27,7 +29,15 @@ const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
     const chave = RESPOSTA[nome];
     if (!chave) return rpcInterno(nome, args);
     posseMock.chamadas.push({ nome, args });
-    return Promise.resolve(posseMock[chave]);
+    const pedido = (args as { p_sales_order_id?: string } | undefined)?.p_sales_order_id ?? '';
+    if (chave === 'estado' && posseMock.divergentesNoBanco.has(pedido)) {
+      return Promise.resolve({ data: { situacao: 'divergente', token: 'tok-banco', motivo: null }, error: null });
+    }
+    // Lista = respostas em sequência (a última se repete): é como o teste encena "em voo, depois concluída".
+    const v = posseMock[chave];
+    const resposta = Array.isArray(v) ? (v.length > 1 ? v.shift() : v[0]) : v;
+    if (chave === 'encerrar' && (resposta as { data?: unknown })?.data === 'divergente') posseMock.divergentesNoBanco.add(pedido);
+    return Promise.resolve(resposta);
   };
   return { rpcInterno, posseMock, rpcComPosse };
 });
@@ -103,6 +113,7 @@ beforeEach(() => {
   posseMock.encerrar = { data: 'divergente', error: null };
   posseMock.resolver = { data: 'resolvida', error: null };
   posseMock.chamadas = [];
+  posseMock.divergentesNoBanco.clear();
   authMock.isMaster = false;
   vi.clearAllMocks();
   limparRegistroParaTeste();
@@ -768,6 +779,13 @@ describe('leva 1 — Codex no diff (2026-11-26)', () => {
 });
 
 describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', () => {
+  let reconsultaOriginal = 0;
+  beforeEach(async () => {
+    const { PRAZOS } = await import('../envioEdicao');
+    reconsultaOriginal = PRAZOS.reconsultaMs;
+    PRAZOS.reconsultaMs = 1;
+    return () => { PRAZOS.reconsultaMs = reconsultaOriginal; };
+  });
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const encerramentos = () => posseMock.chamadas.filter((c) => c.nome === 'pedido_edicao_omie_encerrar_envio');
 
@@ -804,7 +822,6 @@ describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', (
 
   it.each([
     ['leitura que falha', { data: null, error: { message: 'rede' } }],
-    ['em voo depois da resposta', { data: 'em_voo', error: null }],
     ['resolvida por outro', { data: 'resolvida', error: null }],
     ['forma desconhecida', { data: { desfecho: 'concluida' }, error: null }],
   ])('banco sem prova de nada (%s): divergente (fail-closed)', async (_nome, resposta) => {
@@ -814,6 +831,54 @@ describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', (
     await act(async () => { await result.current.handleSave(); });
     expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
     expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it('banco diz em_voo e depois concluida: a tela RECONSULTA e confirma o sucesso (Codex no diff)', async () => {
+    posseMock.encerrar = [{ data: 'em_voo', error: null }, { data: 'em_voo', error: null }, { data: 'concluida', error: null }];
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(encerramentos()).toHaveLength(3);
+    expect(navigateSpy).toHaveBeenCalledWith('/sales');
+    const { estadoDoPedido } = await import('../registroEnvios');
+    expect(estadoDoPedido('ord-1').divergente).toBe(false);
+  });
+
+  it('em_voo que não termina: trava EM ANDAMENTO (recarregar depois), sem gravar divergente na aba', async () => {
+    posseMock.encerrar = { data: 'em_voo', error: null };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    const { PRAZOS } = await import('../envioEdicao');
+    expect(encerramentos()).toHaveLength(PRAZOS.reconsultas + 1);
+    expect(result.current.precisaRecarregar?.mensagem).toContain('ainda está processando');
+    const { estadoDoPedido } = await import('../registroEnvios');
+    expect(estadoDoPedido('ord-1').divergente).toBe(false);
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it('divergente guardado na aba sai quando o banco diz LIVRE ao reabrir (o banco é a verdade)', async () => {
+    posseMock.encerrar = { data: null, error: { message: 'rede' } };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    await act(async () => { await result.current.recarregar(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.precisaRecarregar).toBeNull();
+    expect(result.current.formularioTravado).toBe(false);
+  });
+
+  it('blocked edicao_divergente da edge: trava divergente e busca o token no banco, sem zerar a tela', async () => {
+    const { result } = await renderLoaded();
+    posseMock.estado = { data: { situacao: 'divergente', token: 'tok-9', motivo: 'x' }, error: null };
+    mockedInvoke.mockResolvedValue({ data: { success: false, blocked: 'edicao_divergente', motivo: 'm' }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(result.current.divergenciaDuravel).toEqual({ token: 'tok-9', motivo: 'x' });
+    expect(result.current.order).not.toBeNull();
+    expect(result.current.loading).toBe(false);
   });
 
   it('ao abrir: PV divergente no banco trava com o token; employee NÃO libera', async () => {

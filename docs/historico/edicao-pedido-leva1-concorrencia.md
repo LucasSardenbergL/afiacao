@@ -36,11 +36,27 @@
 - Falsificação: 33 sabotagens × 2 locales (C e pt_BR.UTF-8), controle verde na mesma invocação, + S38 dirigida.
 - Bateria em `ce73ad443`: 6 gates de edge, lint, typecheck, suíte completa (17.293 testes) — exit 0.
 
-## Fica para o PR 2 (migration)
+## PR 2 — posse durável no banco (migration `20261127100200`, edge v1.55)
 
-Reivindicação durável por (conta, PV) entre abas/dispositivos; RPC `aplicar_edicao_pedido_omie` conferindo posse e
-`deleted_at` sob FOR UPDATE; exclusão respeitando edição em curso; reserva antes do registro de revisão de crédito;
-divergência durável no banco; `success: true` que chega depois do prazo (hoje mantém a trava — lado seguro).
+| residual do PR 1 | como fechou |
+|---|---|
+| posse entre abas/aparelhos | `pedido_edicao_omie_tentativa`: 1 linha por tentativa (token da tela), índice único parcial = 1 viva ou divergente por (conta, PV) — o gêmeo disputa a mesma chave |
+| reserva antes do crédito | `reivindicar` logo depois de resolver a conta, antes de TODA leitura do PV e do `registrarRevisao`; não move a versão (recusa de crédito não envelhece a tela) |
+| fronteira do Omie | `despachar` (substitui o `.update()` do PR 1): versão, não excluído, gêmeo `omie_*` como lido, reserva ainda válida; grava o despacho e move a versão |
+| write-back sem posse | overload de 9 args: `deleted_at` + tentativa despachada DESTE token sob FOR UPDATE; conclui na mesma transação. O de 8 args fica para a edge no ar |
+| exclusão × edição | `sales_order_excluir_conferido` (conta+PV provados sob lock, edição reservada/em voo recusa) + trigger SECURITY DEFINER no soft-delete do front |
+| divergência durável | toda saída pós-despacho sem `concluida` → `divergente` (ou despachada > 10 min sem desfecho); a tela lê ao abrir; só master libera, pelo token VISTO, e a versão se move |
+| `success: true` tardio | DECIDIDO: descartado. Desfecho desconhecido pergunta ao banco pelo token (`encerrar_envio`), que ENCERRA o token — só `concluida` é sucesso; abandonada/liberada/expirada provam "não alterou" |
+
+Lições: **"token ausente" não prova nada** sem encerrar o token atomicamente (a edge pode reivindicar depois que a
+tela desistiu); **sobrescrever a linha única perde o resultado** que a tela vai consultar — uma linha por tentativa;
+o lock do recibo **não protege o gêmeo** (o sync o avança sem mexer na versão do recibo).
+
+Residuais (fora deste PR): corte de deploy sem kill switch (uma v1.52/v1.54 em voo não respeita a posse — deploy
+fora do horário de edição); revogar a `aplicar_edicao_pedido_omie` de 8 args e a `sales_order_excluir_sem_envio`
+depois da drenagem; o pull pode publicar no gêmeo um PV no meio da troca de itens (pré-existente).
+
+Prova: `db/test-pedido-edicao-posse.sh` — 86 asserts (incl. 3 corridas com sessões reais), 29 sabotagens × 2 locales.
 
 ## Deploy
 

@@ -3395,16 +3395,15 @@ Deno.serve(async (req) => {
         // POSSE durável por (conta, PV) — ANTES de toda leitura do PV e do registro de revisão de crédito
         // (Codex no desenho do PR 2): duas abas/aparelhos do mesmo PV não chegam juntas ao gate de crédito.
         // Não move a versão do pedido: uma recusa adiante (crédito, ATP, tint) não envelhece a tela.
-        // A fase vai para "reservada" ANTES da chamada: se a resposta se perder depois de a RPC gravar, a
-        // saída da action ainda libera pelo token (a RPC só libera o que não foi despachado).
+        // Só QUEM recebeu `reivindicado` marca a posse (e a libera na saída): um reenvio do mesmo token recebe
+        // `token_encerrado` e não pode soltar a reserva da invocação original (Codex no diff). Resposta perdida
+        // depois de a RPC gravar: a reserva fica e VENCE em 10 min — o PV espera, nada vai ao Omie.
         const tokenEdit = tokenDaEdicao({
           presente: Object.prototype.hasOwnProperty.call(params, "token"),
           informado: (params as { token?: unknown }).token,
           gerar: () => crypto.randomUUID(),
         });
         if (!tokenEdit.ok) throw new Error(`Edição recusada: ${tokenEdit.motivo}`);
-        posseEdicao.token = tokenEdit.valor;
-        posseEdicao.fase = "reservada";
         const { data: reivindicacaoEdit, error: reivindicacaoErr } = await supabaseAdmin.rpc("pedido_edicao_omie_reivindicar", {
           p_sales_order_id: editSoId,
           p_versao: versaoEdit.valor,
@@ -3419,6 +3418,8 @@ Deno.serve(async (req) => {
           result = { success: false, blocked: recusaPosse.bloqueio, contexto: "edicao", motivo: recusaPosse.motivo };
           break;
         }
+        posseEdicao.token = tokenEdit.valor;
+        posseEdicao.fase = "reservada";
 
         // Trava do GÊMEO: o recibo do app cujo espelho importado do mesmo PV já avançou não se edita
         // pelo app. A conta do espelho é a do pedido (a que o sync usa no hash). Leitura que falha
@@ -3745,6 +3746,9 @@ Deno.serve(async (req) => {
           parcela: parcelaEdicao,
           items: editItems,
           userId,
+          // A revisão só grava se ESTA tentativa ainda está reservada (mesma transação): um save abandonado pela
+          // tela não deixa revisão por cima da do save que o substituiu (Codex no diff).
+          tokenEdicao: posseEdicao.token,
         });
         if (revisaoEdicao) console.log(`[Omie Vendas][${editAccount}] revisão de crédito ${revisaoEdicao.revisao} (seq ${revisaoEdicao.seq})`);
         const parcelaMudou = editParcelaEnvio.trim() !== String(omieParcelaEdit ?? "").trim();
@@ -4196,6 +4200,8 @@ Deno.serve(async (req) => {
           throw new Error(`Exclusão recusada: o PV informado (${pedidoId}) diverge do registrado (${pidLocal}). Recarregue a página.`);
         }
 
+        // Gêmeo lido (só com PV): a prova de cancelamento — reconferida sob lock na RPC de exclusão.
+        let gemeoExclusao: { presente: boolean; status: string | null } | null = null;
         if (pidLocal !== null) {
           // O app NÃO cancela no Omie (decisão 2026-10-11, ver vereditoExclusaoNoOmie): sai daqui só o
           // pedido cujo cancelamento — feito no Omie — o sync já trouxe para a linha canônica.
@@ -4206,6 +4212,7 @@ Deno.serve(async (req) => {
             .eq("hash_payload", `omie_${orderAccount}_${pidLocal}`)
             .maybeSingle();
           if (canonErr) throw new Error(`Exclusão recusada: não consegui ler o status do pedido no Omie (${canonErr.message}).`);
+          gemeoExclusao = { presente: canon != null, status: (canon?.status as string | null | undefined) ?? null };
           const veredito = vereditoExclusaoNoOmie({
             hashPayload: (orderData.hash_payload as string | null) ?? null,
             omiePedidoId: pidLocal,
@@ -4293,6 +4300,8 @@ Deno.serve(async (req) => {
           p_somente_orcamento: somenteOrcamento,
           p_account: orderData.account,
           p_omie_pedido_id: orderData.omie_pedido_id ?? null,
+          p_gemeo_presente: gemeoExclusao?.presente ?? null,
+          p_gemeo_status: gemeoExclusao?.status ?? null,
         });
         if (delError) throw new Error(`Exclusão recusada: falha ao apagar o pedido (${delError.message}).`);
         const recusaDel = recusaDaExclusao(desfechoDel);
