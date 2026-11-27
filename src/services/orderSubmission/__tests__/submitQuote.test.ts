@@ -263,3 +263,31 @@ describe('submitQuote — desfecho por conta (A4)', () => {
     );
   });
 });
+
+// 8.2 (Codex r1 P0-2): o orçamento vira PEDIDO na conversão (mesma linha) — fora do autoatendimento,
+// sem cliente identificado no app, o service BARRA (antes gravava customer_user_id = vendedor).
+describe('submitQuote — cliente do pedido (8.2)', () => {
+  const carrinho = { cart: { obenProductItems: [obenItem()], colacorProductItems: [] }, subtotals: { oben: 20, colacor: 0 } };
+
+  it('staff sem cadastro → validate_cliente, sem insert', async () => {
+    const { client, insert } = makeSupabase();
+    const r = await submitQuote(makeParams({ supabase: client, customerUserId: null, ...carrinho }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_titular');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('staff com cadastro grava o CLIENTE, nunca o vendedor', async () => {
+    const { client, insert } = makeSupabase();
+    const r = await submitQuote(makeParams({ supabase: client, customerUserId: 'cu-1', ...carrinho }));
+    expect(r.success).toBe(true);
+    expect(insert.mock.calls[0][0].customer_user_id).toBe('cu-1');
+  });
+
+  it('autoatendimento sem id grava o próprio usuário (não é barrado)', async () => {
+    const { client, insert } = makeSupabase();
+    const r = await submitQuote(makeParams({ supabase: client, customerUserId: null, isCustomerMode: true, ...carrinho }));
+    expect(r.success).toBe(true);
+    expect(insert.mock.calls[0][0].customer_user_id).toBe('user-1');
+  });
+});

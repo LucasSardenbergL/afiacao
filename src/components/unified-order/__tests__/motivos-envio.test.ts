@@ -18,7 +18,7 @@ function base(over: Partial<EntradaMotivosEnvio> = {}): EntradaMotivosEnvio {
   return {
     temCliente: true, carregandoCliente: false,
     obenProductItems: [prod('oben')], colacorProductItems: [], serviceItems: [],
-    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', loadingFormas: false, exigeCondicao: true,
+    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', estadoCadastro: 'confirmado', loadingFormas: false, exigeCondicao: true,
     selectedParcelaOben: '999', selectedParcelaColacor: '999',
     ...over,
   };
@@ -43,6 +43,11 @@ describe('motivosEnvioBloqueado — o porquê do Enviar cinza', () => {
     ['serviço sem tipo', { obenProductItems: [], serviceItems: [servico(false)] }, 'servico_sem_tipo', 'Escolha o serviço de cada ferramenta'],
     ['vendedor divergente', { vendedorDivergencias: ['oben'] }, 'vendedor_divergente', 'Vendedor divergente'],
     ['8.1: divergente sem lista', { estadoVendedor: 'divergente' }, 'vendedor_divergente', 'Vendedor divergente'],
+    ['8.2: identificando o cliente', { estadoCadastro: 'resolvendo' }, 'identificando_cliente', 'Identificando o cliente no app…'],
+    ['8.2: cliente sem cadastro', { estadoCadastro: 'sem_cadastro' }, 'sem_cadastro_cliente', 'Cliente sem cadastro no app — cadastre e use “Trocar”'],
+    ['8.2: busca do cadastro falhou', { estadoCadastro: 'indisponivel' }, 'cadastro_indisponivel', 'Não foi possível identificar o cliente no app — use “Trocar”'],
+    ['8.2: busca falhou com envio pendente (Codex r4)', { estadoCadastro: 'indisponivel', envioPendente: true }, 'cadastro_indisponivel', 'Não foi possível identificar o cliente no app — envio pendente: recarregue a página'],
+    ['8.2: sem cadastro com envio pendente (Codex r4)', { estadoCadastro: 'sem_cadastro', envioPendente: true }, 'sem_cadastro_cliente', 'Cliente sem cadastro no app — envio pendente: recarregue a página'],
     ['8.1: validando vendedor', { estadoVendedor: 'validando' }, 'validando_vendedor', 'Validando vendedor…'],
     ['8.1: validação falhou', { estadoVendedor: 'indisponivel' }, 'vendedor_indisponivel', 'Não foi possível validar o vendedor — use “Trocar”'],
     ['preço zerado', { obenProductItems: [prod('oben', 0)] }, 'preco_invalido', 'Item com preço zerado'],

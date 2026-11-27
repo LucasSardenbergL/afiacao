@@ -11,6 +11,7 @@ import {
 import { cn, decodeHtmlEntities } from '@/lib/utils';
 import type { OmieCustomer } from '@/hooks/useUnifiedOrder';
 import type { EstadoVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
+import type { EstadoCadastro } from '@/hooks/unifiedOrder/cadastro-cliente';
 
 interface CustomerSearchProps {
   selectedCustomer: OmieCustomer | null;
@@ -24,6 +25,12 @@ interface CustomerSearchProps {
   vendedorDivergencias: string[];
   /** 8.1: 'indisponivel' e 'divergente' (com ou sem lista) avisam e bloqueiam o envio; a única saída é "Trocar" (sem revalidar). */
   estadoVendedor?: EstadoVendedor;
+  /** 8.2: 'indisponivel' (a busca falhou) e 'sem_cadastro' bloqueiam o envio; a única saída é "Trocar" (seleção
+   *  nova). Sem "criar daqui" (Codex r1: 4 P0) e sem revalidar mantendo o carrinho (Codex r2: 4 P0 — prazo,
+   *  preço provisório, código/vendedor antigos, autocadastro em dobro; mesma lição do 8.1). */
+  estadoCadastro?: EstadoCadastro;
+  /** 8.2: envio deste carrinho ainda sem confirmação — "Trocar" zera a ligação e pode duplicar o PV. */
+  envioPendente?: boolean;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -37,6 +44,7 @@ export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
   validatingVendedor, vendedorDivergencias, estadoVendedor,
+  estadoCadastro, envioPendente = false,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -71,7 +79,7 @@ export function CustomerSearch({
   const termoValido = customerSearch.trim().length >= 2;
   const semResultado = termoValido && !searchingCustomers && !loadingCustomer && !searchFalhou && customers.length === 0;
   const pedirTroca = () => {
-    if (itensNoCarrinho > 0) setConfirmarTroca(true);
+    if (itensNoCarrinho > 0 || envioPendente) setConfirmarTroca(true);
     else onClearCustomer();
   };
   return (
@@ -100,7 +108,7 @@ export function CustomerSearch({
                   <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1" role="status">
                     <Loader2 className="w-3 h-3 animate-spin" aria-hidden /> Verificando cadastro…
                   </p>
-                ) : !customerUserId && <p className="text-xs text-status-warning mt-0.5">Sem cadastro no app</p>}
+                ) : !customerUserId && (estadoCadastro === undefined || estadoCadastro === 'sem_cadastro') && <p className="text-xs text-status-warning mt-0.5">Sem cadastro no app</p>}
               </div>
               <Button variant="ghost" size="sm" onClick={pedirTroca} aria-label="Trocar cliente">Trocar</Button>
             </div>
@@ -108,6 +116,28 @@ export function CustomerSearch({
               <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
                 <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                 <p className="text-xs text-muted-foreground">Validando vendedor nos 3 Omies...</p>
+              </div>
+            )}
+            {estadoCadastro === 'indisponivel' && (
+              <div className="bg-status-warning/10 border border-status-warning/30 rounded-lg p-3" role="alert" data-testid="cadastro-indisponivel">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold">Não foi possível identificar o cliente no app</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem o cadastro, o pedido sairia no nome do vendedor. {envioPendente ? 'Há um envio deste carrinho sem confirmação: NÃO use “Trocar” — recarregue a página e selecione o cliente de novo.' : 'Use “Trocar” e selecione o cliente de novo.'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {estadoCadastro === 'sem_cadastro' && (
+              <div className="bg-status-warning/10 border border-status-warning/30 rounded-lg p-3" role="alert" data-testid="cadastro-ausente">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold">Cliente sem cadastro no app</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem cadastro, o pedido sairia no nome do vendedor. {envioPendente ? 'Há um envio deste carrinho sem confirmação: NÃO use “Trocar” — cadastre o cliente, recarregue a página e selecione-o de novo.' : 'Cadastre o cliente no app e use “Trocar” para selecioná-lo de novo.'}</p>
+                  </div>
+                </div>
               </div>
             )}
             {estadoVendedor === 'indisponivel' && (
@@ -238,6 +268,11 @@ export function CustomerSearch({
             <AlertDialogDescription>
               {itensNoCarrinho === 1 ? 'O item do carrinho' : `Os ${itensNoCarrinho} itens do carrinho`} e a ordem de compra serão descartados — os preços são do cliente atual.
             </AlertDialogDescription>
+            {envioPendente && (
+              <p className="text-sm font-medium text-status-error" data-testid="troca-envio-pendente">
+                Há um envio deste carrinho ainda sem confirmação no Omie. Trocar desfaz a ligação com ele: um novo envio pode criar o pedido em dobro. Prefira recarregar a página.
+              </p>
+            )}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Continuar com este cliente</AlertDialogCancel>

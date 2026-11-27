@@ -19,6 +19,7 @@ import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoDeNascimento } from '@/lib/pricing/precoDeNascimento';
 import { mensagemBloqueioVendedor } from '@/hooks/unifiedOrder/validacao-vendedor';
+import { mensagemBloqueioCadastro } from '@/hooks/unifiedOrder/cadastro-cliente';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
@@ -266,6 +267,7 @@ export function useUnifiedOrder() {
     selectedAddress, setSelectedAddress,
     customerPurchaseHistory,
     vendedorDivergencias, validatingVendedor, estadoVendedor,
+    estadoCadastro,
     selectCustomer, clearCustomer: clearCustomerInternal,
     waitForAccountEnsure,
   } = customerSel;
@@ -883,6 +885,15 @@ export function useUnifiedOrder() {
   // Submit — orchestrates state around the pure submit functions in services/orderSubmission
   // `aoGravar` amarra o RASCUNHO ao desfecho: null = tudo salvo (apagar), lista = carrinho que
   // sobrou após o parcial (gravar na hora). Roda ANTES do navigate — o rascunho não fica para trás.
+  // 8.2: o staff só envia (ou salva orçamento) com o cadastro do cliente CONFIRMADO — senão o pedido
+  // nascia no nome do VENDEDOR. Os services também barram `customerUserId` nulo fora do autoatendimento.
+  // `confirmado` sem id (não deveria existir) conta como não identificado.
+  const bloqueioDoCadastro = useCallback((): string | null => {
+    if (isCustomerMode) return null;
+    const estadoEfetivo = !customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel' : estadoCadastro;
+    return mensagemBloqueioCadastro(estadoEfetivo, !!checkoutEnvRef.current?.committed);
+  }, [isCustomerMode, customerUserId, estadoCadastro]);
+
   const submitQuote = useCallback(async (opts?: { aoGravar?: (restante: CartItem[] | null) => void }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     // Ciclo único: com envio de PEDIDO pendente (parcial/bloqueado), o orçamento gravaria outra linha
@@ -891,6 +902,12 @@ export function useUnifiedOrder() {
       toast.error('Há um envio de pedido pendente para este carrinho', {
         description: 'Reenvie o pedido pendente ou use "Trocar e limpar" para começar um orçamento novo.',
       });
+      return;
+    }
+    // 8.2: DEPOIS do aviso de pedido pendente (Codex r4 P0-3: antes, o bloqueio do cadastro tapava o aviso).
+    const bloqueioCadastroOrc = bloqueioDoCadastro();
+    if (bloqueioCadastroOrc) {
+      toast.error(bloqueioCadastroOrc);
       return;
     }
     // A3 (rodada 2): mesma trava por REF do submitOrder — o toque duplo gravava 2 orçamentos.
@@ -932,7 +949,7 @@ export function useUnifiedOrder() {
       }
     });
   }, [
-    selectedCustomer, user, customerUserId, isCustomerMode,
+    selectedCustomer, user, customerUserId, isCustomerMode, bloqueioDoCadastro,
     obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
     deliveryOption, addresses, selectedAddress, notes,
     clearCart, limparCamposDoPedido, navigate, setCart, cart,
@@ -968,6 +985,11 @@ export function useUnifiedOrder() {
     if (bloqueioVendedor) {
       falhouLocal('vendedor');
       toast.error(bloqueioVendedor);
+      return;
+    }
+    const bloqueioCadastro = bloqueioDoCadastro();
+    if (bloqueioCadastro) {
+      toast.error(bloqueioCadastro);
       return;
     }
     // Guard money-path da condição de pagamento: a listagem do Omie degradou para as 8
@@ -1204,7 +1226,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra, limparCamposDoPedido,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
-    waitForAccountEnsure, loadingCustomer, estadoVendedor, searchParams,
+    waitForAccountEnsure, loadingCustomer, estadoVendedor, bloqueioDoCadastro, searchParams,
     estadoFormasOben, estadoFormasColacor,
   ]);
 
@@ -1256,6 +1278,9 @@ export function useUnifiedOrder() {
     toolCategories, getFilteredServicos,
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
+    estadoCadastro,
+    // 8.2: envio deste carrinho ainda sem confirmação (envelope comprometido) — "Trocar" pode duplicar o PV.
+    envioPendente: !!checkoutEnvRef.current?.committed,
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,

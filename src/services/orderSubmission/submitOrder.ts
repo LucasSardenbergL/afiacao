@@ -19,6 +19,7 @@ import {
   getToolName,
   missingAccountIdentities,
   resolveCustomerPhone,
+  titularDoPedido,
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
 import { ensureSalesOrderRow } from './idempotency';
@@ -143,6 +144,27 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     };
   }
 
+  // ── Guard PR 8.2: o cliente do pedido NUNCA é o vendedor ──
+  // Antes, staff sem `customerUserId` (busca do cadastro falhou ou cliente sem cadastro no app) gravava
+  // `customer_user_id = user.id` — o pedido nascia no nome do VENDEDOR e o telefone dele sobrescrevia o
+  // do Omie. Autoatendimento: o cliente é o próprio usuário. Staff sem cadastro confirmado: aborta antes
+  // de qualquer insert ou chamada ao ERP (a tela manda "Trocar" e selecionar de novo).
+  // Mesmo helper do orçamento (onda D 4b-2, #4251): staff sem vínculo → null → recusa antes de gravar.
+  const clienteDoPedidoId = titularDoPedido(customerUserId, user.id, isCustomerMode);
+  if (!clienteDoPedidoId) {
+    return {
+      success: false,
+      results: [],
+      printDataList: [],
+      lastOrderData: null,
+      errors: [{
+        step: 'validate_cliente',
+        message: 'Não foi possível identificar o cliente no app. Use “Trocar” e selecione o cliente de novo antes de enviar.',
+      }],
+      allConfirmed: false,
+    };
+  }
+
   // ── Guard ATP (fase 2): modo cliente NÃO vende produto Oben ──
   // Por UI o autoatendimento só monta serviços de afiação, mas não havia guard
   // imperativo — e a reserva de estoque assume ator staff (a RPC recusaria com
@@ -232,7 +254,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);
-  const storedPhone = await resolveCustomerPhone(supabase, customer, customerUserId, user.id);
+  const storedPhone = await resolveCustomerPhone(supabase, customer, clienteDoPedidoId, user.id);
 
   // ──────────────── Oben ────────────────
   if (obenProductItems.length > 0) {
@@ -265,14 +287,14 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'oben', origem, atendimentoId,
         fields: {
-          customer_user_id: customerUserId || user.id,
+          customer_user_id: clienteDoPedidoId,
           created_by: user.id,
           items: itemsPayload,
           subtotal: subtotals.oben,
           total: subtotals.oben,
           notes: meta.notes || null,
           // Âncora money-path (P0-B): documento do cliente REAL (raw) p/ o edge derivar o código Omie
-          // por-conta na fronteira — imune ao fallback customer_user_id || user.id (que vira o vendedor).
+          // por-conta na fronteira — imune ao cliente do pedido (que antes do 8.2 podia virar o vendedor).
           customer_document: customer.cnpj_cpf || null,
           customer_address: storedAddress,
           customer_phone: storedPhone,
@@ -288,7 +310,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         stage: 'supabase_insert',
         account: 'oben',
         customerId: customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: clienteDoPedidoId,
         itemCount: obenProductItems.length,
         error: e,
       });
@@ -437,7 +459,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'colacor', origem, atendimentoId,
         fields: {
-          customer_user_id: customerUserId || user.id,
+          customer_user_id: clienteDoPedidoId,
           created_by: user.id,
           items: itemsPayload,
           subtotal: subtotals.colacor,
@@ -458,7 +480,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         stage: 'supabase_insert',
         account: 'colacor',
         customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: clienteDoPedidoId,
         itemCount: colacorProductItems.length,
         error: e,
       });

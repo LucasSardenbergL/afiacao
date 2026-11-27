@@ -15,7 +15,7 @@ function Fechamento(p: PropsFechamento) {
       <CartSummaryBar {...p} />
       <BarraEnvioPedido
         temCliente carregandoCliente={false} exigeCondicao servicosAOrcar={0}
-        submitting={false} vendedorDivergencias={[]} estadoVendedor="nao_verificado" totalEstimated={0} onSubmit={vi.fn()}
+        submitting={false} vendedorDivergencias={[]} estadoVendedor="nao_verificado" estadoCadastro="confirmado" totalEstimated={0} onSubmit={vi.fn()}
         {...p}
       />
     </>
@@ -39,6 +39,7 @@ function makeProps(obenProductItems: ProductCartItem[]) {
     submitting: false,
     vendedorDivergencias: [] as string[],
     estadoVendedor: 'nao_verificado' as const,
+    estadoCadastro: 'confirmado' as const,
     sortedFormasPagamentoOben: [],
     sortedFormasPagamentoColacor: [],
     selectedParcelaOben: '1',

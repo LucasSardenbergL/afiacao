@@ -158,6 +158,41 @@ describe('submitOrder', () => {
     expect(insert).not.toHaveBeenCalled();
   });
 
+  // PR 8.2: o cliente do pedido nunca é o vendedor (antes: `customer_user_id = customerUserId || user.id`).
+  it('8.2: staff SEM cadastro do cliente → validate_cliente, sem insert e sem Omie', async () => {
+    const { client, insert, invoke } = makeSupabase({ insertId: 'so-oben' });
+    const r = await submitOrder(makeParams({
+      supabase: client, customerUserId: null,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_cliente');
+    expect(r.errors[0].message).toContain('identificar o cliente no app');
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('8.2: staff COM cadastro grava o CLIENTE em customer_user_id, nunca o vendedor', async () => {
+    const { client, insert } = makeSupabase({ insertId: 'so-oben' });
+    await submitOrder(makeParams({
+      supabase: client, customerUserId: 'cu-1',
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ customer_user_id: 'cu-1' }));
+    expect(insert).not.toHaveBeenCalledWith(expect.objectContaining({ customer_user_id: user.id }));
+  });
+
+  it('8.2: autoatendimento sem customerUserId NÃO é barrado (o cliente é o próprio usuário)', async () => {
+    const { client } = makeSupabase({ insertId: 'so-x' });
+    const r = await submitOrder(makeParams({
+      supabase: client, customerUserId: null, isCustomerMode: true,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+    }));
+    expect(r.errors.some((e) => e.step === 'validate_cliente')).toBe(false);
+  });
+
   it('Oben+Colacor com itens mas SEM código Colacor → fail-closed: bloqueia TUDO antes de qualquer insert', async () => {
     const { client, insert, invoke } = makeSupabase();
     const custSemColacor = { ...customer, codigo_cliente_colacor: null } as OmieCustomer;

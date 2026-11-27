@@ -16,7 +16,7 @@ function Fechamento(p: PropsFechamento) {
       <CartSummaryBar {...p} />
       <BarraEnvioPedido
         temCliente carregandoCliente={false} exigeCondicao servicosAOrcar={0}
-        submitting={false} vendedorDivergencias={[]} estadoVendedor="nao_verificado" totalEstimated={0} onSubmit={vi.fn()}
+        submitting={false} vendedorDivergencias={[]} estadoVendedor="nao_verificado" estadoCadastro="confirmado" totalEstimated={0} onSubmit={vi.fn()}
         {...p}
       />
     </>
@@ -48,6 +48,7 @@ function makeProps(over: Partial<Record<string, unknown>> = {}) {
     submitting: false,
     vendedorDivergencias: [] as string[],
     estadoVendedor: 'nao_verificado' as const,
+    estadoCadastro: 'confirmado' as const,
     sortedFormasPagamentoOben: [{ codigo: '999', descricao: 'A Vista' }],
     sortedFormasPagamentoColacor: [],
     selectedParcelaOben: '999',

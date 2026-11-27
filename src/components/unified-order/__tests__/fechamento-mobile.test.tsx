@@ -11,7 +11,7 @@ function barra(over: Partial<BarraEnvioPedidoProps> = {}) {
   const props: BarraEnvioPedidoProps = {
     temCliente: true, carregandoCliente: false,
     obenProductItems: [prod], colacorProductItems: [], serviceItems: [],
-    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', loadingFormas: false, exigeCondicao: true,
+    vendedorDivergencias: [], estadoVendedor: 'nao_verificado', estadoCadastro: 'confirmado', loadingFormas: false, exigeCondicao: true,
     selectedParcelaOben: '999', selectedParcelaColacor: '999',
     submitting: false, totalEstimated: 10, servicosAOrcar: 0, onSubmit: vi.fn(),
     ...over,
