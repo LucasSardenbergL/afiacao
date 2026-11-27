@@ -8,6 +8,18 @@ import type { QueryClient } from '@tanstack/react-query';
  */
 export const PRAZOS = { envioMs: 180_000, corpoMs: 10_000, reconsultaMs: 5_000, reconsultas: 4 };
 
+/** UUID v4 do salvamento. `crypto.randomUUID` só existe em contexto seguro (HTTPS/localhost): pelo IP da rede local
+ *  ele falta, e `getRandomValues` (disponível em qualquer contexto) monta o mesmo formato (Codex r6). */
+export function novoTokenDeEnvio(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  const b = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 /** `{ ok: false }` se a promessa não terminar no prazo (ela segue rodando; o resultado é descartado). */
 export async function comPrazo<T>(p: Promise<T>, ms: number): Promise<{ ok: true; valor: T } | { ok: false }> {
   let timer: ReturnType<typeof setTimeout> | undefined;

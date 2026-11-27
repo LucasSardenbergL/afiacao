@@ -25,7 +25,7 @@ import {
 import { totalLinhaOuAusente } from '@/lib/format';
 import { mesmosItens, valoresDaEdicaoLocal } from './edicaoLocal';
 import {
-  comPrazo, desfechoDoEnvioPeloBanco, type DivergenciaDuravel, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS,
+  comPrazo, desfechoDoEnvioPeloBanco, novoTokenDeEnvio, type DivergenciaDuravel, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS,
   TRAVA_CONCORRENTE, TRAVA_DIVERGENTE, TRAVA_EM_ANDAMENTO, TRAVA_EM_CURSO, travaDaPosse, type TravaDoEnvio,
 } from './envioEdicao';
 import {
@@ -171,17 +171,17 @@ export function useSalesOrderEdit() {
       let pendenteAberto = false;
       for (const t of tokensPendentes(id)) {
         const d = await desfechoNoBanco(id, t);
-        if (velha()) return;
+        // O desfecho é do PEDIDO, não desta carga: processa ANTES do `velha()` — a tela que desmontou no meio não
+        // pode deixar o cache servir o total de antes (Codex r6).
         if (d === 'concluido' || d === 'nao_alterado' || d === 'resolvido') {
-          // Concluiu depois que a tela desistiu: invalida ANTES de largar o token — se a leitura do pedido falhar
-          // adiante, o cache (cupom/WhatsApp) já não serve o total de antes (Codex r5; a comparação é canônica).
+          // Concluiu depois que a tela desistiu: invalida ANTES de largar o token (Codex r5; comparação canônica).
           if (d === 'concluido') await invalidarCachesDoPedido(queryClient, id);
           resolverPendente(id, t);
         } else {
           pendenteAberto = true;
-          // Depois de um F5 a memória da aba se perdeu; o pendente persistido devolve a trava certa.
           if (d === 'divergente') marcarDivergente(id);
         }
+        if (velha()) return;
       }
       const { data, error } = await supabase
         .from('sales_orders')
@@ -595,6 +595,8 @@ export function useSalesOrderEdit() {
     if (!account) return; // inalcançável: bloqueioDaEdicao já recusou a conta
     // Registro de envio só no caminho que toca o Omie (efeito irreversível fora do banco).
     const viaOmie = !!order.omie_pedido_id;
+    // Token DESTE salvamento, gerado ANTES de adquirir o envio: falhar aqui não pode deixar o pedido preso em voo.
+    const tokenEnvio = viaOmie ? novoTokenDeEnvio() : null;
     if (viaOmie && !iniciarEnvio(order.id)) {
       toast.error('Um salvamento deste pedido ainda está em andamento. Aguarde terminar.');
       return;
@@ -605,7 +607,6 @@ export function useSalesOrderEdit() {
     const naTela = () => montadoRef.current;
     // Token DESTE salvamento: a edge reivindica a posse por ele, e é por ele que a tela pergunta ao banco o que
     // houve quando a resposta se perde (migration 20261127100200).
-    const tokenEnvio = viaOmie ? crypto.randomUUID() : null;
     // PENDENTE desde ANTES do despacho (Codex r4): um F5 no meio do envio deixa o token no aparelho, e reabrir o
     // encerra no banco. Só sai com desfecho PROVADO (sucesso, recusa conhecida antes do Omie, banco decidido).
     let manterPendente = true;

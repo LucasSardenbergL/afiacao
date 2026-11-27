@@ -3,7 +3,7 @@ import {
   encerrarEnvio, estadoDoPedido, iniciarEnvio, limparRegistroParaTeste, marcarDivergente,
   marcarPendente, resolverPendente, tokensPendentes,
 } from '../registroEnvios';
-import { invalidarCachesDoPedido } from '../envioEdicao';
+import { invalidarCachesDoPedido, novoTokenDeEnvio } from '../envioEdicao';
 
 const ID = '2f8a04c9-2daf-4cf9-bdbf-047d16765ea7';
 
@@ -85,5 +85,25 @@ describe('invalidarCachesDoPedido — UUID canônico (Codex r4)', () => {
     expect(predicados[1]({ queryKey: ['order-descontos-itens', 'u', ID] })).toBe(true);
     expect(predicados[0]({ queryKey: ['order-detail', 'u', 'app', '00000000-0000-0000-0000-000000000000'] })).toBe(false);
     expect(predicados[0]({ queryKey: ['order-detail', 'u', 'app', undefined] })).toBe(false);
+  });
+});
+
+describe('novoTokenDeEnvio (Codex r6)', () => {
+  const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  it('sem crypto.randomUUID (HTTP pelo IP da rede): monta um UUID v4 por getRandomValues', () => {
+    const original = globalThis.crypto;
+    vi.stubGlobal('crypto', { getRandomValues: (b: Uint8Array) => original.getRandomValues(b) });
+    try {
+      const a = novoTokenDeEnvio();
+      const b = novoTokenDeEnvio();
+      expect(a).toMatch(UUID4);
+      expect(b).toMatch(UUID4);
+      expect(a).not.toBe(b);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it('com crypto.randomUUID: usa o nativo', () => {
+    expect(novoTokenDeEnvio()).toMatch(UUID4);
   });
 });

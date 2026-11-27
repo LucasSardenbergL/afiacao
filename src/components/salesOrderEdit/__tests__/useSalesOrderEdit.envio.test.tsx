@@ -900,6 +900,27 @@ describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', (
     expect(result.current.formularioTravado).toBe(true);
   });
 
+  it('tela que desmonta enquanto o banco confirma o token pendente: o cache do pedido é invalidado mesmo assim (Codex r6)', async () => {
+    posseMock.encerrar = { data: null, error: { message: 'rede' } };
+    const a = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await a.result.current.handleSave(); });
+    a.unmount();
+    // Reabre, mas a resposta do banco só chega DEPOIS de a tela desmontar de novo.
+    let responder: (v: unknown) => void = () => {};
+    posseMock.encerrar = new Promise((r) => { responder = r; }) as unknown;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const b = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient(client) });
+    await waitFor(() => expect(encerramentos().length).toBe(2));
+    b.unmount();
+    await act(async () => { responder({ data: 'concluida', error: null }); await new Promise((r) => setTimeout(r, 0)); });
+    const chaves = spy.mock.calls.map(([f]) => JSON.stringify((f as { queryKey: unknown }).queryKey));
+    expect(chaves).toContain('["order-detail"]');
+    const { tokensPendentes } = await import('../registroEnvios');
+    expect(tokensPendentes('ord-1')).toEqual([]);
+  });
+
   it('sucesso provado tira o token do pendente (não fica rastro para encerrar)', async () => {
     const { result } = await renderLoaded();
     mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
