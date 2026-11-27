@@ -75,11 +75,11 @@
  * Exit: 0 = mediu (com ou sem achados) · 2 = mecânica (não medi; não é "nada mudou").
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { materializar } from './edges-afetadas';
-import { ARQ_MAPA, ARQ_MARCADOR, RAIZ_EDGES, edgesInstrumentadas, ehTeste, fecharGrafo } from './sonda-fingerprint';
+import { ARQ_MAPA, ARQ_MARCADOR, RAIZ_EDGES, edgesInstrumentadas, ehTeste, fecharGrafo, parsearMapa } from './sonda-fingerprint';
 import { extrairVersao, git, resolverBase } from './sonda-versao-bump-gate';
 
 const ROTULO = 'sonda-fan-out';
@@ -354,7 +354,125 @@ export function coletarFanOut(repo: string, base: string, headRev: string | null
   }
 }
 
+// ─── Prova pelo LEDGER (vigia do Publish, rodada 2 / M1) ──────────────────────────────────────
+//
+// O vigia (`scripts/lovable-publish.sh --decidir`) exigia `liberar` humano para TODO arquivo de
+// `_shared/` no intervalo ar..main — e o mapa `_shared/sonda-fingerprints.ts` muda em todo PR de
+// edge (RETIDO manual de 74 min em 27/11). O `pendencias:deploy` compara `(versao, fonte)` servido ×
+// main, e `fonte` é o hash do FECHO, `_shared/` incluído: para uma edge DO MAPA, o ledger já prova a
+// mudança de `_shared/`. Não prova para quem está FORA dele — edge sem `versao.ts` ou que não entrou
+// no mapa importando o arquivo. Esta prova diz qual dos dois casos é a fatia.
+//
+// Universo = TODA edge com `index.ts` (não só as instrumentadas: é justamente a não-instrumentada que
+// o ledger não vê). Fail-closed: fecho ilegível em qualquer edge = não sei quem consome = sem prova.
+
+export interface EdgeParaProva {
+  edge: string;
+  fecho: string[] | null;
+  erroFecho: string | null;
+  /** tem `versao.ts` no HEAD */
+  instrumentada: boolean;
+  /** está no mapa de fingerprints do HEAD */
+  noMapa: boolean;
+}
+
+export interface ProvaLedger {
+  /** true = toda consumidora dos arquivos alterados é instrumentada E está no mapa */
+  prova: boolean;
+  /** `LEDGER <edge> <causas>` · `FORA_DO_MAPA <edge> <causas>` · `ILEGIVEL <edge> <erro>` · `SEM_CONSUMIDORA <arq>` */
+  linhas: string[];
+}
+
+export function provaPeloLedger(alterados: ArquivoAlterado[], edges: EdgeParaProva[]): ProvaLedger {
+  const mudados = alterados.filter((a) => contaComoShared(a.caminho)).map((a) => a.caminho).sort();
+  if (mudados.length === 0) return { prova: true, linhas: [] };
+  const mudou = new Set(mudados);
+  const consumido = new Set<string>();
+  const linhas: string[] = [];
+  let prova = true;
+  for (const e of [...edges].sort((a, b) => (a.edge < b.edge ? -1 : a.edge > b.edge ? 1 : 0))) {
+    if (e.fecho === null) {
+      prova = false;
+      linhas.push(`ILEGIVEL ${e.edge} ${(e.erroFecho ?? 'sem mensagem').replace(/\s+/g, ' ').slice(0, 160)}`);
+      continue;
+    }
+    const causas = e.fecho.filter((f) => mudou.has(f)).sort();
+    if (causas.length === 0) continue;
+    for (const c of causas) consumido.add(c);
+    const rot = e.instrumentada && e.noMapa ? 'LEDGER' : 'FORA_DO_MAPA';
+    if (rot === 'FORA_DO_MAPA') prova = false;
+    linhas.push(`${rot} ${e.edge} ${causas.map(curto).join(',')}`);
+  }
+  for (const m of mudados) if (!consumido.has(m)) linhas.push(`SEM_CONSUMIDORA ${curto(m)}`);
+  return { prova, linhas };
+}
+
+/** Todas as edges com `index.ts` numa raiz materializada. */
+function todasAsEdges(raiz: string): string[] {
+  const base = resolve(raiz, RAIZ_EDGES);
+  return readdirSync(base)
+    .filter((n) => n !== '_shared' && statSync(join(base, n)).isDirectory() && existsSync(join(base, n, 'index.ts')))
+    .sort();
+}
+
+export function coletarProvaLedger(repo: string, base: string, headRev: string): ProvaLedger {
+  const alterados = alteradosEmShared(repo, base, headRev);
+  if (alterados.length === 0) return { prova: true, linhas: [] };
+  const raiz = materializar(repo, headRev);
+  try {
+    const instr = new Set(edgesInstrumentadas(raiz));
+    const mapa = parsearMapa(lerNaRevEm(repo, headRev, ARQ_MAPA) ?? '');
+    const edges: EdgeParaProva[] = todasAsEdges(raiz).map((edge) => {
+      let fecho: string[] | null = null;
+      let erroFecho: string | null = null;
+      try {
+        fecho = fecharGrafo(`${RAIZ_EDGES}/${edge}/index.ts`, raiz);
+      } catch (e) {
+        erroFecho = mensagemDeErro(e) ?? 'erro sem mensagem';
+      }
+      return { edge, fecho, erroFecho, instrumentada: instr.has(edge), noMapa: edge in mapa };
+    });
+    return provaPeloLedger(alterados, edges);
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+  }
+}
+
+/**
+ * `--prova-ledger --base <ar> --head <main>`: última linha `PROVA_LEDGER=0` (o ledger prova toda
+ * mudança de `_shared/` da fatia) ou `PROVA_LEDGER=1` (há consumidora fora do mapa, ou fecho
+ * ilegível). Exit 0 = mediu (qualquer das duas) · 2 = mecânica (o vigia trata como sem prova).
+ */
+function mainProvaLedger(base: string | null, headArg: string | null): number {
+  if (base === null || !headArg) {
+    console.log('PROVA_LEDGER_MECANICA: --prova-ledger exige --base e --head resolvíveis');
+    return 2;
+  }
+  const r = git(['rev-parse', '--verify', `${headArg}^{commit}`]);
+  if (!r.ok) {
+    console.log(`PROVA_LEDGER_MECANICA: --head ${headArg} nao resolve`);
+    return 2;
+  }
+  let p: ProvaLedger;
+  try {
+    p = coletarProvaLedger(process.cwd(), base, r.saida);
+  } catch (e) {
+    console.log(`PROVA_LEDGER_MECANICA: ${(mensagemDeErro(e) ?? 'erro sem mensagem').slice(0, 200)}`);
+    return 2;
+  }
+  for (const l of p.linhas) console.log(l);
+  console.log(`PROVA_LEDGER=${p.prova ? 0 : 1}`);
+  return 0;
+}
+
 export function main(argv: string[]): number {
+  if (argv.includes('--prova-ledger')) {
+    const ib = argv.indexOf('--base');
+    const ih = argv.indexOf('--head');
+    const b = ib >= 0 ? argv[ib + 1] : undefined;
+    const bres = b ? git(['rev-parse', '--verify', `${b}^{commit}`]) : { ok: false, saida: '' };
+    return mainProvaLedger(bres.ok ? bres.saida : null, ih >= 0 ? (argv[ih + 1] ?? null) : null);
+  }
   const iBase = argv.indexOf('--base');
   const iHead = argv.indexOf('--head');
   const baseArg = iBase >= 0 ? argv[iBase + 1] : process.env.SONDA_BASE;

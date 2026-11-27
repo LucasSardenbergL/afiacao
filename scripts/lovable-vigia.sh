@@ -230,7 +230,16 @@ for _ in 1 2 3; do
     PRECISA_LEDGER)
       # só edge no intervalo: o ledger diz se TODA edge da main já está servida. O --decidir só lê o cache
       # (validade LP_CACHE_EDGE_MIN, a mesma para o --esperar); quem o renova é este tick.
-      rm -f "$EST"/pendencias-*
+      rm -f "$EST"/pendencias-* "$EST"/shared-[0-9a-f]*
+      # `_shared/` no intervalo (rodada 2, M1): a prova de que toda consumidora está no mapa de fingerprints
+      # (o ledger então prova a mudança). Exit ≠ 0 ou saída sem `PROVA_LEDGER=0|1` = 2 (sem prova: liberar humano).
+      PB=$(linha PROVA_DE)
+      if [[ "$PB" =~ ^[0-9a-f]{40}$ ]]; then
+        (cd "$WT" && timeout 300 bun scripts/sonda-fan-out.ts --prova-ledger --base "$PB" --head "$HEAD_SHA") > "$EST/shared.tmp.$$" 2>&1; SRC=$?
+        SV=$(tail -1 "$EST/shared.tmp.$$" | sed -n 's/^PROVA_LEDGER=\([01]\)$/\1/p'); [ "$SRC" = 0 ] && [ -n "$SV" ] || SV=2
+        { echo "$SV"; grep -v '^PROVA_LEDGER=' "$EST/shared.tmp.$$" | head -40; } > "$EST/shared-$PB-$HEAD_SHA"; rm -f "$EST/shared.tmp.$$"
+        log "prova do _shared ${PB:0:8}..${HEAD_SHA:0:8}: PROVA_LEDGER=$SV$( [ "$SV" = 0 ] || printf ' — %s' "$(sed -n '2,$p' "$EST/shared-$PB-$HEAD_SHA" | grep -v '^LEDGER ' | head -3 | paste -sd';' -)")"
+      fi
       [ "$(shasum "$WT/bun.lock" 2>/dev/null)" = "$(cat "$EST/bun-lock.sha" 2>/dev/null)" ] \
         || { (cd "$WT" && timeout 600 bun install --frozen-lockfile >>"$LOG" 2>&1) && shasum "$WT/bun.lock" > "$EST/bun-lock.sha"; }
       (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1; PRC=$?
@@ -260,7 +269,7 @@ if [ -n "$AR40" ]; then
   [ "$AR_ULT" = "$AR40" ] || grava "$EST/ar-ultimo" "$AR40"
 fi
 # ── caches de outra main (rodada 2, M13): a decisão só lê `pendencias-<head>`/`recibos-<base>-<head>` do HEAD atual
-for c in "$EST"/pendencias-[0-9a-f]* "$EST"/recibos-[0-9a-f]*; do
+for c in "$EST"/pendencias-[0-9a-f]* "$EST"/recibos-[0-9a-f]* "$EST"/shared-[0-9a-f]*; do
   [ -e "$c" ] && case "$c" in *"-$HEAD_SHA") ;; *) rm -f "$c" ;; esac
 done
 # camadas atestadas até a main (decisão limpa): o próximo PR julga a partir daqui, não do ar
