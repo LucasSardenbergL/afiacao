@@ -61,3 +61,9 @@ A 5b (#4214) entregou o backtest como SQL re-rodável (`db/backtest-credito-ia-r
 Prova: o mesmo harness, agora aplicando a cadeia base + nova. 64 asserts no controle e 21 sabotagens vermelhas, nos dois locales. A sabotagem do REVOKE da migration nova ficava **verde**: o `CREATE OR REPLACE` preserva o ACL da base, então o REVOKE é redundante por desenho. Ela foi trocada por um GRANT a mais, que a postcondição recusa.
 
 **Aplicado em prod (2026-11-26):** `db:aplicar` a partir da main (`799104c8f`, #4233), tentativa **#1488** `aplicada`, com o mesmo sha256 do ensaio (`3ef7439b…`). A guarda de drift passou. 2ª testemunha pelo psql-ro: md5 do corpo em prod = md5 do repo (`1df6581f…`), marca `painel-concordancia-ia-v2` presente, SECURITY DEFINER, STABLE, `search_path=public`, ACL `{postgres, authenticated}` (anon ✗, service_role ✗). Falta o Publish para a tela nova aparecer.
+
+## Nome do grupo pela fonte certa (2026-11-26, migration `20261127100000`)
+
+Conferindo a tela em prod depois do Publish, a exposição mostrava os grupos **sem nome**. O PR 8 lia `fin_contas_receber.nome_cliente`, que vem **vazio do sync em 1.208/1.208 títulos abertos** (psql-ro). A fonte nova é `profiles` da **raiz** do grupo (`razao_social`, senão `name`), o mesmo COALESCE das RPCs de crédito; os 16.107 donos do mapa têm nome. Nos bloqueios recentes, o nome é o do dono do par, e par com 2 donos fica `null` (não adivinha).
+
+**Lição:** coluna de texto "nome" em espelho do Omie pode existir e vir sempre `''`. `count(col)` conta string vazia; meça `count(*) FILTER (WHERE col <> '')` antes de escolher a fonte.

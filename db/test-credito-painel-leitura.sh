@@ -98,6 +98,7 @@ CREATE TABLE public.fin_contas_receber (
   company text NOT NULL, omie_codigo_cliente bigint, saldo numeric, status_titulo text, data_vencimento date,
   omie_codigo_lancamento bigint, numero_pedido text, nome_cliente text, updated_at timestamptz DEFAULT now(),
   valor_documento numeric, data_emissao date, categoria_codigo text, ausente_omie_desde timestamptz);
+CREATE TABLE public.profiles (user_id uuid PRIMARY KEY, name text, razao_social text);
 CREATE TABLE public.customer_canonical_alias (
   alias_user_id uuid PRIMARY KEY, canonical_user_id uuid NOT NULL,
   status text NOT NULL DEFAULT 'inactive' CHECK (status IN ('active','inactive','conflict')));
@@ -129,7 +130,8 @@ for m in 20260702233000_trava_credito_fase2 20260703140000_trava_credito_gate_ex
   P -q -1 -f "$M/$m.sql"
 done
 MIG_BASE="$M/20261125120000_credito_painel_leitura.sql"   # o que a prod tem (#1443)
-MIG="$M/20261126180000_credito_painel_concordancia_ia.sql" # sob prova (bloco IA × regra vivo)
+MIG_IA="$M/20261126180000_credito_painel_concordancia_ia.sql"  # prod (#1488)
+MIG="$M/20261127100000_credito_painel_nome_grupo.sql"         # sob prova (nome do grupo por profiles)
 echo "antecedentes aplicados"
 
 # helpers do harness
@@ -207,6 +209,9 @@ INSERT INTO public.sales_orders (account, created_by, omie_numero_pedido, total,
   -- SO6: gêmeo cancelado no Omie → não foi liberado (título atrasado dele não conta)
   ('oben', '$L', '000000005006', 900,  'enviado', now() - interval '25 days', '90000000-0000-0000-0000-000000000006'),
   ('oben', '$L', NULL,   100,  'orcamento', now() - interval '1 day', NULL);
+-- nome do grupo = profiles da RAIZ: C tem razão social em branco (cai no name); o alias A1 tem nome
+-- próprio que NÃO pode aparecer (o grupo é o C)
+INSERT INTO public.profiles (user_id, name, razao_social) VALUES ('$C', 'Cliente C', '   '), ('$A1', 'Alias SC', 'Alias Razao');
 INSERT INTO public.venda_bloqueio_credito_log (company, omie_codigo_cliente, acao, vencido, titulos)
   VALUES ('oben', 101, 'bloqueado', 1000, 1);
 SQL
@@ -327,6 +332,10 @@ asserts() {
   eq "1 grupo consolidado" "$(J "r->'exposicao'->'totais'->>'grupos'")" "1"
 
   echo "── bloqueios ──"
+  local gc="(SELECT g FROM jsonb_array_elements(r->'exposicao'->'grupos') g WHERE g->>'grupo_user_id'='$C')"
+  eq "nome do grupo = profiles da raiz (razão em branco → name; alias não)" "$(J "$gc->>'nome'")" "Cliente C"
+  eq "bloqueio recente: nome pelo dono do par" "$(J "r->'bloqueios'->'recentes'->0->>'nome'")" "Cliente C"
+  eq "bloqueio recente: par com 2 donos → nome null (não adivinha)" "$(Jv "INSERT INTO public.profiles VALUES ('$E','Cliente E',NULL); INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES ('$E','oben',101)" "r->'bloqueios'->'recentes'->0->>'nome'")" ""
   eq "bloqueado = 1 evento" "$(J "(SELECT a->>'eventos' FROM jsonb_array_elements(r->'bloqueios'->'por_acao') a WHERE a->>'acao'='bloqueado')")" "1"
   eq "denominador: pedidos do app oben (orçamento fora)" "$(J "r->'bloqueios'->'pedidos_app_periodo'->>'oben'")" "4"
 
@@ -383,7 +392,7 @@ SQL
 # ACL ficaria verde (falsificação pegou, 2026-11-25). Cada variante nasce como na 1ª aplicação em prod.
 # instala = a cadeia de prod: base (#1443) e, por cima, o arquivo sob prova (a guarda de drift exige a base)
 instala() { CUR="$1"; P -q -c "DROP FUNCTION IF EXISTS public.credito_painel_resumo(integer)";
-            P -q -1 -f "$MIG_BASE" >/dev/null; P -q -1 -f "$1" >/dev/null; }
+            P -q -1 -f "$MIG_BASE" >/dev/null; P -q -1 -f "$MIG_IA" >/dev/null; P -q -1 -f "$1" >/dev/null; }
 
 echo "══ CONTROLE (migration original) ══"
 instala "$MIG"
@@ -424,7 +433,10 @@ sabota ia_mais_antiga "s/ORDER BY p.grupo_user_id, p.created_at DESC, p.id/ORDER
 sabota ia_prosp_vaza "s/WHERE s.data_emissao > ia1.primeira_em/WHERE true/"
 sabota ia_sem_categoria "s/AND f.categoria_codigo LIKE '1.01.%'/AND true/"
 sabota ia_pct_zero "s/'concordancia_pct', CASE WHEN c.comparaveis > 0 THEN round(100.0 \* c.concordam \/ c.comparaveis, 1) END)/'concordancia_pct', COALESCE(round(100.0 * c.concordam \/ NULLIF(c.comparaveis, 0), 1), 0))/"
-sabota drift_sem_guarda "s/AND position('painel-concordancia-ia-v2' IN v_src) = 0 THEN/AND false THEN/"
+sabota drift_sem_guarda "s/AND position('painel-nome-grupo-v3' IN v_src) = 0 THEN/AND false THEN/"
+sabota nome_sem_nullif "s/COALESCE(NULLIF(btrim(pf.razao_social), ''), NULLIF(btrim(pf.name), ''))/COALESCE(btrim(pf.razao_social), btrim(pf.name))/g"
+sabota nome_outro_perfil "s/FROM public.profiles pf WHERE pf.user_id = u.grupo) AS nome,/FROM public.profiles pf WHERE pf.user_id <> u.grupo ORDER BY pf.name LIMIT 1) AS nome,/"
+sabota nome_adivinha_dono "s/SELECT CASE WHEN count(DISTINCT m.user_id) = 1 THEN max(/SELECT CASE WHEN true THEN max(/"
 # o CREATE OR REPLACE desta migration PRESERVA o ACL da base (#1443): o REVOKE dela é redundante por desenho
 # (sabotá-lo fica verde). O que é load-bearing aqui é a POSTCONDIÇÃO — um GRANT a mais tem de ser recusado.
 sabota acl_grant_anon 's/GRANT EXECUTE ON FUNCTION public.credito_painel_resumo(integer) TO authenticated;/GRANT EXECUTE ON FUNCTION public.credito_painel_resumo(integer) TO authenticated, anon;/'

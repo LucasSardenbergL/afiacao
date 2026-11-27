@@ -106,7 +106,7 @@ function BlocoExposicao({ p }: { p: PainelCredito }) {
                   return (
                     <TableRow key={g.grupoUserId}>
                       <TableCell>
-                        <div className="font-medium">{g.nome ?? 'Sem nome no título'}</div>
+                        <div className="font-medium">{g.nome ?? 'Sem nome no cadastro'}</div>
                         <div className="flex flex-wrap gap-1 text-xs text-muted-foreground">
                           {g.empresas.map((e) => NOME_EMPRESA[e] ?? e).join(' + ')}
                           {g.parcialColacorSc && (
