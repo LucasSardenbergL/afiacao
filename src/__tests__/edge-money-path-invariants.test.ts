@@ -4062,7 +4062,7 @@ describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () 
   const src = read(ANALYZE);
   const saida = read(SAIDA_IA);
   const deployDoc = read(DEPLOY_DOC);
-  const CONTRATO = 'ia-nao-precifica-v1';
+  const CONTRATO = 'ia-nao-precifica-v2';
 
   it('a canária emite o VERSION MARKER `contrato` LITERAL no fonte da edge — e CONSOME a medição de saida-ia.ts', () => {
     // LITERAL e no index.ts: é por ele que o `canaria-contrato-bump-gate` localiza a canária. Numa
@@ -4070,7 +4070,7 @@ describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () 
     expect(
       src,
       'sumiu o marcador `contrato` literal da canária de preço — o gate de bump fica cego e um deploy velho responderia a canária velha',
-    ).toMatch(/contrato: ['"]ia-nao-precifica-v1['"]/);
+    ).toMatch(/contrato: ['"]ia-nao-precifica-v2['"]/);
     expect(removerComentarios(saida), 'a medição não pode carregar o contrato (ele é do envelope, no index.ts)').not.toMatch(/\bcontrato\s*:/);
     expect(removerComentarios(src), 'o ramo da canária não espalha a medição de canariaSemPreco()').toMatch(
       /decisaoCanaria\.tipo === ['"]sonda['"][\s\S]{0,600}\.\.\.canariaSemPreco\(\)/,
@@ -4081,13 +4081,13 @@ describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () 
     // Sem esta ponta o card seguiria exigindo o contrato velho: vermelho para a edge nova e — pior — verde
     // para a edge que ainda precifica. A troca só discrimina com o Publish E o deploy (deploy.md §Canárias).
     const card = read('src/lib/governanca/canaria-preco.ts');
-    expect(card).toMatch(/const CONTRATO_ESPERADO = ['"]ia-nao-precifica-v1['"]/);
+    expect(card).toMatch(/const CONTRATO_ESPERADO = ['"]ia-nao-precifica-v2['"]/);
   });
 
   it('a LINHA da tabela do deploy.md fixa o MESMO marcador (senão o verificador não sabe o que exigir)', () => {
     expect(
       deployDoc,
-      'a linha do `analyze-unified-order` na tabela de canárias não fixa `ia-nao-precifica-v1` — o founder leria `—` e aceitaria `ok` sozinho',
+      'a linha do `analyze-unified-order` na tabela de canárias não fixa `ia-nao-precifica-v2` — o founder leria `—` e aceitaria `ok` sozinho',
     ).toMatch(linhaDaTabela('analyze-unified-order', CONTRATO));
   });
 

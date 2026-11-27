@@ -33,7 +33,9 @@ export interface ResultadoCanaria {
 // "a edge respondeu" de "a edge é a versão que eu deployei": um deploy INTEGRALMENTE VELHO responde a
 // canária VELHA, e sem esta constante o card não teria como desempatar. Bump aqui E na edge
 // (`CONTRATO_CANARIA_PRECO` em supabase/functions/analyze-unified-order/saida-ia.ts), juntos.
-const CONTRATO_ESPERADO = "ia-nao-precifica-v1";
+// v2 (PR 3.1, "IA honesta"): a lista fechada da saída ganhou `quantidade_inferida` e `descartados`. A v1
+// no ar cai em "canária de OUTRA fatia" — não precifica, mas é o bundle de antes do 3.1.
+const CONTRATO_ESPERADO = "ia-nao-precifica-v2";
 // O contrato da fatia ANTERIOR: no ar, significa que a edge servida ainda PRECIFICA (deploy pendente
 // ou revertido pelo Lovable). Nome próprio porque é o estado mais provável entre o Publish e o deploy.
 const CONTRATO_ANTERIOR = "praticado-vence-omie-v1";

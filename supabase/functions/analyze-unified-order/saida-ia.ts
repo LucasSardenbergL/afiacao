@@ -121,7 +121,7 @@ export const CAMPOS_SAIDA_SUGESTAO = [
   "userToolId", "omie_codigo_servico", "servico_descricao",
 ] as const;
 /** O que a edge recebeu da IA e NÃO devolve como item (PR 3.1): sai com o motivo, nunca some. */
-export const CAMPOS_SAIDA_DESCARTADO = ["descricao", "motivo"] as const;
+const CAMPOS_SAIDA_DESCARTADO = ["descricao", "motivo"] as const;
 
 /** Copia só as chaves permitidas que vieram preenchidas — o resto (preço incluso) fica. */
 export function apenasCampos(

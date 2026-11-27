@@ -218,7 +218,7 @@ const PISTAS_EMBALAGEM: ReadonlyArray<{ sufixo: string; pistas: RegExp }> = [
 ];
 
 /** Sufixo de embalagem que a descrição carrega no fim do código, ou null. */
-export function sufixoDaDescricao(descricao: string): string | null {
+function sufixoDaDescricao(descricao: string): string | null {
   const m = descricao.toUpperCase().match(/(LT|L5|QT|GL|BH|BD)\b/);
   return m ? m[1] : null;
 }

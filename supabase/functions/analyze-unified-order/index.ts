@@ -390,7 +390,7 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({
           canary: true,
-          contrato: "ia-nao-precifica-v1",
+          contrato: "ia-nao-precifica-v2",
           ...canariaSemPreco(),
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },

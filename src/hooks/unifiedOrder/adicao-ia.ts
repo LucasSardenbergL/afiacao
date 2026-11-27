@@ -26,12 +26,12 @@ export interface PlanoAdicaoIA {
   relatorio: RelatorioAdicaoIA;
 }
 
-export function ehBaseTintometrica(product: Pick<Product, 'is_tintometric' | 'tint_type'>): boolean {
+function ehBaseTintometrica(product: Pick<Product, 'is_tintometric' | 'tint_type'>): boolean {
   return !!product.is_tintometric && product.tint_type === 'base';
 }
 
 /** A linha de produto em que uma soma pode cair: mesmo produto, SEM cor. */
-export function ehLinhaSomavel(c: CartItem, productId: string): c is ProductCartItem {
+function ehLinhaSomavel(c: CartItem, productId: string): c is ProductCartItem {
   return c.type === 'product' && c.product.id === productId && !c.tint_formula_id;
 }
 
