@@ -363,11 +363,15 @@ const UnifiedOrder = () => {
   });
 
   // Oferece restore se houver draft pendente E o cart atual estiver vazio (entrou novo na tela).
+  // Restore ESPERANDO o cliente (Codex r5 do #4236): o carrinho segue vazio e o draft segue
+  // presente até a seleção — sem esta trava o diálogo reabria por cima da busca e o "Descartar
+  // mesmo assim" apagava o envelope do envio pendente (2º PV no reenvio).
+  const [restoreEsperandoCliente, setRestoreEsperandoCliente] = useState(false);
   useEffect(() => {
-    if (draft && h.cart.length === 0 && !restoreOpen) {
+    if (draft && h.cart.length === 0 && !restoreOpen && !restoreEsperandoCliente) {
       setRestoreOpen(true);
     }
-  }, [draft, h.cart.length, restoreOpen]);
+  }, [draft, h.cart.length, restoreOpen, restoreEsperandoCliente]);
 
   // Sensor do funil no LEDGER (PR 9.1): jornada por pedido em montagem; o envio avisa pela ref.
   const sensorFunil = useSensorFunilPedido({
@@ -458,6 +462,7 @@ const UnifiedOrder = () => {
     const decisao = resolverRestorePendente(pendente.codigoCliente, codigoClienteSelecionado);
     if (decisao === 'esperar') return;
     restorePendenteRef.current = null;
+    setRestoreEsperandoCliente(false);
     if (decisao === 'aplicar') { aplicarDadosRef.current(pendente.dados, true); return; }
     toast.info('Rascunho não restaurado', {
       description: `Ele é de ${pendente.nome ?? 'outro cliente'}. Selecione esse cliente e restaure de novo.`,
@@ -486,6 +491,7 @@ const UnifiedOrder = () => {
     if (decisao === 'esperarCliente' && codigoClienteIdentifica(codigoRascunho)) {
       // Sem cliente na tela: pré-busca o cliente do rascunho e ESPERA a seleção dele.
       restorePendenteRef.current = { codigoCliente: codigoRascunho, nome: state.customerName ?? null, dados };
+      setRestoreEsperandoCliente(true);
       toast.info('Selecione o cliente para restaurar', {
         description: `O rascunho é de ${state.customerName ?? 'outro cliente'} — o carrinho volta quando ele for selecionado.`,
       });
@@ -505,6 +511,7 @@ const UnifiedOrder = () => {
   const handleDiscardDraft = () => {
     sensorFunil.registrar('novo_pedido.rascunho_descartado', { itens: draft?.state.cart.length ?? null });
     restorePendenteRef.current = null;
+    setRestoreEsperandoCliente(false);
     clearDraft();
     h.descartarEnvelope();
     dismissDraft();
@@ -533,6 +540,7 @@ const UnifiedOrder = () => {
     if (!h.ultimoEnvioConfirmado) return;
     if (!h.iniciarNovoPedido()) return; // envio em voo ou envelope vivo → nada é apagado
     restorePendenteRef.current = null; // rascunho "esperando o cliente" do pedido anterior não volta
+    setRestoreEsperandoCliente(false);
     coresDoCliente.setBusca('');
     h.setOrderSuccessOpen(false);
     // Sem os parâmetros do pedido anterior (?customer, ?repeat, ?origem…): recarregar não pode

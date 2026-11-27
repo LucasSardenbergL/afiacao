@@ -343,6 +343,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/cross-sell-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/leitoresObenProof.fatia3.test.ts",
       "src/pages/__tests__/UnifiedOrder.catalisador-erro-honesto.test.tsx",
+      "src/pages/__tests__/UnifiedOrder.restore-pendente.test.tsx",
       "src/pages/__tests__/UnifiedOrder.returnto-guard.test.ts",
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
       "src/pages/__tests__/SalesOrders.limpar-filtros.test.tsx",
