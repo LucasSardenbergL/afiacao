@@ -48,7 +48,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
   // autoatendimento, sem cliente identificado no app, BARRA antes de qualquer insert.
   const clienteDoPedidoId = customerUserId ?? (isCustomerMode ? user.id : null);
   if (!clienteDoPedidoId) {
-    return { success: false, results: [], errors: [{ step: 'validate_cliente', message: 'Não foi possível identificar o cliente no app. Revalide o cadastro do cliente antes de salvar o orçamento.' }] };
+    return { success: false, results: [], errors: [{ step: 'validate_cliente', message: 'Não foi possível identificar o cliente no app. Use “Trocar” e selecione o cliente de novo antes de salvar o orçamento.' }] };
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);

@@ -21,8 +21,8 @@ describe('mensagemBloqueioCadastro (PR 8.2)', () => {
     expect(mensagemBloqueioCadastro(estado) !== null).toBe(bloqueia);
   });
   it('cada bloqueio aponta a saída certa', () => {
-    expect(mensagemBloqueioCadastro('indisponivel')).toContain('Revalidar cadastro');
-    expect(mensagemBloqueioCadastro('sem_cadastro')).toContain('Revalidar cadastro');
+    expect(mensagemBloqueioCadastro('indisponivel')).toContain('Trocar');
+    expect(mensagemBloqueioCadastro('sem_cadastro')).toContain('Trocar');
     expect(mensagemBloqueioCadastro('sem_cadastro')).toContain('nome do vendedor');
   });
 });

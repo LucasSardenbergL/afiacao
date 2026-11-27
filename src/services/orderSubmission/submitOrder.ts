@@ -147,7 +147,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   // Antes, staff sem `customerUserId` (busca do cadastro falhou ou cliente sem cadastro no app) gravava
   // `customer_user_id = user.id` — o pedido nascia no nome do VENDEDOR e o telefone dele sobrescrevia o
   // do Omie. Autoatendimento: o cliente é o próprio usuário. Staff sem cadastro confirmado: aborta antes
-  // de qualquer insert ou chamada ao ERP (a tela oferece "Revalidar cadastro").
+  // de qualquer insert ou chamada ao ERP (a tela manda "Trocar" e selecionar de novo).
   const clienteDoPedidoId = customerUserId ?? (isCustomerMode ? user.id : null);
   if (!clienteDoPedidoId) {
     return {
@@ -157,7 +157,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       lastOrderData: null,
       errors: [{
         step: 'validate_cliente',
-        message: 'Não foi possível identificar o cliente no app. Revalide o cadastro do cliente antes de enviar.',
+        message: 'Não foi possível identificar o cliente no app. Use “Trocar” e selecione o cliente de novo antes de enviar.',
       }],
       allConfirmed: false,
     };

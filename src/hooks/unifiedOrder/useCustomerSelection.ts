@@ -505,8 +505,9 @@ export function useCustomerSelection({
     try {
       setSelectedCustomer(cust);
 
-      // 8.2: a busca do cadastro tem desfecho PRÓPRIO — falhar não derruba o resto da seleção (preços,
-      // condições), mas deixa o envio bloqueado em `indisponivel` com "Revalidar cadastro".
+      // 8.2: a busca do cadastro grava o PRÓPRIO desfecho (`indisponivel` bloqueia o envio; saída "Trocar").
+      // Falhou → relança para o catch abaixo, como na main: a seleção PARA aqui, antes do autocadastro
+      // (Codex r2 P0-4: seguir abria corrida de criar_cliente_afiacao).
       let localUserId: string | null = null;
       let erroCadastro: unknown = null;
       try {
@@ -519,6 +520,7 @@ export function useCustomerSelection({
       }
       if (isStale()) return;
       setEstadoCadastro(interpretarCadastro(localUserId, erroCadastro));
+      if (erroCadastro) throw erroCadastro;
 
       if (localUserId) {
         setCustomerUserId(localUserId);
@@ -756,14 +758,6 @@ export function useCustomerSelection({
     return retained.token === selectionTokenRef.current ? cliente : null;
   }, []);
 
-  /** 8.2: "Revalidar cadastro" = REFAZ A SELEÇÃO INTEIRA do mesmo cliente (preços, OC, vendedor, contas,
-   *  cadastro) — o carrinho fica (a seleção não o toca). Re-resolver SÓ o id deixava o mapa de preços vazio
-   *  da 1ª tentativa e a OC da seleção anterior (Codex r1 do 8.2; mesma lição do 8.1). */
-  const revalidarCadastro = useCallback(async () => {
-    if (!selectedCustomer) return;
-    await selectCustomer(selectedCustomer);
-  }, [selectedCustomer, selectCustomer]);
-
   const clearCustomer = useCallback(() => {
     // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
     // ressuscitam o cliente que estamos limpando. Como o finally da seleção pula
@@ -819,7 +813,7 @@ export function useCustomerSelection({
     customerPurchaseHistory,
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
-    estadoCadastro, revalidarCadastro,
+    estadoCadastro,
     // Actions
     selectCustomer, clearCustomer, waitForAccountEnsure,
   };

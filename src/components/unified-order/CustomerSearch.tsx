@@ -25,10 +25,10 @@ interface CustomerSearchProps {
   vendedorDivergencias: string[];
   /** 8.1: 'indisponivel' e 'divergente' (com ou sem lista) avisam e bloqueiam o envio; a única saída é "Trocar" (sem revalidar). */
   estadoVendedor?: EstadoVendedor;
-  /** 8.2: 'indisponivel' (a busca falhou) e 'sem_cadastro' bloqueiam o envio; a saída é "Revalidar cadastro"
-   *  (refaz a seleção inteira, sem limpar o carrinho). Sem "criar daqui" (Codex r1: 4 P0 na criação). */
+  /** 8.2: 'indisponivel' (a busca falhou) e 'sem_cadastro' bloqueiam o envio; a única saída é "Trocar" (seleção
+   *  nova). Sem "criar daqui" (Codex r1: 4 P0) e sem revalidar mantendo o carrinho (Codex r2: 4 P0 — prazo,
+   *  preço provisório, código/vendedor antigos, autocadastro em dobro; mesma lição do 8.1). */
   estadoCadastro?: EstadoCadastro;
-  onRevalidarCadastro?: () => void;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -42,7 +42,7 @@ export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
   validatingVendedor, vendedorDivergencias, estadoVendedor,
-  estadoCadastro, onRevalidarCadastro,
+  estadoCadastro,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -122,11 +122,8 @@ export function CustomerSearch({
                   <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
                   <div className="flex-1">
                     <p className="text-xs font-semibold">Não foi possível identificar o cliente no app</p>
-                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado até o cadastro ser confirmado. O carrinho é mantido.</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem o cadastro, o pedido sairia no nome do vendedor. Use “Trocar” e selecione o cliente de novo.</p>
                   </div>
-                  {onRevalidarCadastro && (
-                    <Button variant="outline" size="sm" onClick={onRevalidarCadastro}>Revalidar cadastro</Button>
-                  )}
                 </div>
               </div>
             )}
@@ -136,11 +133,8 @@ export function CustomerSearch({
                   <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
                   <div className="flex-1">
                     <p className="text-xs font-semibold">Cliente sem cadastro no app</p>
-                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem cadastro, o pedido sairia no nome do vendedor. Depois de cadastrar o cliente no app, toque em Revalidar. O carrinho é mantido.</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem cadastro, o pedido sairia no nome do vendedor. Cadastre o cliente no app e use “Trocar” para selecioná-lo de novo.</p>
                   </div>
-                  {onRevalidarCadastro && (
-                    <Button variant="outline" size="sm" onClick={onRevalidarCadastro}>Revalidar cadastro</Button>
-                  )}
                 </div>
               </div>
             )}

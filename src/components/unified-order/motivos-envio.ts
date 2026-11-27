@@ -82,9 +82,9 @@ export function motivosEnvioBloqueado(e: EntradaMotivosEnvio): MotivoEnvio[] {
     if (e.estadoCadastro === 'resolvendo') {
       motivos.push({ codigo: 'identificando_cliente', texto: 'Identificando o cliente no app…' });
     } else if (e.estadoCadastro === 'sem_cadastro') {
-      motivos.push({ codigo: 'sem_cadastro_cliente', texto: 'Cliente sem cadastro no app — cadastre e use “Revalidar cadastro”' });
+      motivos.push({ codigo: 'sem_cadastro_cliente', texto: 'Cliente sem cadastro no app — cadastre e use “Trocar”' });
     } else if (e.estadoCadastro === 'indisponivel') {
-      motivos.push({ codigo: 'cadastro_indisponivel', texto: 'Não foi possível identificar o cliente no app — use “Revalidar cadastro”' });
+      motivos.push({ codigo: 'cadastro_indisponivel', texto: 'Não foi possível identificar o cliente no app — use “Trocar”' });
     }
   }
   if (findInvalidPricedProductItems([...e.obenProductItems, ...e.colacorProductItems]).length > 0) {

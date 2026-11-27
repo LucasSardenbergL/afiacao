@@ -9,8 +9,8 @@
  *   • `nao_verificado` — sem cliente selecionado;
  *   • `resolvendo`     — buscando o cadastro;
  *   • `confirmado`     — cadastro encontrado → libera;
- *   • `sem_cadastro`   — a busca respondeu e não há cadastro → bloqueia; saída "Revalidar cadastro" (depois de cadastrar);
- *   • `indisponivel`   — a busca FALHOU (não sabemos) → bloqueia; saída "Revalidar cadastro".
+ *   • `sem_cadastro`   — a busca respondeu e não há cadastro → bloqueia; saída "Trocar" (depois de cadastrar);
+ *   • `indisponivel`   — a busca FALHOU (não sabemos) → bloqueia; saída "Trocar" (seleção nova, como no 8.1).
  * Falha de busca nunca vira "sem cadastro" (ausente ≠ erro): criar em cima de erro de leitura duplicaria.
  */
 export type EstadoCadastro = 'nao_verificado' | 'resolvendo' | 'confirmado' | 'sem_cadastro' | 'indisponivel';
@@ -26,8 +26,8 @@ export function mensagemBloqueioCadastro(estado: EstadoCadastro): string | null 
   switch (estado) {
     case 'confirmado': return null;
     case 'resolvendo': return 'Aguarde — ainda identificando o cliente no app.';
-    case 'sem_cadastro': return 'Este cliente não tem cadastro no app — o pedido sairia no nome do vendedor. Cadastre o cliente e toque em “Revalidar cadastro”.';
-    case 'indisponivel': return 'Não foi possível identificar o cliente no app. Toque em “Revalidar cadastro” antes de enviar.';
+    case 'sem_cadastro': return 'Este cliente não tem cadastro no app — o pedido sairia no nome do vendedor. Cadastre o cliente e use “Trocar” para selecioná-lo de novo.';
+    case 'indisponivel': return 'Não foi possível identificar o cliente no app. Use “Trocar” e selecione o cliente de novo.';
     default: return 'Selecione o cliente antes de enviar.';
   }
 }

@@ -30,8 +30,13 @@ describe('8.2 — a busca do cadastro distingue erro de ausência', () => {
     expect(lanca).toBeGreaterThan(doc);
   });
 
-  it('"Revalidar cadastro" refaz a SELEÇÃO INTEIRA (preços, OC, vendedor) — não só o id (Codex r1 P0-1)', () => {
-    expect(selecao).toMatch(/const revalidarCadastro = useCallback\(async \(\) => \{\s*if \(!selectedCustomer\) return;\s*await selectCustomer\(selectedCustomer\);/);
+  it('busca falhou → RELANÇA para o catch da seleção, como na main (Codex r2 P0-4: seguia até o autocadastro)', () => {
+    expect(selecao).toMatch(/setEstadoCadastro\(interpretarCadastro\(localUserId, erroCadastro\)\);\s*if \(erroCadastro\) throw erroCadastro;/);
+  });
+
+  it('sem "Revalidar" que mantém o carrinho (Codex r2: 4 P0) — a saída é "Trocar"', () => {
+    expect(selecao).not.toContain('revalidarCadastro');
+    expect(hook).not.toContain('revalidarCadastro');
   });
 
   it('o estado vem do intérprete puro, com o erro da busca', () => {
@@ -79,8 +84,9 @@ describe('8.2 — a página mostra o motivo e as saídas', () => {
     expect(pagina).toContain("estadoCadastro: h.isCustomerMode ? 'confirmado' : h.estadoCadastro");
   });
 
-  it('o CustomerSearch recebe "Revalidar" (e nenhum "criar cadastro" — Codex r1)', () => {
-    expect(pagina).toContain('onRevalidarCadastro={h.revalidarCadastro}');
+  it('o CustomerSearch recebe o estado, sem "Revalidar" nem "criar cadastro" (Codex r1/r2)', () => {
+    expect(pagina).toContain('estadoCadastro={h.estadoCadastro}');
+    expect(pagina).not.toContain('onRevalidarCadastro');
     expect(pagina).not.toContain('onCriarCadastro');
   });
 });
