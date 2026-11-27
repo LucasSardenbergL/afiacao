@@ -12,7 +12,35 @@ const emVoo = new Set<string>();
 const divergentes = new Set<string>();
 // Tokens de salvamento com desfecho NÃO provado (divergente sem leitura, ou ainda em voo): ao reabrir, a tela os
 // ENCERRA no banco antes de destravar — o envio atrasado não chega mais ao Omie (Codex no diff r2).
+// Persistidos neste APARELHO (localStorage): um F5 não pode apagar o único rastro de um envio ainda incerto
+// (Codex r3). Melhor esforço — storage bloqueado degrada para a memória da aba, nunca quebra o salvar.
+const CHAVE_STORAGE = 'afiacao.edicao-pedido.pendentes.v1';
 const pendentes = new Map<string, Set<string>>();
+let pendentesCarregados = false;
+function carregarPendentes(): void {
+  if (pendentesCarregados) return;
+  pendentesCarregados = true;
+  try {
+    const cru = globalThis.localStorage?.getItem(CHAVE_STORAGE);
+    const lido = cru ? JSON.parse(cru) as unknown : null;
+    if (lido && typeof lido === 'object') {
+      for (const [k, v] of Object.entries(lido as Record<string, unknown>)) {
+        if (Array.isArray(v)) {
+          const tokens = v.filter((t): t is string => typeof t === 'string');
+          if (tokens.length > 0) pendentes.set(k, new Set(tokens));
+        }
+      }
+    }
+  } catch { /* storage indisponível ou corrompido: só a memória da aba */ }
+}
+function gravarPendentes(): void {
+  try {
+    globalThis.localStorage?.setItem(
+      CHAVE_STORAGE,
+      JSON.stringify(Object.fromEntries([...pendentes].map(([k, v]) => [k, [...v]]))),
+    );
+  } catch { /* idem */ }
+}
 const ouvintes = new Set<() => void>();
 
 const avisar = () => { for (const f of ouvintes) f(); };
@@ -41,20 +69,25 @@ export function marcarDivergente(pedidoId: string): void {
 }
 
 export function marcarPendente(pedidoId: string, token: string): void {
+  carregarPendentes();
   const k = chave(pedidoId);
   pendentes.set(k, new Set([...(pendentes.get(k) ?? []), token]));
+  gravarPendentes();
 }
 
 export function tokensPendentes(pedidoId: string): string[] {
+  carregarPendentes();
   return [...(pendentes.get(chave(pedidoId)) ?? [])];
 }
 
 export function resolverPendente(pedidoId: string, token: string): void {
+  carregarPendentes();
   const k = chave(pedidoId);
   const s = pendentes.get(k);
   if (!s) return;
   s.delete(token);
   if (s.size === 0) pendentes.delete(k);
+  gravarPendentes();
 }
 
 /** Só depois de um master liberar a divergência DURÁVEL no banco (`pedido_edicao_omie_resolver`). */
@@ -72,10 +105,21 @@ export function ouvirRegistro(f: () => void): () => void {
   return () => { ouvintes.delete(f); };
 }
 
+/** Só para testes: simula um F5 — a memória da aba some, o que está no localStorage fica. */
+export function esquecerMemoriaParaTeste(): void {
+  emVoo.clear();
+  divergentes.clear();
+  pendentes.clear();
+  pendentesCarregados = false;
+  avisar();
+}
+
 /** Só para testes: o registro é do módulo e vazaria de um teste para o outro. */
 export function limparRegistroParaTeste(): void {
   emVoo.clear();
   divergentes.clear();
   pendentes.clear();
+  pendentesCarregados = false;
+  try { globalThis.localStorage?.removeItem(CHAVE_STORAGE); } catch { /* idem */ }
   avisar();
 }

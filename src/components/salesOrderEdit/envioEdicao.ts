@@ -93,17 +93,21 @@ export function travaDaPosse(resp: { data: unknown; error: unknown }): {
  * perdeu ou não prova nada (#30; Codex no desenho do PR 2). A RPC ENCERRA o token: se a edge ainda não
  * despachou, nada desse save vai mais ao Omie — "não alterou" vira fato. Só `concluida` é sucesso; só
  * abandonada/liberada/expirada (e pedido sem PV/ausente) provam que nada mudou; `em_voo` = ainda no Omie (a tela
- * reconsulta e, se seguir assim, manda recarregar depois — o banco decide na abertura); o resto — divergente,
- * resolvida por outro, leitura que falhou ou forma desconhecida — é divergente (fail-closed). A resposta
+ * reconsulta e, se seguir assim, manda recarregar depois — o banco decide na abertura); `resolvida` = decidido por
+ * um master; o resto — divergente, leitura que falhou ou forma desconhecida — é divergente (fail-closed). A resposta
  * `success: true` que chegue DEPOIS disto é descartada (`comPrazo`): o banco já respondeu.
  */
-export function desfechoDoEnvioPeloBanco(resp: { data: unknown; error: unknown }): 'concluido' | 'nao_alterado' | 'em_voo' | 'divergente' {
+export function desfechoDoEnvioPeloBanco(resp: { data: unknown; error: unknown }): 'concluido' | 'nao_alterado' | 'em_voo' | 'resolvido' | 'divergente' {
   if (resp.error) return 'divergente';
   switch (resp.data) {
     case 'concluida':
       return 'concluido';
     case 'em_voo':
       return 'em_voo';
+    // Um master conferiu no Omie e liberou: o token está DECIDIDO (não fica pendente), mas a tela que o enviou não
+    // sabe como o pedido ficou — trava até reler.
+    case 'resolvida':
+      return 'resolvido';
     case 'abandonada':
     case 'liberada':
     case 'expirada':

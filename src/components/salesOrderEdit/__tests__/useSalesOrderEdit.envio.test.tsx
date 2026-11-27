@@ -35,6 +35,7 @@ const { rpcInterno, posseMock, rpcComPosse } = vi.hoisted(() => {
     }
     // Lista = respostas em sequência (a última se repete): é como o teste encena "em voo, depois concluída".
     const v = posseMock[chave];
+    if (v === 'NUNCA') return new Promise(() => {});
     const resposta = Array.isArray(v) ? (v.length > 1 ? v.shift() : v[0]) : v;
     if (chave === 'encerrar' && (resposta as { data?: unknown })?.data === 'divergente') posseMock.divergentesNoBanco.add(pedido);
     return Promise.resolve(resposta);
@@ -884,6 +885,51 @@ describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', (
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
     expect(result.current.formularioTravado).toBe(true);
+  });
+
+  it('F5 com envio incerto: o token pendente sobrevive (localStorage) e reabrir o encerra antes de destravar', async () => {
+    posseMock.encerrar = { data: null, error: { message: 'rede' } };
+    const a = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await a.result.current.handleSave(); });
+    const token = bodyDoAlterar()?.token;
+    a.unmount();
+    const { esquecerMemoriaParaTeste } = await import('../registroEnvios');
+    esquecerMemoriaParaTeste();
+    posseMock.encerrar = { data: 'divergente', error: null };
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    const b = await renderLoaded();
+    expect(encerramentos().map((c) => (c.args as { p_token: string }).p_token)).toEqual([token, token]);
+    expect(b.result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(b.result.current.formularioTravado).toBe(true);
+  });
+
+  it('token pendente que um master resolveu: reabrir com o PV livre destrava (não fica pendente para sempre)', async () => {
+    posseMock.encerrar = { data: null, error: { message: 'rede' } };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    posseMock.encerrar = { data: 'resolvida', error: null };
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    await act(async () => { await result.current.recarregar(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.precisaRecarregar).toBeNull();
+    const { tokensPendentes } = await import('../registroEnvios');
+    expect(tokensPendentes('ord-1')).toEqual([]);
+  });
+
+  it('leitura da posse que não responde ao abrir: TRAVA (fail-closed), sem ficar carregando', async () => {
+    const { PRAZOS } = await import('../envioEdicao');
+    const original = PRAZOS.corpoMs;
+    PRAZOS.corpoMs = 20;
+    try {
+      posseMock.estado = 'NUNCA';
+      const { result } = await renderLoaded();
+      expect(result.current.precisaRecarregar?.mensagem).toContain('Não consegui conferir');
+      expect(result.current.formularioTravado).toBe(true);
+    } finally {
+      PRAZOS.corpoMs = original;
+    }
   });
 
   it('em_voo que concluiu depois: reabrir confirma pelo token, destrava e invalida o cache do pedido', async () => {

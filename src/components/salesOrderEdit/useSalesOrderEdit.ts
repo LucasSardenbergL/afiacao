@@ -35,7 +35,7 @@ import {
 
 /** Pergunta ao banco — e ENCERRA — o desfecho de UM salvamento (`pedido_edicao_omie_encerrar_envio`), com prazo.
  *  Leitura que falha ou não fecha = divergente (fail-closed). */
-async function desfechoNoBanco(pedidoId: string, token: string): Promise<'concluido' | 'nao_alterado' | 'em_voo' | 'divergente'> {
+async function desfechoNoBanco(pedidoId: string, token: string): Promise<'concluido' | 'nao_alterado' | 'em_voo' | 'resolvido' | 'divergente'> {
   try {
     const lido = await comPrazo(
       Promise.resolve(supabase.rpc('pedido_edicao_omie_encerrar_envio', { p_sales_order_id: pedidoId, p_token: token })),
@@ -165,6 +165,25 @@ export function useSalesOrderEdit() {
     // A tela fica carregando; o efeito de `envioDeOutraTela` chama loadOrder de novo quando ele termina.
     if (estadoDoPedido(id).emVoo) return;
     try {
+      // Salvamentos desta aba/aparelho com desfecho não provado: ENCERRADOS no banco ANTES de ler o pedido — sem
+      // isso, um envio cuja consulta nem chegou ao banco podia reivindicar depois do "livre", e a leitura feita
+      // antes de ele concluir abriria o carrinho velho como editável (Codex no diff r2/r3).
+      let pendenteAberto = false;
+      let algumConcluiu = false;
+      for (const t of tokensPendentes(id)) {
+        const d = await desfechoNoBanco(id, t);
+        if (velha()) return;
+        if (d === 'concluido' || d === 'nao_alterado' || d === 'resolvido') {
+          resolverPendente(id, t);
+          if (d === 'concluido') algumConcluiu = true;
+        } else {
+          pendenteAberto = true;
+          // Depois de um F5 a memória da aba se perdeu; o pendente persistido devolve a trava certa.
+          if (d === 'divergente') marcarDivergente(id);
+        }
+      }
+      // Concluiu depois que a tela desistiu: o cache pode ter relido o total de antes (cupom/WhatsApp).
+      if (algumConcluiu) void invalidarCachesDoPedido(queryClient, id);
       const { data, error } = await supabase
         .from('sales_orders')
         .select('id, customer_user_id, created_by, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, updated_at, hash_payload')
@@ -200,24 +219,13 @@ export function useSalesOrderEdit() {
       // Posse do PEDIDO no banco (outra aba/aparelho salvando, ou divergência de uma edição anterior): lida ANTES de
       // liberar o formulário. Só pedido com PV (o caminho local não toca o Omie).
       if (o.omie_pedido_id) {
-        const posse = travaDaPosse(await supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: o.id }));
+        // Com prazo: resposta que não fecha TRAVA (fail-closed) em vez de deixar a tela carregando (Codex r3).
+        const lidaPosse = await comPrazo(
+          Promise.resolve(supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: o.id })),
+          PRAZOS.corpoMs,
+        );
         if (velha()) return;
-        // Salvamentos desta aba com desfecho não provado: ENCERRADOS no banco antes de qualquer destrava — sem
-        // isso, um envio cuja consulta nem chegou ao banco podia reivindicar DEPOIS do "livre" (Codex no diff r2).
-        let pendenteAberto = false;
-        let algumConcluiu = false;
-        for (const t of tokensPendentes(o.id)) {
-          const d = await desfechoNoBanco(o.id, t);
-          if (velha()) return;
-          if (d === 'concluido' || d === 'nao_alterado') {
-            resolverPendente(o.id, t);
-            if (d === 'concluido') algumConcluiu = true;
-          } else {
-            pendenteAberto = true;
-          }
-        }
-        // Concluiu depois que a tela desistiu: o cache pode ter relido o total de antes (cupom/WhatsApp).
-        if (algumConcluiu) void invalidarCachesDoPedido(queryClient, o.id);
+        const posse = travaDaPosse(lidaPosse.ok ? lidaPosse.valor : { data: null, error: 'prazo' });
         setPrecisaRecarregar(posse.trava ?? (pendenteAberto && !estadoDoPedido(o.id).divergente ? TRAVA_EM_ANDAMENTO : null));
         setDivergenciaDuravel(posse.divergencia);
         // O banco é a verdade: PV livre e nenhum salvamento desta aba em aberto ⇒ o "divergente" que ela guardou já
@@ -602,7 +610,7 @@ export function useSalesOrderEdit() {
     // Desfecho desconhecido (#30; Codex no desenho do PR 2): o banco decide, e a consulta ENCERRA o token — se a
     // edge ainda não despachou, nada deste save vai mais ao Omie. Leitura que falha ou não fecha = divergente.
     const desfechoDesconhecido = async (titulo: string) => {
-      let desfecho: 'concluido' | 'nao_alterado' | 'em_voo' | 'divergente' = 'divergente';
+      let desfecho: 'concluido' | 'nao_alterado' | 'em_voo' | 'resolvido' | 'divergente' = 'divergente';
       // `em_voo` = a edge ainda está no Omie: reconsulta algumas vezes antes de desistir (Codex no diff — virar
       // divergente na hora perdia o sucesso que chega logo depois).
       for (let tentativa = 0; tokenEnvio && tentativa <= PRAZOS.reconsultas; tentativa++) {
@@ -612,7 +620,9 @@ export function useSalesOrderEdit() {
       }
       // Sem prova: o token fica PENDENTE — reabrir o pedido o encerra no banco antes de destravar.
       if ((desfecho === 'divergente' || desfecho === 'em_voo') && tokenEnvio) marcarPendente(pedidoEnviado, tokenEnvio);
-      if (desfecho === 'divergente') marcarDivergente(pedidoEnviado);
+      // Resolvido por um master no meio: esta aba não sabe como o Omie ficou — trava até reler (sem pendente: o
+      // banco já decidiu este token).
+      if (desfecho === 'divergente' || desfecho === 'resolvido') marcarDivergente(pedidoEnviado);
       // Concluído: o refetch disparado no despacho pode ter relido o total de ANTES do write-back.
       if (desfecho === 'concluido') void invalidarCachesDoPedido(queryClient, pedidoEnviado);
       if (!naTela()) return;
