@@ -304,3 +304,31 @@ describe('SalesOrderDetailSheet — sem quebra, a tela é a de hoje', () => {
     expect(marcacao(pedidoReal(1489.34), q, { tirarAviso: true })).toBe(hojeLiquido());
   });
 });
+
+// Revisão /sales #27/#24: ilegível ≠ "sem itens"; conta desconhecida não vira documento de outra empresa.
+describe('SalesOrderDetailSheet — documento bloqueado', () => {
+  const abrir = (o: SalesOrder) => render(
+    <SalesOrderDetailSheet open order={o} customerName="X" descontosItens={SEM_DESCONTO}
+      onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()} />,
+  );
+  it('itens ilegiveis: diz que nao leu (nao "Sem itens") e trava Imprimir/Compartilhar', () => {
+    abrir(order({ items: [], itensIlegiveis: true }));
+    expect(screen.getByTestId('itens-ilegiveis').textContent).toContain('ler os itens');
+    expect(screen.queryByText('Sem itens neste pedido.')).toBeNull();
+    expect(screen.getByText('Imprimir').closest('button')).toHaveProperty('disabled', true);
+    expect(screen.getByText('Compartilhar').closest('button')).toHaveProperty('disabled', true);
+    cleanup();
+  });
+  it('lista vazia de verdade segue "Sem itens" com as acoes livres', () => {
+    abrir(order({ items: [] }));
+    expect(screen.getByText('Sem itens neste pedido.')).toBeTruthy();
+    expect(screen.getByText('Imprimir').closest('button')).toHaveProperty('disabled', false);
+    cleanup();
+  });
+  it('conta desconhecida: motivo visivel e acoes travadas', () => {
+    abrir(order({ account: 'xpto' }));
+    expect(screen.getByTestId('documento-bloqueado').textContent).toContain('conta "xpto"');
+    expect(screen.getByText('Imprimir').closest('button')).toHaveProperty('disabled', true);
+    cleanup();
+  });
+});

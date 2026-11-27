@@ -184,3 +184,40 @@ describe('buildSingleOrderHtml — desconto de item no cupom em lote', () => {
     expect(html).toContain(`<span>Subtotal:</span><span>${fmt(1629.25)}</span>`);
   });
 });
+
+// ── Revisão /sales leva 2 (#24 #26 #11 #53) ─────────────────────────────────────────────────────
+describe('cupom em lote — quantidade, cor e total', () => {
+  const comItens = (items: SalesOrderRow['items'], total = 20): SalesOrderRow => ({ ...order, items, total, subtotal: total });
+
+  it('quantidade 0 sai 0, nunca 1 (#26)', () => {
+    const data = buildPrintData(comItens([{ descricao: 'X', quantidade: 0, unidade: 'UN', valor_unitario: 10, valor_total: 0 }]), 'oben', undefined, SEM_ORDER_ITEMS);
+    expect(data.items[0].quantidade).toBe(0);
+  });
+
+  it('quantidade ausente sai "—" e nao cobra uma unidade na linha (#26, Codex)', () => {
+    const data = buildPrintData(comItens([{ descricao: 'X', unidade: 'UN', valor_unitario: 30 }]), 'oben', undefined, SEM_ORDER_ITEMS);
+    expect(data.items[0].quantidade).toBeNull();
+    expect(data.items[0].valorTotal).toBeNull();
+    const html = buildSingleOrderHtml(data);
+    expect(html).toContain('font-size:11px">—</td>');
+  });
+
+  it('desconto do cabecalho ausente fica null, nao 0 (#26)', () => {
+    expect(buildPrintData(order, 'oben', undefined, SEM_ORDER_ITEMS).desconto).toBeNull();
+  });
+
+  it('cor so com o nome aparece no cupom em lote (#24)', () => {
+    const data = buildPrintData(comItens([{ descricao: 'BASE ACRIL QT', quantidade: 1, unidade: 'UN', valor_unitario: 20, valor_total: 20, tint_nome_cor: '652J ACRIL BS - COBRE MEL - BS' }]), 'oben', undefined, SEM_ORDER_ITEMS);
+    expect(buildSingleOrderHtml(data)).toContain('Cor: 652J ACRIL BS - COBRE MEL - QT');
+  });
+
+  it('item sem preco: o lote diz SUBTOTAL CONHECIDO, nunca TOTAL definitivo (#11, Codex)', () => {
+    const data = buildPrintData(comItens([
+      { descricao: 'A', quantidade: 1, unidade: 'UN', valor_unitario: 30, valor_total: 30 },
+      { descricao: 'B', quantidade: 1, unidade: 'UN', valor_unitario: null },
+    ], 30), 'oben', undefined, SEM_ORDER_ITEMS);
+    const html = buildSingleOrderHtml(data);
+    expect(html).toContain('SUBTOTAL CONHECIDO:');
+    expect(html).not.toContain('<span>TOTAL:</span>');
+  });
+});
