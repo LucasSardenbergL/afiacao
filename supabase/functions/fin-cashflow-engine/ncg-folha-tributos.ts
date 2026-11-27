@@ -33,14 +33,14 @@ import { somarDias } from "../_shared/hoje-sp.ts";
 import { expandirRecorrenteDeno } from "./recorrente.ts";
 
 /** Empresa que paga a folha do grupo (decisão do founder, 26/11). */
-export const EMPRESA_FOLHA_CENTRAL = "colacor_sc";
+const EMPRESA_FOLHA_CENTRAL = "colacor_sc";
 /** Horizonte da reserva de folha (dias à frente). */
-export const FOLHA_JANELA_DIAS = 30;
+const FOLHA_JANELA_DIAS = 30;
 /** Atraso máximo de um título de folha que ainda conta como reserva (ver o cabeçalho). */
-export const FOLHA_ATRASO_MAX_DIAS = 30;
+const FOLHA_ATRASO_MAX_DIAS = 30;
 
-export const LINHAS_FOLHA = ["op_pessoal"] as const;
-export const LINHAS_TRIBUTO = ["op_impostos", "op_impostos_lucro"] as const;
+const LINHAS_FOLHA = ["op_pessoal"] as const;
+const LINHAS_TRIBUTO = ["op_impostos", "op_impostos_lucro"] as const;
 /** Famílias do plano Omie do grupo onde vivem folha e tributos — só para ACUSAR código fora do mapa. */
 const FAMILIAS_FOLHA = ["2.03."];
 const FAMILIAS_TRIBUTO = ["2.04.", "2.06."];
