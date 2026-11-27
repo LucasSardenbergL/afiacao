@@ -1,5 +1,5 @@
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
-import { textoDaCor } from '@/lib/pedido/cor-tinta';
+import { textoDaCor } from '@/lib/cor-tinta';
 
 interface OrderItem {
   description: string;

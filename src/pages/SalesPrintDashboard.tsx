@@ -106,6 +106,8 @@ const SalesPrintDashboard = () => {
       const rows: SalesOrderRow[] = (data ?? []).map((r) => ({
         ...r,
         ...itensOuIlegivel(r.items, `sales_orders ${r.id}`),
+        // A coluna é `discount`; o cupom lê `desconto` — sem isto o desconto do cabeçalho sumia (Codex).
+        desconto: r.discount ?? undefined,
         customer_document: snap.get(r.id)?.pedido_documento ?? undefined,
         customer_phone: snap.get(r.id)?.pedido_telefone ?? undefined,
         customer_address: snap.get(r.id)?.pedido_endereco ?? undefined,
@@ -167,18 +169,19 @@ const SalesPrintDashboard = () => {
   const { allOrdersRaw, foraDaImpressao } = useMemo(() => {
     const fora: string[] = [];
     const sales: EnrichedOrder[] = [];
-    for (const o of salesOrders) {
+    // Só o dia civil escolhido entra no aviso — a janela da query inclui horas dos dias vizinhos (Codex).
+    for (const o of salesOrders.filter((p) => pedidoNoDiaCivil(p.created_at, selectedDate))) {
       if (o.itensIlegiveis) fora.push(`${o.omie_numero_pedido ?? o.id.slice(0, 8)}: itens ilegíveis`);
       else if (o.account === 'oben' || o.account === 'colacor') sales.push({ ...o, _company: o.account });
       else fora.push(`${o.omie_numero_pedido ?? o.id.slice(0, 8)}: empresa não reconhecida (${o.account ?? 'vazia'})`);
     }
     const afiacao: EnrichedOrder[] = [];
-    for (const o of afiacaoOrders) {
+    for (const o of afiacaoOrders.filter((p) => pedidoNoDiaCivil(p.created_at, selectedDate))) {
       if (o.itensIlegiveis) fora.push(`OS ${o.id.slice(0, 8)}: itens ilegíveis`);
       else afiacao.push({ ...o, _company: 'afiacao' });
     }
     return { allOrdersRaw: [...sales, ...afiacao], foraDaImpressao: fora };
-  }, [salesOrders, afiacaoOrders]);
+  }, [salesOrders, afiacaoOrders, selectedDate]);
 
   // Fetch customer profiles
   const customerIds = useMemo(() => {

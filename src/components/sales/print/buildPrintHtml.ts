@@ -68,7 +68,8 @@ export function buildPrintData(
     parcelaCode,
     items: (order.items || []).map((it, i) => ({
       codigo: it.codigo || it.omie_codigo || '-',
-      descricao: it.descricao || it.nome || '',
+      // Só texto: um campo de outro tipo lançava no escapeHtml e derrubava o LOTE inteiro (Codex).
+      descricao: typeof it.descricao === 'string' && it.descricao ? it.descricao : typeof it.nome === 'string' ? it.nome : '',
       // Era `|| 1`: quantidade 0 imprimia UMA unidade, e ausente também (revisão /sales #26). Ausente
       // ou não-número → `null`, que o cupom escreve "—"; o 0 informado sai 0.
       quantidade: typeof it.quantidade === 'number' && Number.isFinite(it.quantidade) ? it.quantidade : null,

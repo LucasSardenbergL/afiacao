@@ -1,6 +1,6 @@
 import { escapeHtml } from '@/lib/escape-html';
 import { formatPrecoOuAusente } from '@/lib/format';
-import { textoDaCor } from '@/lib/pedido/cor-tinta';
+import { textoDaCor } from '@/lib/cor-tinta';
 
 export interface PrintOrderData {
   companyName: string;

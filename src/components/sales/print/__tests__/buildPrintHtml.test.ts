@@ -220,4 +220,10 @@ describe('cupom em lote — quantidade, cor e total', () => {
     expect(html).toContain('SUBTOTAL CONHECIDO:');
     expect(html).not.toContain('<span>TOTAL:</span>');
   });
+
+  it('descricao que nao e texto nao derruba o lote (Codex)', () => {
+    const data = buildPrintData(comItens([{ descricao: 123 as unknown as string, nome: 'NOME OK', quantidade: 1, unidade: 'UN', valor_unitario: 20, valor_total: 20 }]), 'oben', undefined, SEM_ORDER_ITEMS);
+    expect(data.items[0].descricao).toBe('NOME OK');
+    expect(() => buildSingleOrderHtml(data)).not.toThrow();
+  });
 });
