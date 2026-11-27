@@ -239,7 +239,8 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   - `v_grupo_contatos` invoker=true lendo `v_endereco_contato`;
   - `v_perfil_equipe` invoker=off + barrier.
   `audit:migrations` rc=0. `deriva:corpo:prod` rc=0, depois de conciliar o GRANT da RPC como `SO_CITA` na baseline.
-  Pendente: prova logado em prod pelo founder (Clientes → grupo; pedido com titular staff → ledger).
+  Prova logada em prod pelo founder (2026-11-27), nas palavras dele: "Fiz o teste logado, deu tudo ok". Cobriu os dois testes:
+  a rua some no grupo fora da carteira, e o pedido com titular vendedor vai para o ledger.
 
 ## Fatia 4b-2 — o que falta (front + corte)
 - `addresses`: migrar `Addresses.tsx:108` (`select('*')`), `RecurringSchedules.tsx:82`, `useProfile.ts:63` (head `*`)
