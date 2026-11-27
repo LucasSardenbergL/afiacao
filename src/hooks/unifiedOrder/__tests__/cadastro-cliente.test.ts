@@ -22,6 +22,7 @@ describe('mensagemBloqueioCadastro (PR 8.2)', () => {
   });
   it('cada bloqueio aponta a saída certa', () => {
     expect(mensagemBloqueioCadastro('indisponivel')).toContain('Revalidar cadastro');
-    expect(mensagemBloqueioCadastro('sem_cadastro')).toContain('Criar cadastro no app');
+    expect(mensagemBloqueioCadastro('sem_cadastro')).toContain('Revalidar cadastro');
+    expect(mensagemBloqueioCadastro('sem_cadastro')).toContain('nome do vendedor');
   });
 });

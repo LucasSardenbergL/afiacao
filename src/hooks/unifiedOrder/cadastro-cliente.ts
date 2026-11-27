@@ -8,8 +8,8 @@
  * Estados (só staff; o autoatendimento é sempre o próprio usuário):
  *   • `nao_verificado` — sem cliente selecionado;
  *   • `resolvendo`     — buscando o cadastro;
- *   • `confirmado`     — cadastro encontrado (ou criado) → libera;
- *   • `sem_cadastro`   — a busca respondeu e não há cadastro → bloqueia; saída "Criar cadastro no app";
+ *   • `confirmado`     — cadastro encontrado → libera;
+ *   • `sem_cadastro`   — a busca respondeu e não há cadastro → bloqueia; saída "Revalidar cadastro" (depois de cadastrar);
  *   • `indisponivel`   — a busca FALHOU (não sabemos) → bloqueia; saída "Revalidar cadastro".
  * Falha de busca nunca vira "sem cadastro" (ausente ≠ erro): criar em cima de erro de leitura duplicaria.
  */
@@ -26,7 +26,7 @@ export function mensagemBloqueioCadastro(estado: EstadoCadastro): string | null 
   switch (estado) {
     case 'confirmado': return null;
     case 'resolvendo': return 'Aguarde — ainda identificando o cliente no app.';
-    case 'sem_cadastro': return 'Este cliente não tem cadastro no app. Toque em “Criar cadastro no app” antes de enviar.';
+    case 'sem_cadastro': return 'Este cliente não tem cadastro no app — o pedido sairia no nome do vendedor. Cadastre o cliente e toque em “Revalidar cadastro”.';
     case 'indisponivel': return 'Não foi possível identificar o cliente no app. Toque em “Revalidar cadastro” antes de enviar.';
     default: return 'Selecione o cliente antes de enviar.';
   }

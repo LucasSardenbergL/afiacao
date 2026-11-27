@@ -593,7 +593,6 @@ const UnifiedOrder = () => {
               vendedorDivergencias={h.vendedorDivergencias}
               estadoVendedor={h.estadoVendedor}
               estadoCadastro={h.estadoCadastro} onRevalidarCadastro={h.revalidarCadastro}
-              onCriarCadastro={h.criarCadastroNoApp} criandoCadastro={h.creatingLocalProfile}
               onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />

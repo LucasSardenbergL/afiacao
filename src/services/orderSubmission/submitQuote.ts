@@ -10,7 +10,7 @@ import { bloqueioTabelaTint } from './tabelaTint';
  * Inserts one row per account into sales_orders with status='orcamento'.
  */
 export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuoteResult> {
-  const { customer, customerUserId, user, cart, subtotals, delivery, meta, supabase } = params;
+  const { customer, customerUserId, isCustomerMode, user, cart, subtotals, delivery, meta, supabase } = params;
   const { obenProductItems, colacorProductItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
@@ -44,8 +44,15 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
     return { success: false, results: [], errors: [{ step: 'validate_tint_tabela', message: bloqueioTabela }] };
   }
 
+  // 8.2: o orçamento vira PEDIDO na conversão (mesma linha) — nunca no nome do vendedor. Fora do
+  // autoatendimento, sem cliente identificado no app, BARRA antes de qualquer insert.
+  const clienteDoPedidoId = customerUserId ?? (isCustomerMode ? user.id : null);
+  if (!clienteDoPedidoId) {
+    return { success: false, results: [], errors: [{ step: 'validate_cliente', message: 'Não foi possível identificar o cliente no app. Revalide o cadastro do cliente antes de salvar o orçamento.' }] };
+  }
+
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);
-  const storedPhone = await resolveCustomerPhone(supabase, customer, customerUserId, user.id);
+  const storedPhone = await resolveCustomerPhone(supabase, customer, clienteDoPedidoId, user.id);
 
   // Oben quote
   if (obenProductItems.length > 0) {
@@ -73,7 +80,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         } : {}),
       }));
       const { error } = await supabase.from('sales_orders').insert({
-        customer_user_id: customerUserId || user.id,
+        customer_user_id: clienteDoPedidoId,
         created_by: user.id,
         items: itemsPayload,
         subtotal: subtotals.oben,
@@ -82,7 +89,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         notes: meta.notes || null,
         account: 'oben',
         // Âncora money-path (P0-B): documento do cliente REAL (raw). O edge deriva o código Omie por-conta
-        // DESTE documento na conversão — imune ao fallback customer_user_id || user.id.
+        // DESTE documento na conversão — imune ao cliente do pedido (que antes do 8.2 podia virar o vendedor).
         customer_document: customer.cnpj_cpf || null,
         customer_address: storedAddress,
         customer_phone: storedPhone,
@@ -95,7 +102,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         stage: 'supabase_insert',
         account: 'oben',
         customerId: customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: clienteDoPedidoId,
         itemCount: obenProductItems.length,
         kind: 'quote',
         error: e,
@@ -125,7 +132,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         valor_total: c.quantity * c.unit_price,
       }));
       const { error } = await supabase.from('sales_orders').insert({
-        customer_user_id: customerUserId || user.id,
+        customer_user_id: clienteDoPedidoId,
         created_by: user.id,
         items: itemsPayload,
         subtotal: subtotals.colacor,
@@ -145,7 +152,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         stage: 'supabase_insert',
         account: 'colacor',
         customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: clienteDoPedidoId,
         itemCount: colacorProductItems.length,
         kind: 'quote',
         error: e,

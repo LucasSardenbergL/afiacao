@@ -25,12 +25,10 @@ interface CustomerSearchProps {
   vendedorDivergencias: string[];
   /** 8.1: 'indisponivel' e 'divergente' (com ou sem lista) avisam e bloqueiam o envio; a única saída é "Trocar" (sem revalidar). */
   estadoVendedor?: EstadoVendedor;
-  /** 8.2: 'indisponivel' (a busca falhou) → "Revalidar cadastro"; 'sem_cadastro' → "Criar cadastro no app".
-   *  Os dois bloqueiam o envio e nenhum limpa o carrinho. */
+  /** 8.2: 'indisponivel' (a busca falhou) e 'sem_cadastro' bloqueiam o envio; a saída é "Revalidar cadastro"
+   *  (refaz a seleção inteira, sem limpar o carrinho). Sem "criar daqui" (Codex r1: 4 P0 na criação). */
   estadoCadastro?: EstadoCadastro;
   onRevalidarCadastro?: () => void;
-  onCriarCadastro?: () => void;
-  criandoCadastro?: boolean;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -44,7 +42,7 @@ export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
   validatingVendedor, vendedorDivergencias, estadoVendedor,
-  estadoCadastro, onRevalidarCadastro, onCriarCadastro, criandoCadastro = false,
+  estadoCadastro, onRevalidarCadastro,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -108,7 +106,7 @@ export function CustomerSearch({
                   <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1" role="status">
                     <Loader2 className="w-3 h-3 animate-spin" aria-hidden /> Verificando cadastro…
                   </p>
-                ) : !customerUserId && <p className="text-xs text-status-warning mt-0.5">Sem cadastro no app</p>}
+                ) : !customerUserId && (estadoCadastro === undefined || estadoCadastro === 'sem_cadastro') && <p className="text-xs text-status-warning mt-0.5">Sem cadastro no app</p>}
               </div>
               <Button variant="ghost" size="sm" onClick={pedirTroca} aria-label="Trocar cliente">Trocar</Button>
             </div>
@@ -138,12 +136,10 @@ export function CustomerSearch({
                   <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
                   <div className="flex-1">
                     <p className="text-xs font-semibold">Cliente sem cadastro no app</p>
-                    <p className="text-xs text-muted-foreground mt-1">Crie o cadastro para enviar o pedido no nome do cliente. O carrinho é mantido.</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem cadastro, o pedido sairia no nome do vendedor. Depois de cadastrar o cliente no app, toque em Revalidar. O carrinho é mantido.</p>
                   </div>
-                  {onCriarCadastro && (
-                    <Button variant="outline" size="sm" onClick={onCriarCadastro} disabled={criandoCadastro}>
-                      {criandoCadastro ? 'Criando…' : 'Criar cadastro no app'}
-                    </Button>
+                  {onRevalidarCadastro && (
+                    <Button variant="outline" size="sm" onClick={onRevalidarCadastro}>Revalidar cadastro</Button>
                   )}
                 </div>
               </div>

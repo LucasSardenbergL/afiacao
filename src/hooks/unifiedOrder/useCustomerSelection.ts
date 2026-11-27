@@ -300,6 +300,7 @@ export function useCustomerSelection({
    *  Também captura requires_po do perfil resolvido. */
   const resolveLocalUserId = useCallback(async (cust: OmieCustomer): Promise<string | null> => {
     let localUserId = cust.local_user_id || null;
+    let erroMapeamento: unknown = null;
     if (!localUserId) {
       const { data: mapping, error: mappingError } = await supabase
         .from('omie_customer_account_map_fresco')
@@ -309,8 +310,9 @@ export function useCustomerSelection({
         // account-correta. UNIQUE(código,account) → sem colisão. Miss → cai no match por documento abaixo.
         .eq('account', 'oben')
         .maybeSingle();
-      // 8.2: erro da leitura LANÇA (antes era ignorado e caía no documento/vendedor) → `indisponivel`.
-      if (mappingError) throw mappingError;
+      // 8.2: erro da leitura NÃO para aqui — o documento abaixo ainda pode achar o cliente (como na main);
+      // mas, se nada achar, o erro LANÇA no fim: "não achei" com o mapa ilegível ≠ "sem cadastro".
+      erroMapeamento = mappingError ?? null;
       if (mapping?.user_id) localUserId = mapping.user_id;
     }
     if (!localUserId && cust.cnpj_cpf) {
@@ -321,6 +323,7 @@ export function useCustomerSelection({
         localUserId = await clientePorDocumento([docClean, cust.cnpj_cpf]);
       }
     }
+    if (!localUserId && erroMapeamento) throw erroMapeamento;
     // requires_po (identidade, coluna aberta) de quem foi resolvido — por mapping OU por documento
     if (localUserId) {
       const { data: poProfile } = await supabase
@@ -753,40 +756,13 @@ export function useCustomerSelection({
     return retained.token === selectionTokenRef.current ? cliente : null;
   }, []);
 
-  /** 8.2: "Revalidar cadastro" — refaz SÓ a busca do cadastro da seleção corrente, sem limpar o carrinho. */
+  /** 8.2: "Revalidar cadastro" = REFAZ A SELEÇÃO INTEIRA do mesmo cliente (preços, OC, vendedor, contas,
+   *  cadastro) — o carrinho fica (a seleção não o toca). Re-resolver SÓ o id deixava o mapa de preços vazio
+   *  da 1ª tentativa e a OC da seleção anterior (Codex r1 do 8.2; mesma lição do 8.1). */
   const revalidarCadastro = useCallback(async () => {
     if (!selectedCustomer) return;
-    const myToken = selectionTokenRef.current;
-    const isStale = () => selectionTokenRef.current !== myToken;
-    setEstadoCadastro('resolvendo');
-    let localUserId: string | null = null;
-    let erroCadastro: unknown = null;
-    try {
-      localUserId = await resolveLocalUserId(selectedCustomer);
-    } catch (e) {
-      erroCadastro = e ?? new Error('busca do cadastro falhou');
-      logger.warn('Revalidar cadastro falhou', { stage: 'revalidar_cadastro', error: e });
-    }
-    if (isStale()) return;
-    setEstadoCadastro(interpretarCadastro(localUserId, erroCadastro));
-    if (localUserId) {
-      setCustomerUserId(localUserId);
-      reloadPriceHistory?.();
-      onLocalUserResolved?.(localUserId);
-    }
-  }, [selectedCustomer, resolveLocalUserId, reloadPriceHistory, onLocalUserResolved]);
-
-  /** 8.2: cadastro criado/achado por outro caminho (ex.: "Criar cadastro no app") para a seleção `token`. */
-  const confirmarCadastro = useCallback((localUserId: string, token: number) => {
-    if (selectionTokenRef.current !== token) return;
-    setCustomerUserId(localUserId);
-    setEstadoCadastro('confirmado');
-    reloadPriceHistory?.();
-    onLocalUserResolved?.(localUserId);
-  }, [reloadPriceHistory, onLocalUserResolved]);
-
-  /** Token da seleção corrente — quem conclui algo assíncrono confere que o cliente não mudou. */
-  const tokenDaSelecao = useCallback(() => selectionTokenRef.current, []);
+    await selectCustomer(selectedCustomer);
+  }, [selectedCustomer, selectCustomer]);
 
   const clearCustomer = useCallback(() => {
     // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
@@ -843,7 +819,7 @@ export function useCustomerSelection({
     customerPurchaseHistory,
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
-    estadoCadastro, revalidarCadastro, confirmarCadastro, tokenDaSelecao,
+    estadoCadastro, revalidarCadastro,
     // Actions
     selectCustomer, clearCustomer, waitForAccountEnsure,
   };

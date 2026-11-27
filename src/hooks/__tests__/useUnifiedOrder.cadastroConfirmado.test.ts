@@ -21,8 +21,17 @@ const corpoDoSubmit = () => {
 };
 
 describe('8.2 — a busca do cadastro distingue erro de ausência', () => {
-  it('o erro da leitura do mapeamento é LANÇADO (antes era ignorado e virava "sem cadastro")', () => {
-    expect(selecao).toContain('if (mappingError) throw mappingError;');
+  it('erro do mapeamento ainda tenta o documento (como na main) e só LANÇA se nada achar', () => {
+    expect(selecao).toContain('erroMapeamento = mappingError ?? null;');
+    const ini = selecao.indexOf('erroMapeamento = mappingError');
+    const doc = selecao.indexOf('await clientePorDocumento(', ini);
+    const lanca = selecao.indexOf('if (!localUserId && erroMapeamento) throw erroMapeamento;', ini);
+    expect(doc).toBeGreaterThan(ini);
+    expect(lanca).toBeGreaterThan(doc);
+  });
+
+  it('"Revalidar cadastro" refaz a SELEÇÃO INTEIRA (preços, OC, vendedor) — não só o id (Codex r1 P0-1)', () => {
+    expect(selecao).toMatch(/const revalidarCadastro = useCallback\(async \(\) => \{\s*if \(!selectedCustomer\) return;\s*await selectCustomer\(selectedCustomer\);/);
   });
 
   it('o estado vem do intérprete puro, com o erro da busca', () => {
@@ -31,21 +40,37 @@ describe('8.2 — a busca do cadastro distingue erro de ausência', () => {
 });
 
 describe('8.2 — caminho de envio do staff confere o cadastro ANTES da trava', () => {
-  it('o submit chama o guard (fora do autoatendimento) e retorna quando bloqueia', () => {
-    expect(corpoDoSubmit()).toMatch(
-      /if \(!isCustomerMode\) \{[\s\S]*?const bloqueioCadastro = mensagemBloqueioCadastro\(estadoEfetivo\);\s*if \(bloqueioCadastro\) \{\s*toast\.error\(bloqueioCadastro\);\s*return;/,
-    );
+  it('o submit chama o guard e retorna quando bloqueia', () => {
+    expect(corpoDoSubmit()).toMatch(/const bloqueioCadastro = bloqueioDoCadastro\(\);\s*if \(bloqueioCadastro\) \{\s*toast\.error\(bloqueioCadastro\);\s*return;/);
   });
 
-  it('"confirmado" sem id conta como não identificado', () => {
-    expect(corpoDoSubmit()).toContain("!customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel'");
+  it('o guard: autoatendimento passa; "confirmado" sem id conta como não identificado; mensagem do puro', () => {
+    const ini = hook.indexOf('const bloqueioDoCadastro = useCallback(');
+    const g = hook.slice(ini, hook.indexOf('}, [', ini));
+    expect(g).toContain('if (isCustomerMode) return null;');
+    expect(g).toContain("!customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel'");
+    expect(g).toContain('return mensagemBloqueioCadastro(estadoEfetivo);');
   });
 
   it('o useCallback do submit depende de estadoCadastro (sem closure velha)', () => {
     const ini = hook.indexOf('const submitOrder = useCallback(');
     const abre = hook.indexOf('\n  }, [', ini);
     const deps = hook.slice(abre, hook.indexOf(']);', abre));
-    expect(deps).toContain('estadoCadastro');
+    expect(deps).toContain('bloqueioDoCadastro');
+    const gi = hook.indexOf('const bloqueioDoCadastro = useCallback(');
+    expect(hook.slice(gi, hook.indexOf(']);', gi))).toContain('[isCustomerMode, customerUserId, estadoCadastro');
+  });
+});
+
+describe('8.2 — o orçamento também confere o cadastro (Codex r1 P0-2: virava pedido no nome do vendedor)', () => {
+  it('o submitQuote chama o mesmo guard e retorna quando bloqueia', () => {
+    const ini = hook.indexOf('const submitQuote = useCallback(');
+    const svc = hook.indexOf('submitQuoteService(', ini);
+    expect(hook.slice(ini, svc)).toMatch(/const bloqueioCadastroOrc = bloqueioDoCadastro\(\);\s*if \(bloqueioCadastroOrc\) \{\s*toast\.error\(bloqueioCadastroOrc\);\s*return;/);
+  });
+  it('o service do orçamento recebe isCustomerMode (2ª camada)', () => {
+    const ini = hook.indexOf('submitQuoteService(');
+    expect(hook.slice(ini, ini + 200)).toContain('isCustomerMode,');
   });
 });
 
@@ -54,8 +79,8 @@ describe('8.2 — a página mostra o motivo e as saídas', () => {
     expect(pagina).toContain("estadoCadastro: h.isCustomerMode ? 'confirmado' : h.estadoCadastro");
   });
 
-  it('o CustomerSearch recebe "Revalidar" e "Criar cadastro"', () => {
+  it('o CustomerSearch recebe "Revalidar" (e nenhum "criar cadastro" — Codex r1)', () => {
     expect(pagina).toContain('onRevalidarCadastro={h.revalidarCadastro}');
-    expect(pagina).toContain('onCriarCadastro={h.criarCadastroNoApp}');
+    expect(pagina).not.toContain('onCriarCadastro');
   });
 });

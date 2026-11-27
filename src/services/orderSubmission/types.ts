@@ -172,6 +172,9 @@ export interface SubmitOrderResult {
 export interface SubmitQuoteParams {
   customer: OmieCustomer;
   customerUserId: string | null;
+  /** 8.2: autoatendimento (o cliente é o próprio usuário). Fora dele, sem `customerUserId` o orçamento é
+   *  BARRADO — antes gravava `customer_user_id = user.id` (o vendedor). Default: false. */
+  isCustomerMode?: boolean;
   user: User;
   cart: Pick<SubmitCart, 'obenProductItems' | 'colacorProductItems'>;
   subtotals: Pick<SubmitSubtotals, 'oben' | 'colacor'>;
