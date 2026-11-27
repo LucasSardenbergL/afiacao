@@ -306,7 +306,9 @@ const SalesPrintDashboard = () => {
               ...(pedidoId ? { operacional: { objeto_tipo: 'pedido', objeto_id: pedidoId, motivo: 'impressao_pedido' } } : {}),
             },
           });
-          if (data?.cliente) {
+          // Resposta mascarada (fora da carteira, sem exceção) não tem rua: não imprime só cidade/UF como
+          // se fosse o endereço de entrega (Codex P2) — a folha fica "sem endereço", como antes da Omie.
+          if (data?.cliente?.endereco) {
             const c = data.cliente;
             const parts = [
               c.endereco,

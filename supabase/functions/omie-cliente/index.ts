@@ -6,7 +6,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
 import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
-import { aplicarVisibilidade, codigosVisiveis, documentoDoPedidoCasa, lerAcessoOperacional } from "./pii-carteira.ts";
+import { aplicarVisibilidade, codigosVisiveis, lerAcessoOperacional, pedidoEDesteCadastro } from "./pii-carteira.ts";
 import {
   type ClienteOmieConsultado,
   codigoUnicoDoDocumento,
@@ -682,8 +682,9 @@ async function codigosComContatoVisivel(
   if (gestao === true) return "todos";
   const alvo = [...new Set(codigos.filter((c) => Number.isFinite(c) && c > 0))];
   if (alvo.length === 0) return vazio;
+  // Mapa FRESCO (Codex P1): o vínculo vencido (código que a Omie já reatribuiu) não autoriza o contato atual.
   const { data: vinculos, error: vincErro } = await admin
-    .from("omie_customer_account_map")
+    .from("omie_customer_account_map_fresco")
     .select("omie_codigo_cliente, user_id")
     .eq("account", "colacor_sc")
     .in("omie_codigo_cliente", alvo);
@@ -706,6 +707,21 @@ async function codigosComContatoVisivel(
     (perfis ?? []).filter((p) => p.contato_visivel === true && p.user_id).map((p) => p.user_id as string),
   );
   return codigosVisiveis(vinculos ?? [], visiveis);
+}
+
+/** user_ids vinculados (mapa fresco, colacor_sc) a um código Omie; erro → `null` (não abre nada). */
+async function usuariosDoCodigoFresco(codigo: number): Promise<Set<string> | null> {
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data, error } = await admin
+    .from("omie_customer_account_map_fresco")
+    .select("user_id")
+    .eq("account", "colacor_sc")
+    .eq("omie_codigo_cliente", codigo);
+  if (error) {
+    console.error(`[pii-carteira] vínculo do código não lido (${error.code}): sem exceção operacional`);
+    return null;
+  }
+  return new Set((data ?? []).map((r) => r.user_id).filter((u): u is string => !!u));
 }
 
 async function consultarClienteCompleto(codigoCliente: number): Promise<OmieCliente | null> {
@@ -1012,7 +1028,7 @@ Deno.serve(async (req) => {
         const clienteCompleto = await consultarClienteCompleto(codigo_cliente);
         if (clienteCompleto) {
           const visiveisConsulta = await codigosComContatoVisivel([codigo_cliente], chamadorId, clienteDoChamador);
-          let visivel = visiveisConsulta === "todos" || visiveisConsulta.has(codigo_cliente);
+          let visivel: boolean | "endereco" = visiveisConsulta === "todos" || visiveisConsulta.has(codigo_cliente);
           // Exceção operacional (impressão do pedido): a RPC valida o staff, grava o ledger e devolve o
           // documento do cliente DO PEDIDO; só abre se for este cadastro Omie.
           const operacional = lerAcessoOperacional(body.operacional);
@@ -1022,8 +1038,13 @@ Deno.serve(async (req) => {
               p_objeto_ids: [operacional.objeto_id],
               p_motivo: operacional.motivo,
             });
-            if (opErro) console.error(`[consultar_cliente] exceção operacional recusada (${opErro.code})`);
-            else visivel = documentoDoPedidoCasa(linhas ?? [], clienteCompleto.cnpj_cpf);
+            if (opErro) {
+              console.error(`[consultar_cliente] exceção operacional recusada (${opErro.code})`);
+            } else {
+              const usuarios = await usuariosDoCodigoFresco(codigo_cliente);
+              // Só o ENDEREÇO (o que a folha usa); e-mail, telefone e IE seguem fechados (Codex P1).
+              if (usuarios && pedidoEDesteCadastro(linhas ?? [], clienteCompleto.cnpj_cpf, usuarios)) visivel = "endereco";
+            }
           }
           result = {
             found: true,

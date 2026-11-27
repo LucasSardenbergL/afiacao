@@ -23,15 +23,23 @@ export const CAMPOS_PII_OMIE = [
   "inscricao_estadual",
 ] as const;
 
-/** Devolve o cliente com a PII zerada para `null` e `contato_visivel` explícito. Não muta a entrada. */
+/** O que a exceção operacional da impressão abre: só o endereço de entrega (nada de e-mail, telefone, IE). */
+export const CAMPOS_ENDERECO_OMIE = ["endereco", "endereco_numero", "complemento", "bairro", "cep"] as const;
+
+/**
+ * Devolve o cliente com a PII zerada para `null` e `contato_visivel` explícito. Não muta a entrada.
+ * `nivel`: `true` = tudo (carteira/gestão) · `"endereco"` = só o endereço (impressão do pedido) · `false` = nada.
+ * `contato_visivel` só é `true` no nível inteiro.
+ */
 export function aplicarVisibilidade<T extends Record<string, unknown>>(
   cliente: T,
-  visivel: boolean,
+  nivel: boolean | "endereco",
 ): T & { contato_visivel: boolean } {
-  if (visivel) return { ...cliente, contato_visivel: true };
+  if (nivel === true) return { ...cliente, contato_visivel: true };
+  const abre = new Set<string>(nivel === "endereco" ? CAMPOS_ENDERECO_OMIE : []);
   const copia: Record<string, unknown> = { ...cliente };
   for (const campo of CAMPOS_PII_OMIE) {
-    if (campo in copia) copia[campo] = null;
+    if (campo in copia && !abre.has(campo)) copia[campo] = null;
   }
   return { ...(copia as T), contato_visivel: false };
 }
@@ -69,18 +77,31 @@ export function lerAcessoOperacional(bruto: unknown): AcessoOperacional | null {
 }
 
 /**
- * A exceção operacional só abre o cadastro Omie que É o cliente do pedido: o documento devolvido pela
- * `contato_cliente_operacional` (que já gravou o ledger) tem de casar com o `cnpj_cpf` da Omie.
- * Documento ausente em qualquer ponta → não abre (ausente ≠ casou).
+ * Documento em forma ESTRITA: só pontuação de máscara é removida; sobra lixo → `null`. A normalização
+ * tolerante reduziria um alfanumérico malformado aos mesmos 11 dígitos de um CPF (Codex P1).
  */
-export function documentoDoPedidoCasa(
-  linhasRpc: ReadonlyArray<{ document?: string | null; cnpj?: string | null }>,
+function documentoEstrito(d: string | null | undefined): string | null {
+  if (typeof d !== "string") return null;
+  const n = d.replace(/[.\-/\s]/g, "").toUpperCase();
+  if (/^[0-9]{11}$/.test(n) || /^[0-9A-Z]{12}[0-9]{2}$/.test(n)) return normalizarDocumento(n) === n ? n : null;
+  return null;
+}
+
+/**
+ * A exceção operacional só abre o cadastro Omie que É o cliente do pedido (Codex P1: dois cadastros com o
+ * mesmo documento). Exige, na MESMA linha devolvida pela `contato_cliente_operacional` (que já gravou o
+ * ledger): o `customer_user_id` vinculado a ESTE código Omie (mapa fresco) E o documento casando, em forma
+ * estrita, com o `cnpj_cpf` da Omie. Qualquer ponta ausente → não abre (ausente ≠ casou).
+ */
+export function pedidoEDesteCadastro(
+  linhasRpc: ReadonlyArray<{ customer_user_id?: string | null; document?: string | null; cnpj?: string | null }>,
   cnpjCpfOmie: string | null | undefined,
+  usuariosDoCodigo: ReadonlySet<string>,
 ): boolean {
-  if (!cnpjCpfOmie) return false;
-  const alvo = normalizarDocumento(cnpjCpfOmie);
-  if (alvo.length !== 11 && alvo.length !== 14) return false;
+  const alvo = documentoEstrito(cnpjCpfOmie);
+  if (!alvo) return false;
   return linhasRpc.some((l) =>
-    [l.document, l.cnpj].some((d) => typeof d === "string" && d !== "" && normalizarDocumento(d) === alvo)
+    typeof l.customer_user_id === "string" && usuariosDoCodigo.has(l.customer_user_id) &&
+    [l.document, l.cnpj].some((d) => documentoEstrito(d) === alvo)
   );
 }

@@ -7,8 +7,8 @@ import {
   aplicarVisibilidade,
   CAMPOS_PII_OMIE,
   codigosVisiveis,
-  documentoDoPedidoCasa,
   lerAcessoOperacional,
+  pedidoEDesteCadastro,
 } from "./pii-carteira.ts";
 
 const CLIENTE = {
@@ -76,13 +76,40 @@ Deno.test("acesso operacional: só pedido/impressao_pedido com uuid", () => {
   assertEquals(lerAcessoOperacional("pedido"), null);
 });
 
-Deno.test("documento do pedido casa com o cnpj_cpf da Omie (normalizado); ausente não casa", () => {
-  assertEquals(documentoDoPedidoCasa([{ document: "12345678000190" }], "12.345.678/0001-90"), true);
-  assertEquals(documentoDoPedidoCasa([{ document: null, cnpj: "12.345.678/0001-90" }], "12345678000190"), true);
-  assertEquals(documentoDoPedidoCasa([{ document: "11111111000111" }], "12345678000190"), false);
-  assertEquals(documentoDoPedidoCasa([{ document: null, cnpj: null }], "12345678000190"), false);
-  assertEquals(documentoDoPedidoCasa([], "12345678000190"), false);
-  assertEquals(documentoDoPedidoCasa([{ document: "12345678000190" }], null), false);
-  assertEquals(documentoDoPedidoCasa([{ document: "" }], ""), false);
-  assertEquals(documentoDoPedidoCasa([{ document: "123" }], "123"), false);
+Deno.test("nível endereço: abre só rua/número/complemento/bairro/CEP; e-mail, telefone, documento e IE fechados", () => {
+  const m = aplicarVisibilidade(CLIENTE, "endereco");
+  assertEquals(m.endereco, "Rua A");
+  assertEquals(m.cep, "89200-000");
+  assertEquals(m.bairro, "Centro");
+  assertEquals(m.email, null);
+  assertEquals(m.telefone, null);
+  assertEquals(m.cnpj_cpf, null);
+  assertEquals(m.inscricao_estadual, null);
+  assertEquals(m.contato_visivel, false);
+});
+
+const A = "aaaaaaaa-0000-0000-0000-000000000001";
+const B = "bbbbbbbb-0000-0000-0000-000000000002";
+
+Deno.test("pedido é deste cadastro: titular vinculado ao código E documento casando", () => {
+  const doCodigo = new Set([A]);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "12345678000190" }], "12.345.678/0001-90", doCodigo), true);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: null, cnpj: "12.345.678/0001-90" }], "12345678000190", doCodigo), true);
+});
+
+Deno.test("mesmo documento, OUTRO cadastro (titular não vinculado a este código) → não abre", () => {
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: B, document: "12345678000190" }], "12345678000190", new Set([A])), false);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: null, document: "12345678000190" }], "12345678000190", new Set([A])), false);
+});
+
+Deno.test("documento divergente, ausente ou malformado → não abre", () => {
+  const doCodigo = new Set([A]);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "11111111000111" }], "12345678000190", doCodigo), false);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: null, cnpj: null }], "12345678000190", doCodigo), false);
+  assertEquals(pedidoEDesteCadastro([], "12345678000190", doCodigo), false);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "12345678000190" }], null, doCodigo), false);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "" }], "", doCodigo), false);
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "123" }], "123", doCodigo), false);
+  // lixo que a normalização tolerante reduziria aos 11 dígitos de um CPF
+  assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "XX123.456.789-01" }], "12345678901", doCodigo), false);
 });
