@@ -96,10 +96,9 @@ describe('Novo Pedido — fiação do PR B', () => {
   // de o envelope ser regravado com a fingerprint CANÔNICA (senão um 2º reenvio com a seleção sem o
   // código 173 já não acharia o alias legado). A decisão é provada no helper; aqui, que o hook grava.
   it('reuso migra a fingerprint do envelope para a chave canônica devolvida pelo helper', () => {
-    const ini = hook.indexOf('decidirEnvelopeDoCliente(checkoutEnvRef.current');
-    expect(ini, 'chamada do helper não encontrada').toBeGreaterThan(-1);
+    const ini = hook.indexOf('const { decision, fingerprint } = decidirEnvelopeDoCliente(checkoutEnvRef.current');
+    expect(ini, 'chamada do helper (desestruturando a fingerprint) não encontrada').toBeGreaterThan(-1);
     const trecho = hook.slice(ini, ini + 3000);
-    expect(trecho).toContain('const { decision, fingerprint } = decidirEnvelopeDoCliente(');
     expect(trecho).toContain('checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true }');
   });
 });
