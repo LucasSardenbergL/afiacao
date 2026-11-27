@@ -27,8 +27,12 @@ function numero(v: unknown): number | null {
 /** Ordem por unidade de código (a collation "C" do SQL), nunca `localeCompare` — que empata
  * composições Unicode diferentes e faria a pré-checagem recusar um multiconjunto que a RPC aceita. */
 function porCodigo(a: string | null, b: string | null): number {
-  const x = a ?? "", y = b ?? "";
-  return x < y ? -1 : x > y ? 1 : 0;
+  // `null` (sem cor) e `""` são valores DIFERENTES na projeção — empatá-los deixava a ordem de
+  // entrada decidir e recusava à toa um multiconjunto igual (Codex r3).
+  if (a === b) return 0;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  return a < b ? -1 : 1;
 }
 
 /**

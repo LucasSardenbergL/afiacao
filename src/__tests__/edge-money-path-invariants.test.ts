@@ -5272,10 +5272,20 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(marcaPp, 'PARIDADE: a marca do programado é a mesma que a omie-vendas-sync lança').toBe(marcaVendas);
     expect(marcaPp).toBe('[pedido_alterado]');
     const codigo = removerComentarios(pp);
-    expect(codigo, 'a incerteza herdada vem do erro_motivo da tentativa anterior').toMatch(
-      /let tentouOmie = \(envio\.erro_motivo \?\? ""\)\.includes\(OMIE_INCERTO_MARK\);/,
+    // Codex r3: a incerteza herdada é lida NO claim (a listagem pode estar velha) e toda saída de
+    // erro pós-claim a preserva.
+    expect(codigo, 'o claim devolve o erro_motivo fresco').toMatch(/\.in\("status", \["agendado", "erro"\]\)\s*\.select\("sales_orders_map, erro_motivo"\)/);
+    expect(codigo, 'a incerteza herdada vem do claim').toMatch(
+      /const incertoHerdado = \(envioFresco\.erro_motivo \?\? ""\)\.includes\(OMIE_INCERTO_MARK\);/,
     );
-    expect(codigo, 'o select dos envios traz o erro_motivo').toMatch(/select\("id, pedido_programado_id, status, data_envio, erro_motivo"\)/);
+    expect(codigo).toMatch(/let tentouOmie = incertoHerdado;/);
+    expect(codigo, 'nenhuma leitura da listagem decide a incerteza').not.toMatch(/envio\.erro_motivo/);
+    const inicioClaim = codigo.indexOf('const incertoHerdado');
+    const inicioLaco = codigo.indexOf('for (const [account, itensGrupo]');
+    expect(inicioClaim).toBeGreaterThan(-1);
+    expect(inicioLaco).toBeGreaterThan(inicioClaim);
+    expect(codigo.slice(inicioClaim, inicioLaco), 'toda saída de erro pós-claim passa pelo falha() que preserva a marca').not.toMatch(/return \{ ok: false/);
+    expect(codigo.slice(inicioClaim, inicioLaco).match(/return falha\(/g)?.length, 'as 5 saídas pós-claim').toBe(5);
     const ramo = codigo.indexOf('String(body?.error ?? "").includes(PEDIDO_ALTERADO_MARK)');
     const generico = codigo.indexOf('if (!resp.ok || body?.error) throw new Error(`criar_pedido ${account} falhou');
     expect(ramo, 'o ramo da recusa conferida existe').toBeGreaterThan(-1);

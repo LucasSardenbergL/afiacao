@@ -75,6 +75,13 @@
     pré-checagem recusa antes do ATP; sobra a janela de segundos entre ela e o ATP) e não o piora (antes, o PV
     saía com B e vinculava a reserva de A direto). Liberar a reserva na recusa foi DESCARTADO: com duas telas
     enviando o mesmo pedido, a perdedora liberaria a reserva da vencedora antes do `atp_confirmar_pv`.
+  - Codex do claim (r3, BLOQUEANTE sim → 2 corrigidos + 1 residual): o programado lia a incerteza
+    herdada na LISTAGEM (velha: outro runner pode ter terminado em `erro` com `[OMIE-INCERTO]` entre ela e o
+    claim) e as saídas antecipadas pós-claim (header/itens/config/validação) a apagavam no release → agora
+    lê `erro_motivo` NO claim e toda saída pós-claim passa por `falha()`, que a preserva; `null` × `""` na
+    cor empatavam na ordenação TS → recusa à toa. Residual: a reserva ATP obsoleta (r2) ganha também a
+    janela ATP → claim (lê A, reserva A, outra tela salva B, o claim recusa; um retry de B por backorder
+    antes do TTL vincula a reserva de A) — mesma classe pré-existente, mesmo motivo para não liberar.
   - Residuais aceitos: (i) `ensureSalesOrderRow` (checkout/retry) regrava a linha sem versão — apaga a
     edição de outra aba, pré-existente; (ii) editor aberto DEPOIS do claim salva com o `updated_at` novo
     enquanto o PID é nulo; (iii) recusa depois do gate ATP deixa a reserva até o TTL (30 min), como todo

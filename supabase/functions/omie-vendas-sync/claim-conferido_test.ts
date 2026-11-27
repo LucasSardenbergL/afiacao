@@ -58,3 +58,9 @@ Deno.test("mensagem carrega a marca estável que a tela procura", () => {
   assertEquals(m.includes(MARCA_PEDIDO_ALTERADO), true);
   assertEquals(m.includes("Esta tentativa NÃO enviou nada ao Omie"), true);
 });
+
+Deno.test("cor null e cor \"\" não empatam — o multiconjunto igual em ordem inversa passa (Codex r3)", () => {
+  const L = [{ ...A, tint_cor_id: "" }, { ...A, tint_cor_id: null }];
+  assertEquals(mesmosItensDeEnvio(L, [...L].reverse()), true);
+  assertEquals(mesmosItensDeEnvio([{ ...A, tint_cor_id: "" }], [{ ...A, tint_cor_id: null }]), false);
+});

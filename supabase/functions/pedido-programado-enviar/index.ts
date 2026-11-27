@@ -142,8 +142,6 @@ interface EnvioRow {
   pedido_programado_id: string;
   status: string;
   data_envio: string;
-  /** Motivo da tentativa ANTERIOR — a incerteza que ela deixou ([OMIE-INCERTO]) não se apaga numa recusa. */
-  erro_motivo?: string | null;
 }
 
 // skip=true: o claim não pegou (cancelado/enviado/claim de outro runner) — o caller
@@ -164,30 +162,36 @@ async function processarEnvio(
     .update({ status: "processando" })
     .eq("id", envio.id)
     .in("status", ["agendado", "erro"])
-    .select("sales_orders_map");
+    .select("sales_orders_map, erro_motivo");
   if (claimErr) return { ok: false, skip: true, motivo: `Claim falhou: ${claimErr.message}` };
-  const envioFresco = ((claimRows ?? []) as Array<{ sales_orders_map: Record<string, string> | null }>)[0];
+  const envioFresco = ((claimRows ?? []) as Array<{ sales_orders_map: Record<string, string> | null; erro_motivo: string | null }>)[0];
   if (!envioFresco) {
     return { ok: false, skip: true, motivo: "Envio não está mais 'agendado'/'erro' (cancelado, enviado ou claim de outro runner) — nada a fazer." };
   }
+  // Incerteza HERDADA, lida NO claim (sob o lock da linha — a listagem pode estar velha: outro runner
+  // pode ter terminado em 'erro' com [OMIE-INCERTO] entre ela e este claim). Toda saída de erro daqui
+  // em diante a preserva: o release regrava erro_motivo, e apagá-la liberaria o "Cancelar" de um PV
+  // que pode existir no Omie (Codex r3).
+  const incertoHerdado = (envioFresco.erro_motivo ?? "").includes(OMIE_INCERTO_MARK);
+  const falha = (motivo: string) => ({ ok: false, motivo: motivoComIncerteza(motivo, incertoHerdado) });
 
   const { data: pedido, error: pErr } = await supabase
     .from("pedidos_programados").select("*").eq("id", envio.pedido_programado_id).single();
-  if (pErr || !pedido) return { ok: false, motivo: `Header não encontrado: ${pErr?.message}` };
+  if (pErr || !pedido) return falha(`Header não encontrado: ${pErr?.message}`);
   // Pedido cancelado/concluído no meio do caminho: envio 'agendado' órfão NÃO vira
   // PV no Omie. Vira 'erro' visível (sai da fila do cron; humano decide).
   if (pedido.status !== "ativo") {
-    return { ok: false, motivo: `Pedido está '${pedido.status}' (não ativo) — envio não processado.` };
+    return falha(`Pedido está '${pedido.status}' (não ativo) — envio não processado.`);
   }
 
   const { data: itensRaw, error: iErr } = await supabase
     .from("pedidos_programados_itens")
     .select("id, codigo_item_cliente, descricao_cliente, quantidade, preco_final, mapa:cliente_item_mapa(omie_products(omie_codigo_produto, codigo, descricao, unidade, account))")
     .eq("envio_id", envio.id);
-  if (iErr) return { ok: false, motivo: `Itens não carregaram: ${iErr.message}` };
+  if (iErr) return falha(`Itens não carregaram: ${iErr.message}`);
 
   const { data: cfgRows, error: cErr } = await supabase.from("pedidos_programados_config").select("*");
-  if (cErr) return { ok: false, motivo: `Config não carregou: ${cErr.message}` };
+  if (cErr) return falha(`Config não carregou: ${cErr.message}`);
   const configs = Object.fromEntries((cfgRows ?? []).map((c) => [c.account, c])) as Record<AccountPP, ConfigConta>;
 
   const itens: ItemResolvido[] = ((itensRaw ?? []) as unknown as LinhaItem[]).map((r) => {
@@ -209,7 +213,7 @@ async function processarEnvio(
   // numeroPc validado no gate (header é nullable — nunca deixar "null" virar texto de NF).
   const numeroPc = typeof pedido.numero_pedido_compra === "string" ? pedido.numero_pedido_compra.trim() : "";
   const problemas = validarEnvioResolvido(numeroPc || null, itens, configs);
-  if (problemas.length > 0) return { ok: false, motivo: problemas.join(" | ") };
+  if (problemas.length > 0) return falha(problemas.join(" | "));
 
   const grupos = agruparItensPorAccount(itens);
   // map = CACHE pra UI/diagnóstico (fresco do claim). A convergência de retry/corrida
@@ -223,7 +227,7 @@ async function processarEnvio(
   // crash pós-fetch = resultado DESCONHECIDO: o PV pode existir no Omie sem
   // omie_pedido_id gravado — tratar como "Omie tocado", nunca como "nada aconteceu".
   // Herdada: se uma tentativa anterior deixou o PV incerto, uma recusa de agora não a apaga.
-  let tentouOmie = (envio.erro_motivo ?? "").includes(OMIE_INCERTO_MARK);
+  let tentouOmie = incertoHerdado;
 
   for (const [account, itensGrupo] of Object.entries(grupos) as Array<[AccountPP, ItemResolvido[]]>) {
     const cfg = configs[account];
@@ -442,7 +446,7 @@ Deno.serve(async (req) => {
     : {}) as { envio_id?: string };
 
   let query = supabase.from("pedidos_programados_envios")
-    .select("id, pedido_programado_id, status, data_envio, erro_motivo");
+    .select("id, pedido_programado_id, status, data_envio");
   if (envio_id) {
     // "Enviar agora" da UI: também reprocessa envio em 'erro' (retry idempotente).
     query = query.eq("id", envio_id).in("status", ["agendado", "erro"]);
