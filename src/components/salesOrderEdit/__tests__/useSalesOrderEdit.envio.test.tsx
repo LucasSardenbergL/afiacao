@@ -125,6 +125,16 @@ describe('pedido sem PV (caminho local)', () => {
     salesOrderRow = { ...salesOrderRow, omie_pedido_id: null, status: 'orcamento', subtotal: 20, total: 15 };
   });
 
+  it('caminho local também invalida o cache do pedido (#16)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient(client) });
+    await waitFor(() => expect(hook.result.current.order).toBeTruthy());
+    act(() => { hook.result.current.setNotes('nova'); });
+    await act(async () => { await hook.result.current.handleSave(); });
+    await waitFor(() => expect(spy.mock.calls.map(([f]) => JSON.stringify((f as { queryKey: unknown }).queryKey))).toContain('["order-detail"]'));
+  });
+
   it('caminho local não usa o registro de envio (reabrir lê normalmente) — a trava de versão protege', async () => {
     const { estadoDoPedido } = await import('../registroEnvios');
     const { result } = await renderLoaded();

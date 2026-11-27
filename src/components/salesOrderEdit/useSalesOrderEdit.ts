@@ -789,6 +789,8 @@ export function useSalesOrderEdit() {
           ? condicoes.eq('updated_at', order.updated_at)
           : condicoes.is('updated_at', null)
         ).select('id');
+        // #16 também aqui: o detalhe e a lista em cache (60 s) imprimiriam o valor de antes (Codex r9).
+        void invalidarCachesDoPedido(queryClient, pedidoEnviado);
         if (error) throw error;
         if (!naTela()) return;
         if ((gravadas ?? []).length !== 1) {
