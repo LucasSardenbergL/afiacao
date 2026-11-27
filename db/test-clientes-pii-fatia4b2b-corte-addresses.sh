@@ -129,7 +129,7 @@ SQL
 veredito() { case "$1" in *MARCA_BARRADO_7Q*) echo barrado ;; *MARCA_VAZOU_7Q*) echo vazou ;; *) echo "outro" ;; esac; }
 # classe <saída> — erro de privilégio vira "negado-coluna" pela SQLSTATE (VERBOSITY=verbose: ASCII, igual
 # em C e pt_BR; a mensagem traduzida não serve, #1483); o resto passa cru.
-classe() { case "$1" in *": 42501: "*) echo negado-coluna ;; *) echo "$1" ;; esac; }
+classe() { case "$1" in *" 42501: "*) echo negado-coluna ;; *) echo "$1" ;; esac; }
 
 # Formas do PostgREST (return=minimal) para os escritores do front (Addresses.tsx, Auth.tsx).
 INS="WITH pgrst_source AS (INSERT INTO public.addresses (user_id, label, street, number, complement, neighborhood, city, state, zip_code, is_default, is_from_omie) SELECT pgrst_body.user_id, pgrst_body.label, pgrst_body.street, pgrst_body.number, pgrst_body.complement, pgrst_body.neighborhood, pgrst_body.city, pgrst_body.state, pgrst_body.zip_code, pgrst_body.is_default, pgrst_body.is_from_omie FROM json_populate_recordset(null::public.addresses, '[{\"user_id\":\"$DONO\",\"label\":\"Obra\",\"street\":\"Rua N\",\"number\":\"1\",\"neighborhood\":\"X\",\"city\":\"JOINVILLE\",\"state\":\"SC\",\"zip_code\":\"89200002\",\"is_default\":false,\"is_from_omie\":false}]'::json) pgrst_body RETURNING 1) SELECT count(*) FROM pgrst_source"
