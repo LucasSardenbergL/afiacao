@@ -282,5 +282,22 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
     e rua) são SECDEF; `contato_cliente_operacional` e `v_endereco_contato` rodam como dono.
   - A `v_grupo_contatos` ainda lê `addresses` crua até a 4b-1 ser aplicada, e quebraria.
   - Escritores (`Auth.tsx`, `Addresses.tsx`) usam WHERE só em `id`/`user_id`, que continuam com SELECT.
+- **Codex** (`gpt-6.2-astra`, high, 165 s, 132 k tokens): "bloquearia como FECHAMENTO da onda D", sem P0.
+  - Integrados nesta fatia:
+    - a carteira lê o mapa FRESCO (vínculo vencido não autoriza o contato atual);
+    - a exceção da impressão exige que o titular do pedido esteja vinculado a ESTE código e que o documento
+      case em forma estrita;
+    - a exceção abre só o endereço, sem e-mail, telefone ou IE;
+    - a folha não imprime cidade/UF como se fosse o endereço.
+    - Falsificado: tirar a checagem do vínculo deixa `pii-carteira_test` vermelho.
+  - **Abertos (vias PREEXISTENTES fora desta fatia, para a 4b-3):**
+    - `omie-vendas-sync` `listar_clientes`, a busca do Novo Pedido (`useCustomerSelection.ts:252`), devolve
+      CPF/CNPJ, telefone e endereço de qualquer cliente antes da seleção. É a maior via aberta.
+    - `analyze-unified-order` manda ao LLM o documento dos candidatos fora da carteira.
+    - `SalesPrintDashboard` lê `orders.select('*')`, e o `orders.address` vem antes do ledger.
+    - `omie-sync` aceita `customerUserId` de A com código Omie de B.
+    - P2: reenvio após falha da RPC de principal duplica o contato; o 23505 do perfil ainda é um oráculo
+      (inerente ao UNIQUE).
+  - **Dependência:** o `submitOrder` só fecha com o LucasSardenbergL/afiacao#4236.
 - **Fica de fora, registrado:** `process-recurring-orders:96` faz `select('*')` com service_role. O corte não
   o afeta, e trocar exigiria um deploy de edge sem ganho.
