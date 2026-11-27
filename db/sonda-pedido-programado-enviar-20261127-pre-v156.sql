@@ -1,3 +1,4 @@
+-- Re-sonda 2026-11-27 ~20:40Z: prova de 10 h > teto de 6 h da ordem (#4250) antes do deploy da omie-vendas-sync v1.56.
 -- PASSO 1 — dispara as 1 edge(s) baratas da leva. Exige ESCRITA: lê o vault e
 --          faz INSERT, e o wrapper read-only recusa os dois — o que NÃO é o mesmo que
 --          "só o founder consegue". Caminho da SESSÃO: commite este .sql em db/ e rode
