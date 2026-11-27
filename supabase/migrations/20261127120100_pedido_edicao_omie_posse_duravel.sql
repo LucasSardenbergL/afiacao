@@ -778,14 +778,14 @@ BEGIN
                     AND tgname = 'trg_sales_orders_exclusao_respeita_edicao' AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'A8 FALHOU: trigger do soft-delete ausente/desligado — exclusão apagaria pedido em edição';
   END IF;
-  IF public.pedido_edicao_omie_situacao(now(), NULL, NULL) <> 'reservada'
-     OR public.pedido_edicao_omie_situacao(now() - interval '11 minutes', NULL, NULL) <> 'vencida'
-     OR public.pedido_edicao_omie_situacao(now(), now(), NULL) <> 'em_voo'
-     OR public.pedido_edicao_omie_situacao(now() - interval '20 minutes', now() - interval '11 minutes', NULL) <> 'divergente'
-     OR public.pedido_edicao_omie_situacao(now(), now(), 'divergente') <> 'divergente'
-     OR public.pedido_edicao_omie_situacao(now(), now(), 'concluida') <> 'encerrada'
-     OR public.pedido_edicao_omie_situacao(now(), NULL, 'abandonada') <> 'encerrada'
-     OR public.pedido_edicao_omie_situacao(now(), now(), 'resolvida') <> 'encerrada' THEN
+  IF public.pedido_edicao_omie_situacao(now(), NULL, NULL) IS DISTINCT FROM 'reservada'
+     OR public.pedido_edicao_omie_situacao(now() - interval '11 minutes', NULL, NULL) IS DISTINCT FROM 'vencida'
+     OR public.pedido_edicao_omie_situacao(now(), now(), NULL) IS DISTINCT FROM 'em_voo'
+     OR public.pedido_edicao_omie_situacao(now() - interval '20 minutes', now() - interval '11 minutes', NULL) IS DISTINCT FROM 'divergente'
+     OR public.pedido_edicao_omie_situacao(now(), now(), 'divergente') IS DISTINCT FROM 'divergente'
+     OR public.pedido_edicao_omie_situacao(now(), now(), 'concluida') IS DISTINCT FROM 'encerrada'
+     OR public.pedido_edicao_omie_situacao(now(), NULL, 'abandonada') IS DISTINCT FROM 'encerrada'
+     OR public.pedido_edicao_omie_situacao(now(), now(), 'resolvida') IS DISTINCT FROM 'encerrada' THEN
     RAISE EXCEPTION 'A9 FALHOU: régua da situação errada — posse presa para sempre ou liberada com o Omie mexido';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a

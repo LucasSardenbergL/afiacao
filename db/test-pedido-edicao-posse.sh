@@ -397,7 +397,7 @@ eq "G6 estado de PV livre" "$(AU "$EMP" "SELECT r->>'situacao' FROM public.pedid
 
 echo "── corridas (duas sessões reais) ──"
 # espera_lock <rótulo>: até uma sessão (≠ esta) estar esperando lock com a query que casa o rótulo.
-espera() { local i; for i in $(seq 1 100); do
+espera() { local _i; for _i in $(seq 1 100); do
   [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND $1")" -ge 1 ] && return 0
   sleep 0.1; done; return 1; }
 # K1: reivindicação segura o lock e commita; o soft-delete que esperava vê a tentativa → 55P03.
