@@ -297,6 +297,17 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
     e ficou vermelha só em pt_BR ("permissão negada"): o vermelho agora casa a SQLSTATE `42501`.
   - Ensaio em prod ok (postcondição inteira contra as views reais) e ROLLBACK conferido por psql-ro.
   - **Apply só com o `__BUILD_SHA__` do Publish da 4b-2a servido**: o `select('*')` do front antigo quebraria.
+- **4b-2b no ar (2026-11-27):** #4262 mergeado. Pré-condição conferida nos BYTES do Publish (steu.lovable.app,
+  build 10:29Z): o chunk `Addresses` lê `v_endereco_contato`; `SalesPrintDashboard` manda `impressao_pedido` e
+  já não tem `buscar_por_documento`; `Profile` traz a mensagem neutra do 23505. (O `index.html` servido não
+  expõe `app-commit-sha`: a prova foi pelo conteúdo dos chunks.) Ensaio ok e apply com recibo `db:aplicar`
+  **#1524**, postcondição `fatia 4b-2b ok`. Validação por fora (psql-ro): authenticated lê só as 7 colunas
+  (label/street/number/complement/neighborhood/zip_code=f), mantém INSERT/UPDATE/DELETE; anon sem nada;
+  service_role lê. `audit:migrations` rc=0 e `deriva:corpo:prod` rc=0.
+  - Bytes no ar ≠ adoção: aba aberta antes do Publish e não recarregada mostra erro na tela Endereços até o
+    reload (sem perda de dado).
+  - Ainda com o founder: deploy de `omie-cliente` v1.13, `analyze-unified-order` v1.14 e `omie-sync` v1.19, e o
+    teste logado em prod.
 - **Codex** (`gpt-6.2-astra`, high, 165 s, 132 k tokens): "bloquearia como FECHAMENTO da onda D", sem P0.
   - Integrados nesta fatia:
     - a carteira lê o mapa FRESCO (vínculo vencido não autoriza o contato atual);
