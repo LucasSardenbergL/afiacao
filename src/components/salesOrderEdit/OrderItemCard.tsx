@@ -58,9 +58,10 @@ export function OrderItemCard({ item, index, isBlocked, isPriceInvalid = false, 
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{item.descricao}</p>
           {item.codigo && <p className="text-xs text-muted-foreground">Cód: {item.codigo}</p>}
+          {/* Sem o id (o sync grava quase sempre só o nome) não sai "undefined - nome" (revisão /sales #24). */}
           {item.tint_nome_cor && (
             <p className="text-xs text-muted-foreground">
-              🎨 {item.tint_cor_id} - {item.tint_nome_cor}
+              🎨 {item.tint_cor_id ? `${item.tint_cor_id} - ` : ''}{item.tint_nome_cor}
             </p>
           )}
         </div>

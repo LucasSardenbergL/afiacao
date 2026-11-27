@@ -45,10 +45,17 @@ describe('padraoBuscaFeed — o termo como a coluna busca o guarda', () => {
 });
 
 describe('mapSalesDetail', () => {
-  it('items não-array (jsonb malformado) vira [] — painel/impressão não crasham', () => {
-    // (o.items || []).map quebraria: ({} || []) é {} e não tem .map — achado do codex.
-    const o = mapSalesDetail({ id: 's2', customer_user_id: 'u1', account: 'oben', items: {}, subtotal: 0, total: 0, status: 'rascunho', created_at: 'd', notes: null } as never);
+  it('items não-array (jsonb malformado) vira [] MARCADO ilegível — não é "sem itens" (#27)', () => {
+    // (o.items || []).map quebraria: ({} || []) é {} e não tem .map — achado do codex. O [] fica para a
+    // tela não crashar; a marca impede o painel de dizer "sem itens" e o documento de sair vazio.
+    const o = mapSalesDetail({ id: 's2', customer_user_id: 'u1', account: 'oben', items: {}, subtotal: 0, total: 50, status: 'rascunho', created_at: 'd', notes: null } as never);
     expect(o.items).toEqual([]);
+    expect(o.itensIlegiveis).toBe(true);
+  });
+  it('lista vazia de verdade NÃO é ilegível', () => {
+    const o = mapSalesDetail({ id: 's3', customer_user_id: 'u1', account: 'oben', items: [], subtotal: 0, total: 0, status: 'rascunho', created_at: 'd', notes: null } as never);
+    expect(o.items).toEqual([]);
+    expect(o.itensIlegiveis).toBeUndefined();
   });
 
   it('preserva a linha e marca _source=sales', () => {
@@ -84,9 +91,16 @@ describe('mapAfiacaoDetail', () => {
     expect(o.subtotal).toBe(50); // subtotal 0 → cai pro total
     expect(o.omie_numero_pedido).toBeNull();
   });
-  it('items não-array não quebra', () => {
+  it('items não-array não quebra e fica MARCADO ilegível (#27)', () => {
     const o = mapAfiacaoDetail({ id: 'o2', user_id: 'u1', status: 'x', subtotal: 0, total: 0, created_at: 'd', notes: null, items: {} } as never);
     expect(o.items).toEqual([]);
+    expect(o.itensIlegiveis).toBe(true);
+  });
+  it('preço de serviço 0 é "a orçar" (null), a régua da criação (#11)', () => {
+    const o = mapAfiacaoDetail({ id: 'o4', user_id: 'u1', status: 'x', subtotal: 0, total: 0, created_at: 'd', notes: null, items: [{ category: 'Serra', quantity: 2, unitPrice: 0 }] } as never);
+    expect(o.items[0].valor_unitario).toBeNull();
+    expect(o.items[0].valor_total).toBeNull();
+    expect(o.itensIlegiveis).toBeUndefined();
   });
   it('quantity 0 real é preservado (não vira 1) — alinha com a view', () => {
     const o = mapAfiacaoDetail({ id: 'o3', user_id: 'u1', status: 'x', subtotal: 0, total: 0, created_at: 'd', notes: null, items: [{ category: 'X', quantity: 0, unitPrice: 10 }] } as never);

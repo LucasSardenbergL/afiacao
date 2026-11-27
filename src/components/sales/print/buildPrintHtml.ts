@@ -2,7 +2,7 @@
 // Extraído de src/pages/SalesPrintDashboard.tsx (god-component split).
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { escapeHtml } from '@/lib/escape-html';
-import { tdDescontoHtml, textoVencimentosDoCupom, thDescontoHtml, totaisComDescontoHtml, type PrintOrderData } from '@/components/OrderPrintLayout';
+import { linhaItemCupomHtml, textoVencimentosDoCupom, thDescontoHtml, totalDoCupomHtml, totaisComDescontoHtml, type PrintOrderData } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, SalesOrderRow } from './types';
 import { formatPrecoOuAusente, totalLinhaOuAusente } from '@/lib/format';
 import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
@@ -69,7 +69,9 @@ export function buildPrintData(
     items: (order.items || []).map((it, i) => ({
       codigo: it.codigo || it.omie_codigo || '-',
       descricao: it.descricao || it.nome || '',
-      quantidade: it.quantidade || 1,
+      // Era `|| 1`: quantidade 0 imprimia UMA unidade, e ausente também (revisão /sales #26). Ausente
+      // ou não-número → `null`, que o cupom escreve "—"; o 0 informado sai 0.
+      quantidade: typeof it.quantidade === 'number' && Number.isFinite(it.quantidade) ? it.quantidade : null,
       unidade: it.unidade || 'UN',
       // O `|| 0` daqui imprimia R$ 0,00 no cupom do CLIENTE para item cujo preco o Omie
       // nao informou. `null` atravessa ate o formatador, que escreve "-".
@@ -78,13 +80,15 @@ export function buildPrintData(
       // quando o desconto da linha não foi apurado, nunca o bruto com cara de líquido.
       valorTotal: descontoItens.quebra
         ? receitaLiquidaItem(it.valor_unitario, it.quantidade, descontoItens.descontoPorItem[i])
-        : it.valor_total ?? totalLinhaOuAusente(it.quantidade, it.valor_unitario),
+        // Quantidade ausente não vira 1 na conta (`totalLinhaOuAusente` faz `?? 1`): sem ela, só o total
+        // que o Omie já apurou; senão "—" (Codex, revisão /sales #26).
+        : it.valor_total ?? (typeof it.quantidade === 'number' ? totalLinhaOuAusente(it.quantidade, it.valor_unitario) : null),
       ...(descontoItens.quebra ? { descontoValor: descontoItens.descontoPorItem[i] } : {}),
       tintCorId: it.tint_cor_id,
       tintNomeCor: it.tint_nome_cor,
     })),
     subtotal: order.subtotal || 0,
-    desconto: order.desconto || 0,
+    desconto: order.desconto ?? null,
     frete: order.frete || 0,
     total: order.total || 0,
     observacoes: order.notes || undefined,
@@ -111,30 +115,13 @@ export function buildSingleOrderHtml(data: PrintOrderData): string {
   // Vencimentos: a definir no faturamento — mesma linha do cupom avulso (textoVencimentosDoCupom).
   const installmentText = textoVencimentosDoCupom(data);
 
-  const itemsRows = data.items.map((item, i) => {
-    const descLines = [escapeHtml(item.descricao)];
-    if (item.tintCorId && item.tintNomeCor) {
-      const corParts = item.tintNomeCor.split(' - ');
-      const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
-      const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
-      const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
-      descLines.push(`Cor: ${escapeHtml(item.tintCorId)} - ${escapeHtml(simplified)}${embalagem ? ' - ' + escapeHtml(embalagem) : ''}`);
-    }
-    return `<tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>${tdDescontoHtml(data, item)}
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
-    </tr>`;
-  }).join('');
+  // Linha do item: a MESMA do cupom avulso (linhaItemCupomHtml — cor, quantidade ausente).
+  const itemsRows = data.items.map((item, i) => linhaItemCupomHtml(data, item, i)).join('');
 
   const cnpjsComDesconto = ['03.422.099/0001-08', '07.311.465/0001-02', '24.521.946/0001-61'];
   // Com a quebra de desconto de item, a linha legada (que lê o `discount` do cabeçalho, sempre 0)
   // não entra: o "Desconto" do rodapé é um só.
-  const showDesconto = !data.quebraDesconto && data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
+  const showDesconto = !data.quebraDesconto && data.desconto !== null && data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
 
   const obs = data.isOben
     ? 'RECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL E-PTA-RE Nº: 45.000035717-51 / OBEN COMÉRCIO LTDA. TRANSPORTADORA: Transporte próprio: Oben Comercio Declaro que recebi as mercadorias constantes dessa Nota Fiscal, e que as mercadorias se destinam a uso e consumo, e que estão em perfeito estado e conferem com pedido feito no âmbito do comércio de telemarketing ou eletrônico e que foram recebidas no local por mim no local indicado acima.\n\nCPF/CNPJ:___________________________________ DATA DA ENTREGA:___/___/____\n\nNome/ASSINATURA:_________________________________________________' + (data.observacoes ? '\n\n' + escapeHtml(data.observacoes) : '')
@@ -181,7 +168,7 @@ export function buildSingleOrderHtml(data: PrintOrderData): string {
   ${data.quebraDesconto ? totaisComDescontoHtml(data) : `<div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>`}
   ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
   
-  <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
+  ${totalDoCupomHtml(data)}
 </div>
 ${data.condPagamento || installmentText ? `
 <div class="section-title">CONDIÇÃO DE PAGAMENTO</div>

@@ -34,7 +34,7 @@ import { estadoDaNavegacaoAtual } from '@/lib/nav/origem-atual';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { descontosItensQueryKey } from './useDescontosItensPedido';
 import { softDeleteOrder } from './soft-delete';
-import { printSalesOrder } from './print';
+import { empresaDoDocumento, motivoSemDocumento, printSalesOrder } from './print';
 import { montarCompartilhamento } from './compartilhar';
 import { buscarDescontosItens } from '@/components/sales/print/buscarDescontosItens';
 import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
@@ -294,6 +294,12 @@ export function useSalesOrders() {
   const printOrder = async (row: OrderFeedRow) => {
     try {
       const [d, descontos] = await Promise.all([getDetail(row), getDescontosItens(row)]);
+      // Itens que não se leram ou empresa não reconhecida: nada de cupom vazio ou com o CNPJ de outra.
+      const recusa = motivoSemDocumento(d.order);
+      if (recusa) {
+        toast.error('Cupom não impresso', { description: recusa });
+        return;
+      }
       const aviso = mensagemAvisoDesconto([
         printSalesOrder(d.order, d.customerName, d.customerDocument, companyLogos, descontos),
       ]);
@@ -312,11 +318,18 @@ export function useSalesOrders() {
   const handleShareOrder = async (row: OrderFeedRow) => {
     try {
       const [d, descontos] = await Promise.all([getDetail(row), getDescontosItens(row)]);
-      const { items, quebraDesconto, aviso } = montarCompartilhamento(d.order, descontos);
+      const recusa = motivoSemDocumento(d.order);
+      const empresa = empresaDoDocumento(d.order.account);
+      if (recusa || !empresa) {
+        toast.error('Mensagem não compartilhada', { description: recusa ?? 'Empresa do pedido não reconhecida.' });
+        return;
+      }
+      const { items, quebraDesconto, itensAOrcar, aviso } = montarCompartilhamento(d.order, descontos);
       const orderNumbers = d.order.omie_numero_pedido
         ? [d.order.omie_numero_pedido.replace(/^0+/, '') || '0']
         : [];
       shareOrderViaWhatsApp({
+        empresa: empresa.nome,
         customerName: d.customerName,
         items,
         total: d.order.total,
@@ -325,6 +338,7 @@ export function useSalesOrders() {
         // fabricada e no dia certo na mensagem ao cliente.
         date: formatarDataPedido(d.order.created_at),
         quebraDesconto,
+        itensAOrcar,
       });
       // Aviso da EQUIPE, não da mensagem: ela saiu sem as linhas de um desconto que existe ou que
       // não se conseguiu ler.

@@ -24,12 +24,21 @@ interface ItemDaMensagem {
   unitPrice: number | null;
   /** Só com a quebra: o LÍQUIDO da linha; `null` = desconto da linha não apurado ("—"). */
   lineTotal?: number | null;
+  /** A cor como o jsonb a tem (o sync grava quase sempre só o nome) — antes o adaptador a descartava (#24). */
+  tintCorId?: string;
+  tintNomeCor?: string;
 }
 
 interface CompartilhamentoDoPedido {
   items: ItemDaMensagem[];
   /** Só quando a conta fecha: o share escreve Subtotal e Desconto antes do Total. */
   quebraDesconto?: { subtotalBruto: number; descontoTotal: number; itensApurados: number };
+  /**
+   * Itens sem preço (serviço a orçar / preço não sabido) — a MESMA conta do cupom (`valorUnitario ===
+   * null` → "SUBTOTAL CONHECIDO"). > 0 = a linha sai "A orçar" e o total "Total a definir", nunca um
+   * "Total" definitivo (revisão /sales #11).
+   */
+  itensAOrcar: number;
   /** Aviso da EQUIPE (toast) — nunca vai na mensagem. */
   aviso: { titulo: string; descricao: string } | null;
 }
@@ -57,11 +66,14 @@ export function montarCompartilhamento(
     description: item.descricao,
     quantity: item.quantidade,
     unitPrice: item.valor_unitario,
+    ...(item.tint_cor_id !== undefined ? { tintCorId: item.tint_cor_id } : {}),
+    ...(item.tint_nome_cor !== undefined ? { tintNomeCor: item.tint_nome_cor } : {}),
     ...(descontoPorItem ? { lineTotal: receitaLiquidaItem(item.valor_unitario, item.quantidade, descontoPorItem[i]) } : {}),
   }));
+  const itensAOrcar = itens.filter((item) => item.valor_unitario === null).length;
   if (decisao.quebra) {
     const { subtotalBruto, descontoTotal, itensApurados } = decisao;
-    return { items, quebraDesconto: { subtotalBruto, descontoTotal, itensApurados }, aviso: null };
+    return { items, quebraDesconto: { subtotalBruto, descontoTotal, itensApurados }, itensAOrcar, aviso: null };
   }
-  return { items, aviso: avisoDaMensagem(decisao.aviso, descontos) };
+  return { items, itensAOrcar, aviso: avisoDaMensagem(decisao.aviso, descontos) };
 }

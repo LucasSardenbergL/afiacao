@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { resolveCompanyForPrint, buildSalesOrderPrintRow, itemTotal, printSalesOrder } from '../print';
+import { empresaDoDocumento, motivoSemDocumento, resolveCompanyForPrint, buildSalesOrderPrintRow, itemTotal, printSalesOrder } from '../print';
 import { buildPrintData } from '@/components/sales/print/buildPrintHtml';
 import type { LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import type { SalesOrder } from '../types';
@@ -34,9 +34,37 @@ describe('resolveCompanyForPrint', () => {
   it('colacor → colacor', () => expect(resolveCompanyForPrint('colacor')).toBe('colacor'));
   it('colacor_sc → afiacao (entidade Colacor S.C.)', () =>
     expect(resolveCompanyForPrint('colacor_sc')).toBe('afiacao'));
-  it('undefined/desconhecido → oben (default)', () => {
-    expect(resolveCompanyForPrint(undefined)).toBe('oben');
-    expect(resolveCompanyForPrint('xpto')).toBe('oben');
+  // Revisão /sales #26: o default Oben imprimia o CNPJ da Oben em pedido de outra empresa.
+  it('undefined/desconhecido → null (nunca Oben por default)', () => {
+    expect(resolveCompanyForPrint(undefined)).toBeNull();
+    expect(resolveCompanyForPrint('xpto')).toBeNull();
+  });
+});
+
+describe('empresaDoDocumento / motivoSemDocumento', () => {
+  it('nome curto por conta conhecida', () => {
+    expect(empresaDoDocumento('oben')?.nome).toBe('Oben');
+    expect(empresaDoDocumento('colacor')?.nome).toBe('Colacor');
+    expect(empresaDoDocumento('colacor_sc')).toEqual({ cupom: 'afiacao', nome: 'Colacor SC' });
+    expect(empresaDoDocumento('xpto')).toBeNull();
+  });
+  it('conta conhecida e itens legiveis: sem recusa', () => {
+    expect(motivoSemDocumento({ account: 'oben' })).toBeNull();
+  });
+  it('conta desconhecida recusa com a conta no texto', () => {
+    expect(motivoSemDocumento({ account: 'xpto' })).toContain('conta "xpto"');
+    expect(motivoSemDocumento({ account: undefined })).toContain('vazia');
+  });
+  it('itens ilegiveis recusa mesmo com conta conhecida (#27)', () => {
+    expect(motivoSemDocumento({ account: 'oben', itensIlegiveis: true })).toContain('ler os itens');
+  });
+  it('printSalesOrder fail-closed: conta desconhecida lanca, nao imprime como Oben', () => {
+    expect(() => printSalesOrder({ ...baseOrder(), account: 'xpto' } as SalesOrder, 'ACME', '', {}, { estado: 'nao-se-aplica' }))
+      .toThrow('conta "xpto"');
+  });
+  it('printSalesOrder fail-closed: itens ilegiveis lanca', () => {
+    expect(() => printSalesOrder({ ...baseOrder(), itensIlegiveis: true } as SalesOrder, 'ACME', '', {}, { estado: 'nao-se-aplica' }))
+      .toThrow('ler os itens');
   });
 });
 
@@ -112,7 +140,7 @@ describe('integração com o pipeline de impressão real (buildPrintData)', () =
     const order = baseOrder({ account: 'colacor_sc' });
     const data = buildPrintData(
       buildSalesOrderPrintRow(order, 'ACME LTDA', '12.345.678/0001-99'),
-      resolveCompanyForPrint(order.account),
+      resolveCompanyForPrint(order.account)!,
       undefined,
       SEM_ORDER_ITEMS,
     );
