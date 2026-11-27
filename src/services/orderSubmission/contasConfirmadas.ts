@@ -6,7 +6,7 @@
 // A partição é EXATA sobre o predicado antigo do `allConfirmed` — `allConfirmed === oben && colacor &&
 // afiacao`. Passo que não está aqui (validate_*, create_production_order, aviso_*) não desconfirma conta.
 
-export type ContaDoEnvio = 'oben' | 'colacor' | 'afiacao';
+type ContaDoEnvio = 'oben' | 'colacor' | 'afiacao';
 export type ContasConfirmadas = Record<ContaDoEnvio, boolean>;
 
 const PASSOS_QUE_DESCONFIRMAM: Record<ContaDoEnvio, (step: string) => boolean> = {

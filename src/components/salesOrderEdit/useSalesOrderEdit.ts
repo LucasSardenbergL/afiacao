@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
   bloqueioDaEdicao,
@@ -301,7 +302,7 @@ export function useSalesOrderEdit() {
       // fica na tela (o toast some em segundos, o aviso persiste — §7). Rejeição (o invoke lançou)
       // é a mesma falha de transporte.
       const transporte = formasLida.status === 'rejected'
-        ? { error: formasLida.reason instanceof Error ? formasLida.reason : new Error(String(formasLida.reason)), data: null }
+        ? { error: { message: mensagemDeErro(formasLida.reason) ?? 'falha ao chamar a listagem de condições' }, data: null }
         : formasLida.value;
       if (transporte.error) {
         setFormasErro(true);

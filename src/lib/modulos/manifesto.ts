@@ -349,6 +349,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/SalesOrders.limpar-filtros.test.tsx",
       "src/pages/__tests__/SalesOrders.teclado.test.tsx",
       "src/pages/__tests__/SalesOrders.desempenho.test.tsx",
+      "src/pages/__tests__/SalesPrintDashboard.leituras.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
       "src/pages/__tests__/displayReaders.viewFresca.test.ts",
       "src/pages/__tests__/writersCarteiraRpc.fatia4.test.ts",

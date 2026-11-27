@@ -194,7 +194,7 @@ describe('useSalesOrderEdit — catálogo "Adicionar produto" (conta + paginaç�
 describe('useSalesOrderEdit — #40 não encontrado ≠ falhou', () => {
   function pedidoResponde(resposta: { data: unknown; error: unknown }) {
     installMocks('oben');
-    mockedFrom.mockImplementation((table) => (table === 'sales_orders'
+    mockedFrom.mockImplementation((table) => ((table as string) === 'sales_orders'
       ? { select: () => ({ eq: () => ({ single: () => Promise.resolve(resposta) }) }) }
       : chainFor(table as string, 'oben', () => [])) as never);
   }
