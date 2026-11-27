@@ -528,6 +528,11 @@ function plural(n: number, um: string, varios: string): string {
 // O total é o do recorte (RPC do valor); null enquanto carrega ou se ela falhou.
 function rodapeDaLista(carregados: number, total: number | null, temMais: boolean, comBusca: boolean): string {
   const n = (v: number) => v.toLocaleString('pt-BR');
+  // Tudo carregado: as linhas SÃO o recorte (inclusive durante a exclusão otimista, antes do total reconciliar).
+  if (!temMais) {
+    const r = comBusca ? (carregados === 1 ? 'encontrado' : 'encontrados') : (carregados === 1 ? 'pedido' : 'pedidos');
+    return `${n(carregados)} ${r}`;
+  }
   if (total !== null) return carregados >= total ? `${n(total)} ${total === 1 ? 'pedido' : 'pedidos'}` : `${n(carregados)} de ${n(total)} pedidos`;
   const rotulo = comBusca
     ? (carregados === 1 ? 'encontrado' : 'encontrados')

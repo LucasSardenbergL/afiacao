@@ -27,6 +27,8 @@ const fake = vi.hoisted(() => ({
   filtrarComo: null as null | ((p: Pedido) => Linha[]),
   /** `update` LANÇA (como o guard da lente faz), em vez de devolver `{ error }`. */
   lancarNoUpdate: null as Error | null,
+  /** A MARCA (deleted_at não nulo) volta `{ error }` — como um 504 do proxy, que não prova nada sobre o commit. */
+  erroNaMarca: false,
 }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 
@@ -100,7 +102,11 @@ vi.mock('@/integrations/supabase/client', () => {
       },
       in(col: string, ids: string[]) { p.in = [col, ids]; return b; },
       then(ok: (r: unknown) => unknown, erro?: (e: unknown) => unknown) {
-        if (tabela !== 'order_feed') return Promise.resolve({ data: null, error: null }).then(ok, erro);
+        if (tabela !== 'order_feed') {
+          const marca = !!p.update && (p.update as { deleted_at: unknown }).deleted_at !== null;
+          const error = fake.erroNaMarca && marca ? { message: 'gateway timeout' } : null;
+          return Promise.resolve({ data: null, error }).then(ok, erro);
+        }
         const gate = fake.segurar ?? Promise.resolve();
         return gate.then(() => responderFeed(p)).then(ok, erro);
       },
@@ -245,6 +251,7 @@ beforeEach(() => {
   fake.pedidos = [];
   fake.segurar = null;
   fake.lancarNoUpdate = null;
+  fake.erroNaMarca = false;
   analytics.track.mockClear();
 });
 
@@ -869,17 +876,57 @@ describe('useSalesOrders — leva 3 da revisão /sales', () => {
   });
 });
 
+describe('useSalesOrders — leva 3, revisão adversarial', () => {
+  it('marca do lote que volta { error } é desfeita pelo carimbo (pode ter gravado) e nada vai ao Omie', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const alvo = { ...result.current.orders[0], status: 'rascunho', omie_pedido_id: null };
+    act(() => result.current.toggleSelect(alvo, true));
+    fake.erroNaMarca = true;
+    fake.pedidos = [];
+    const invoke = vi.mocked(supabase.functions.invoke);
+    invoke.mockClear();
+    await act(() => result.current.deleteSelected());
+    const updates = fake.pedidos.filter((p) => p.tabela === 'sales_orders' && p.update);
+    const rollback = updates.find((p) => (p.update as { deleted_at: unknown }).deleted_at === null);
+    expect(rollback?.in).toEqual(['id', [alvo.id]]);
+    expect(invoke.mock.calls.filter(([n]) => n === 'omie-vendas-sync')).toHaveLength(0);
+  });
+
+  it('com a lista do recorte anterior na tela (placeholder), o rodapé não usa o total do novo', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.totalCount).toBe(TOTAL));
+    let soltar!: () => void;
+    fake.segurar = new Promise<void>((r) => { soltar = r; });
+    act(() => result.current.setStatusFilter('faturados'));
+    await waitFor(() => expect(result.current.buscando).toBe(true));
+    await new Promise((r) => setTimeout(r, 30)); // o total (sem gate) já respondeu
+    expect(result.current.totalCount).toBeNull();
+    fake.segurar = null;
+    soltar();
+    await waitFor(() => expect(result.current.buscando).toBe(false));
+  });
+});
+
 describe('useDiaDeHoje (#31)', () => {
   afterEach(() => vi.useRealTimers());
-  it('vira sozinho na meia-noite local, sem outro render', () => {
+  it('vira sozinho na virada do dia local, sem outro render', () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 10, 25, 23, 59, 59, 900));
+    vi.setSystemTime(new Date(2026, 10, 25, 23, 59, 30));
     const { result } = renderHook(() => useDiaDeHoje());
     expect(result.current).toBe('2026-11-25');
-    act(() => { vi.advanceTimersByTime(200); });
+    act(() => { vi.advanceTimersByTime(60_000); });
     expect(result.current).toBe('2026-11-26');
-    // re-armado para a próxima virada
     act(() => { vi.advanceTimersByTime(24 * 60 * 60 * 1000); });
     expect(result.current).toBe('2026-11-27');
+  });
+
+  it('Mac acordando da suspensão (relógio pulou, timer parado): vira ao voltar à aba', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 25, 18, 0));
+    const { result } = renderHook(() => useDiaDeHoje());
+    vi.setSystemTime(new Date(2026, 10, 26, 9, 0)); // sem avançar os timers
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(result.current).toBe('2026-11-26');
   });
 });

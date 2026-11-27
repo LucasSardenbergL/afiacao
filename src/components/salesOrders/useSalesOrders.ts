@@ -43,6 +43,7 @@ import { ehFalhaDePagina } from '@/lib/postgrest';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { chunk } from '@/lib/lotes';
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 
 export const FEED_PAGE_SIZE = 50;
 // ~37 bytes por uuid na URL: 100 ids ficam bem abaixo do limite do proxy (o mesmo lote de buscarDescontosItens).
@@ -75,16 +76,24 @@ function diaComoData(dia: string): Date {
   return new Date(a, m - 1, d);
 }
 
-/** O dia local de hoje, que MUDA sozinho na meia-noite (um timer até a próxima, re-armado a cada virada). */
+/**
+ * O dia local de hoje, que MUDA sozinho na virada. Checagem periódica (60 s) e ao voltar à aba, não um
+ * timeout único até a meia-noite: com o Mac suspenso o relógio do timer para (a tampa fechada às 18h
+ * só disparava às 15h do dia seguinte), e um disparo adiantado (ajuste de relógio) matava o timer.
+ */
 export function useDiaDeHoje(): string {
   const [dia, setDia] = useState(() => diaLocal(new Date()));
   useEffect(() => {
-    const agora = new Date();
-    const proxima = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
-    // +50 ms: o timer não dispara um tique antes da meia-noite e re-arma para o mesmo dia.
-    const t = setTimeout(() => setDia(diaLocal(new Date())), proxima.getTime() - agora.getTime() + 50);
-    return () => clearTimeout(t);
-  }, [dia]);
+    const conferir = () => setDia(diaLocal(new Date())); // mesmo valor = sem re-render
+    const t = setInterval(conferir, 60_000);
+    document.addEventListener('visibilitychange', conferir);
+    window.addEventListener('focus', conferir);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', conferir);
+      window.removeEventListener('focus', conferir);
+    };
+  }, []);
   return dia;
 }
 
@@ -232,7 +241,8 @@ export function useSalesOrders() {
     [feedQuery.data],
   );
   // Total do recorte (o `pedidos` da RPC do valor, mesmos filtros); null enquanto carrega ou se falhou.
-  const totalCount = valorRecorte.estado === 'ok' ? valorRecorte.pedidos : null;
+  // Com a lista do recorte ANTERIOR na tela (placeholder), o total do novo não descreve essas linhas.
+  const totalCount = !feedQuery.isPlaceholderData && valorRecorte.estado === 'ok' ? valorRecorte.pedidos : null;
   // Filtro/aba nova a caminho com as linhas da anterior na tela (keepPreviousData): elas NÃO são do
   // filtro atual, então seleção e ações ficam suspensas até a resposta chegar (Codex, 2ª rodada).
   const emTransicao = feedQuery.isPlaceholderData;
@@ -340,7 +350,12 @@ export function useSalesOrders() {
       // ou que não se conseguiu ler.
       if (aviso) toast.warning(aviso.titulo, { description: aviso.descricao });
       // Contato que não se leu sai em branco no papel — "não li" não pode passar por "não tem".
-      if (d.contatoIndisponivel) {
+      if (d.contatoIndisponivel && isLensActive()) {
+        // Na lente a leitura do contato (que grava o ledger) é barrada por desenho: tentar de novo não resolve.
+        toast.warning('Cupom impresso sem o contato do cliente', {
+          description: 'Na lente "Ver como" o contato do cliente não é lido.',
+        });
+      } else if (d.contatoIndisponivel) {
         // O próximo clique lê de novo (o cache de 60 s guardaria a falha).
         void queryClient.invalidateQueries({ queryKey: orderDetailQueryKey(user?.id, row.origin, row.id) });
         toast.warning('Cupom impresso sem o contato do cliente', {
@@ -498,14 +513,32 @@ export function useSalesOrders() {
     const nowIso = new Date().toISOString();
     const marcados = new Set<string>();
     const motivos: string[] = [];
-    for (const lote of chunk([...deleteIds], IDS_POR_LOTE_EXCLUSAO)) {
-      const { error: softErr } = await supabase.from('sales_orders').update({ deleted_at: nowIso }).in('id', lote);
-      if (softErr) {
-        console.error(softErr);
-        motivos.push(softErr.message);
-        continue;
+    // Desfaz SÓ a marca deste carimbo (nunca a de outra exclusão) — idempotente: lote não gravado não muda.
+    const desmarcar = async (ids: string[]): Promise<string | null> => {
+      let falha: string | null = null;
+      for (const lote of chunk(ids, IDS_POR_LOTE_EXCLUSAO)) {
+        const { error } = await supabase.from('sales_orders').update({ deleted_at: null }).in('id', lote).eq('deleted_at', nowIso);
+        if (error) falha = error.message;
       }
-      lote.forEach((id) => marcados.add(id));
+      return falha;
+    };
+    try {
+      for (const lote of chunk([...deleteIds], IDS_POR_LOTE_EXCLUSAO)) {
+        const { error: softErr } = await supabase.from('sales_orders').update({ deleted_at: nowIso }).in('id', lote);
+        if (softErr) {
+          console.error(softErr);
+          motivos.push(softErr.message);
+          // `{ error }` não prova que NADA gravou (504 do proxy depois do commit): desfaz pelo carimbo, senão
+          // o lote ficaria oculto sem ir ao Omie e sem rollback.
+          await desmarcar(lote);
+          continue;
+        }
+        lote.forEach((id) => marcados.add(id));
+      }
+    } catch (e) {
+      // Exceção no meio da marcação: os lotes já marcados não chegaram ao Omie — desfaz todos pelo carimbo.
+      await desmarcar([...deleteIds]).catch(() => null);
+      throw e;
     }
 
     if (marcados.size === 0) {
@@ -540,16 +573,7 @@ export function useSalesOrders() {
     const failed = failedIds.length + (deleteIds.size - marcados.size);
 
     // Rollback do soft-delete só pros que falharam no Omie
-    let rollbackFalhou: string | null = null;
-    for (const lote of chunk(failedIds, IDS_POR_LOTE_EXCLUSAO)) {
-      // Só desfaz a marca que ESTE lote gravou (mesmo carimbo) — nunca a de outra exclusão.
-      const { error: rbErr } = await supabase
-        .from('sales_orders')
-        .update({ deleted_at: null })
-        .in('id', lote)
-        .eq('deleted_at', nowIso);
-      if (rbErr) rollbackFalhou = rbErr.message;
-    }
+    const rollbackFalhou = failedIds.length > 0 ? await desmarcar(failedIds) : null;
     const detalhe = [
       ...new Set(motivos),
       ...(rollbackFalhou ? [`Os que falharam ficaram OCULTOS no app (falha ao desfazer: ${rollbackFalhou}) — avise o suporte.`] : []),
