@@ -843,6 +843,9 @@ const UnifiedOrder = () => {
           }}
           onShare={() => {
             shareOrderViaWhatsApp({
+              // Cabeçalho neutro: o envio pode juntar Oben, Colacor e a OS de afiação, e cada número
+              // já diz a sua empresa ("PV Oben 123"). Era "Pedido Colacor" fixo (revisão /sales #24).
+              empresa: null,
               customerName: h.lastOrderData!.customerName,
               items: h.lastOrderData!.items,
               total: h.lastOrderData!.total,

@@ -15,7 +15,7 @@ import { openPrintOrder } from '@/components/OrderPrintLayout';
 import {
   COMPANY_LABELS, COMPANY_COLORS, getPeriod,
   type CompanyFilter, type SalesOrderRow, type ProfileLite, type AddressLite,
-  type EnrichedOrder, itensImpressaoDoJson,
+  type EnrichedOrder, itemDaOsParaImpressao, itensOuIlegivel,
 } from '@/components/sales/print/types';
 import { omiePayloadDoJson } from '@/lib/pedido/itens-json';
 import { lerRespostaFormas } from '@/services/orderSubmission/formasDegradacao';
@@ -105,7 +105,9 @@ const SalesPrintDashboard = () => {
       const snap = await lerContatoOperacional('pedido', (data ?? []).map((r) => r.id), 'impressao_pedido');
       const rows: SalesOrderRow[] = (data ?? []).map((r) => ({
         ...r,
-        items: itensImpressaoDoJson(r.items, `sales_orders ${r.id}`),
+        ...itensOuIlegivel(r.items, `sales_orders ${r.id}`),
+        // A coluna é `discount`; o cupom lê `desconto` — sem isto o desconto do cabeçalho sumia (Codex).
+        desconto: r.discount ?? undefined,
         customer_document: snap.get(r.id)?.pedido_documento ?? undefined,
         customer_phone: snap.get(r.id)?.pedido_telefone ?? undefined,
         customer_address: snap.get(r.id)?.pedido_endereco ?? undefined,
@@ -143,29 +145,43 @@ const SalesPrintDashboard = () => {
       // `orders` (afiação) NÃO tem `customer_user_id` nem `omie_numero_pedido`: antes um cast a
       // vestia de `SalesOrderRow` e os dois chegavam `undefined`. O cliente é `user_id` (os
       // consumidores já liam `customer_user_id || user_id`).
-      return (data || []).map((o): SalesOrderRow => ({
-        ...o,
-        customer_user_id: o.user_id,
-        omie_numero_pedido: null,
-        items: itensImpressaoDoJson(o.items, `orders ${o.id}`),
-        account: 'afiacao',
-        subtotal: o.total || 0,
-      }));
+      return (data || []).map((o): SalesOrderRow => {
+        const lido = itensOuIlegivel(o.items, `orders ${o.id}`);
+        return {
+          ...o,
+          customer_user_id: o.user_id,
+          omie_numero_pedido: null,
+          ...lido,
+          items: lido.items.map(itemDaOsParaImpressao),
+          account: 'afiacao',
+          subtotal: o.total || 0,
+        };
+      });
     },
   });
 
   // Enrich orders with customer profile data
-  const allOrdersRaw = useMemo(() => {
-    const sales = salesOrders.map(o => ({
-      ...o,
-      _company: (o.account === 'colacor' ? 'colacor' : 'oben') as CompanyFilter,
-    }));
-    const afiacao = afiacaoOrders.map(o => ({
-      ...o,
-      _company: 'afiacao' as CompanyFilter,
-    }));
-    return [...sales, ...afiacao];
-  }, [salesOrders, afiacaoOrders]);
+  // Empresa do cupom vem do pedido (revisão /sales #26): antes `colacor ? colacor : oben`, e qualquer
+  // outra conta saía com o CNPJ da Oben. Conta que não é oben/colacor e pedido de itens ilegíveis
+  // (#27) ficam FORA da folha — contados no aviso, nunca impressos como outra empresa ou vazios.
+  // (`colacor_sc` em sales_orders: 0 linhas em 2026-11-27; aqui não vira 'afiacao' porque essa chave
+  // também desliga a leitura do desconto de item, que é da venda.)
+  const { allOrdersRaw, foraDaImpressao } = useMemo(() => {
+    const fora: string[] = [];
+    const sales: EnrichedOrder[] = [];
+    // Só o dia civil escolhido entra no aviso — a janela da query inclui horas dos dias vizinhos (Codex).
+    for (const o of salesOrders.filter((p) => pedidoNoDiaCivil(p.created_at, selectedDate))) {
+      if (o.itensIlegiveis) fora.push(`${o.omie_numero_pedido ?? o.id.slice(0, 8)}: itens ilegíveis`);
+      else if (o.account === 'oben' || o.account === 'colacor') sales.push({ ...o, _company: o.account });
+      else fora.push(`${o.omie_numero_pedido ?? o.id.slice(0, 8)}: empresa não reconhecida (${o.account ?? 'vazia'})`);
+    }
+    const afiacao: EnrichedOrder[] = [];
+    for (const o of afiacaoOrders.filter((p) => pedidoNoDiaCivil(p.created_at, selectedDate))) {
+      if (o.itensIlegiveis) fora.push(`OS ${o.id.slice(0, 8)}: itens ilegíveis`);
+      else afiacao.push({ ...o, _company: 'afiacao' });
+    }
+    return { allOrdersRaw: [...sales, ...afiacao], foraDaImpressao: fora };
+  }, [salesOrders, afiacaoOrders, selectedDate]);
 
   // Fetch customer profiles
   const customerIds = useMemo(() => {
@@ -488,6 +504,13 @@ const SalesPrintDashboard = () => {
             + 'imprimir um prazo que não foi conferido.'
           }
         />
+
+        {foraDaImpressao.length > 0 && (
+          <div role="alert" data-testid="fora-da-impressao" className="rounded-md border border-status-warning/40 p-3 text-sm text-status-warning">
+            {foraDaImpressao.length === 1 ? '1 pedido do dia ficou' : `${foraDaImpressao.length} pedidos do dia ficaram`} fora
+            da impressão: {foraDaImpressao.join(' · ')}.
+          </div>
+        )}
 
         {/* Filters */}
         <PrintFilters

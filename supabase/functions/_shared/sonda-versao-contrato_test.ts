@@ -28,6 +28,7 @@ import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as importarPedidoPortal from "../sayerlack-importar-pedido-portal/versao.ts";
 import * as varrerPedidosPortal from "../sayerlack-varrer-pedidos-portal/versao.ts";
 import * as encerrarCanceladoPortal from "../sayerlack-encerrar-cancelado-portal/versao.ts";
+import * as desligarFuncionario from "../desligar-funcionario/versao.ts";
 import * as trocarVendedorOmie from "../omie-cliente-trocar-vendedor/versao.ts";
 import * as pvExclusaoOmie from "../omie-pv-exclusao-reconciliar/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
@@ -334,6 +335,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 2026-11-08 — nasce instrumentada (5.3): consulta o Omie e encerra no app pedido aceito no portal e cancelado no
   // fornecedor. Não escreve no Omie nem no portal; o efeito caro é encerrar (cancelado_humano) um pedido.
   { nome: "sayerlack-encerrar-cancelado-portal", mod: encerrarCanceladoPortal },
+  { nome: "desligar-funcionario", mod: desligarFuncionario },
   // 2026-11-20 — nasce instrumentada: ALTERA no Omie o vendedor do cadastro de clientes (AlterarCliente, em lote).
   { nome: "omie-cliente-trocar-vendedor", mod: trocarVendedorOmie },
   // 2026-11-21 — nasce instrumentada: lê o Omie (ListarPedidos/ConsultarPedido) e DÁ BAIXA no app de PV excluído lá

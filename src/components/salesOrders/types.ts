@@ -59,6 +59,11 @@ export interface SalesOrder {
   notes: string | null;
   account?: string;
   _source?: 'sales' | 'afiacao';
+  /**
+   * `true` = o jsonb `items` não é uma lista (não se leu). `items` fica `[]` só para a tela não quebrar —
+   * NÃO é "pedido sem itens": o painel diz que não leu e cupom/WhatsApp não saem (revisão /sales #27).
+   */
+  itensIlegiveis?: true;
   // Campos que o select('*') de sales_orders já traz em runtime — consumidos
   // pela impressão do pedido (buildSalesOrderPrintRow). Opcionais: os pedidos
   // de afiação (montados à mão no hook) não os têm.

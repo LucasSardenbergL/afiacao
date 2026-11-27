@@ -54,9 +54,12 @@ import {
   vereditoParcelaEdicao,
   vereditoPedidoLocalEdicao,
   corpoDoErro,
-  MOTIVO_EDICAO_CONCORRENTE,
   notasDaEdicao,
   observacaoParaOmie,
+  recusaDaExclusao,
+  recusaDaReivindicacao,
+  recusaDoDespacho,
+  tokenDaEdicao,
   versaoDaEdicao,
 } from "./edicao-omie.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
@@ -2684,6 +2687,31 @@ Deno.serve(async (req) => {
   // o formulário dela é um retrato velho (#30, ./edicao-omie.ts `corpoDoErro`).
   let edicaoReservada = false;
   let emAlterarPedido = false;
+  // Posse DURÁVEL da edição (migration 20261127120100, ./edicao-omie.ts `tokenDaEdicao`): em TODA saída da
+  // action — `break` com recusa ou erro — `encerrarPosseEdicao` libera a reserva que não chegou ao Omie, ou
+  // marca DIVERGENTE a que chegou e não concluiu. Concluída (write-back com posse) não é tocada.
+  const posseEdicao: { token: string | null; fase: "nenhuma" | "reservada" | "despachada" | "concluida" } = {
+    token: null,
+    fase: "nenhuma",
+  };
+  const encerrarPosseEdicao = async (motivo: string) => {
+    const { token, fase } = posseEdicao;
+    posseEdicao.fase = "nenhuma";
+    if (!token) return;
+    // Nunca lança: roda dentro do `catch` da action e não pode trocar a resposta dela.
+    try {
+      if (fase === "reservada") {
+        // Só vale se a tentativa NÃO foi despachada (a RPC confere): nada foi ao Omie.
+        const { error } = await supabaseAdmin.rpc("pedido_edicao_omie_liberar", { p_token: token });
+        if (error) console.error(`[edicao] liberar a reserva ${token} falhou (ela vence sozinha em 10 min): ${error.message}`);
+      } else if (fase === "despachada") {
+        const { error } = await supabaseAdmin.rpc("pedido_edicao_omie_marcar_divergente", { p_token: token, p_motivo: motivo });
+        if (error) console.error(`[edicao] marcar divergente ${token} falhou (vira divergente sozinha em 10 min): ${error.message}`);
+      }
+    } catch (e) {
+      console.error(`[edicao] encerrar a posse ${token} (${fase}) lançou: ${mensagemDeErro(e)}`);
+    }
+  };
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -3364,6 +3392,35 @@ Deno.serve(async (req) => {
         const editAccount: Account = existingOrder.account === "colacor" ? "colacor" : "oben";
         const editConfig = getAccountConfig(editAccount);
 
+        // POSSE durável por (conta, PV) — ANTES de toda leitura do PV e do registro de revisão de crédito
+        // (Codex no desenho do PR 2): duas abas/aparelhos do mesmo PV não chegam juntas ao gate de crédito.
+        // Não move a versão do pedido: uma recusa adiante (crédito, ATP, tint) não envelhece a tela.
+        // Só QUEM recebeu `reivindicado` marca a posse (e a libera na saída): um reenvio do mesmo token recebe
+        // `token_encerrado` e não pode soltar a reserva da invocação original (Codex no diff). Resposta perdida
+        // depois de a RPC gravar: a reserva fica e VENCE em 10 min — o PV espera, nada vai ao Omie.
+        const tokenEdit = tokenDaEdicao({
+          presente: Object.prototype.hasOwnProperty.call(params, "token"),
+          informado: (params as { token?: unknown }).token,
+          gerar: () => crypto.randomUUID(),
+        });
+        if (!tokenEdit.ok) throw new Error(`Edição recusada: ${tokenEdit.motivo}`);
+        const { data: reivindicacaoEdit, error: reivindicacaoErr } = await supabaseAdmin.rpc("pedido_edicao_omie_reivindicar", {
+          p_sales_order_id: editSoId,
+          p_versao: versaoEdit.valor,
+          p_token: tokenEdit.valor,
+          p_ator: userId ?? null,
+        });
+        if (reivindicacaoErr) {
+          throw new Error(`Edição recusada: não consegui reservar o pedido (${reivindicacaoErr.message}). Nada foi alterado no Omie.`);
+        }
+        const recusaPosse = recusaDaReivindicacao(reivindicacaoEdit);
+        if (recusaPosse) {
+          result = { success: false, blocked: recusaPosse.bloqueio, contexto: "edicao", motivo: recusaPosse.motivo };
+          break;
+        }
+        posseEdicao.token = tokenEdit.valor;
+        posseEdicao.fase = "reservada";
+
         // Trava do GÊMEO: o recibo do app cujo espelho importado do mesmo PV já avançou não se edita
         // pelo app. A conta do espelho é a do pedido (a que o sync usa no hash). Leitura que falha
         // RECUSA: sem ela não dá para provar nada. O cliente é provado depois, pelo ConsultarPedido.
@@ -3689,6 +3746,9 @@ Deno.serve(async (req) => {
           parcela: parcelaEdicao,
           items: editItems,
           userId,
+          // A revisão só grava se ESTA tentativa ainda está reservada (mesma transação): um save abandonado pela
+          // tela não deixa revisão por cima da do save que o substituiu (Codex no diff).
+          tokenEdicao: posseEdicao.token,
         });
         if (revisaoEdicao) console.log(`[Omie Vendas][${editAccount}] revisão de crédito ${revisaoEdicao.revisao} (seq ${revisaoEdicao.seq})`);
         const parcelaMudou = editParcelaEnvio.trim() !== String(omieParcelaEdit ?? "").trim();
@@ -3753,36 +3813,31 @@ Deno.serve(async (req) => {
         });
         if (!creditoV2Edit.segue) throw new Error(creditoV2Edit.mensagem);
 
-        // RESERVA do pedido pela versão que a tela viu (./edicao-omie.ts `versaoDaEdicao`; revisão /sales #6/#7):
-        // é aqui, na fronteira da 1ª mutação no Omie, que se prova que o pedido AINDA é o que a tela e as
-        // checagens acima leram — mesma versão, mesmo PV, mesma conta, mesmo status, origem do app, não
-        // excluído. UPDATE condicional atômico: de dois saves com a mesma versão, o 2º espera o lock da
-        // linha, reavalia o WHERE depois do commit do 1º e casa 0 linhas. Depois dela a versão mudou, então
-        // QUALQUER falha adiante faz o mesmo formulário ser recusado aqui no reenvio (#30 na fronteira).
-        // Residual aceito (igual ao envio #4043): tela reaberta DURANTE o voo lê a versão nova.
-        let reservaEdit = supabaseAdmin
-          .from("sales_orders")
-          .update({ updated_at: new Date().toISOString() })
-          .eq("id", editSoId)
-          .is("deleted_at", null)
-          .eq("omie_pedido_id", existingOrder.omie_pedido_id)
-          .eq("account", existingOrder.account)
-          .eq("status", existingOrder.status);
-        // Origem: o hash EXATO que o veredito aprovou (recibo de checkout tem `checkout_*`, não NULL — Codex
-        // 2026-11-26). Um sync que trocasse o hash para `omie_*` no meio faz a reserva não casar.
-        const hashLidoEdit = (existingOrder as { hash_payload?: string | null }).hash_payload ?? null;
-        reservaEdit = hashLidoEdit === null ? reservaEdit.is("hash_payload", null) : reservaEdit.eq("hash_payload", hashLidoEdit);
-        reservaEdit = versaoEdit.valor === null
-          ? reservaEdit.is("updated_at", null)
-          : reservaEdit.eq("updated_at", versaoEdit.valor);
-        const { data: reservadasEdit, error: reservaEditErr } = await reservaEdit.select("id");
-        if (reservaEditErr) {
-          throw new Error(`Edição recusada: não consegui reservar o pedido (${reservaEditErr.message}). Nada foi alterado no Omie.`);
+        // DESPACHO da edição (RPC `pedido_edicao_omie_despachar`, migration 20261127120100): na fronteira da 1ª
+        // mutação no Omie, sob FOR UPDATE do pedido, prova que ele AINDA é o que a tela e as checagens acima
+        // leram — mesma versão (o trigger a move em TODO UPDATE: status, PV, conta e origem iguais), não
+        // excluído, o gêmeo importado do PV como lido (o sync o avança sem mexer na versão do recibo — Codex
+        // no desenho), e a posse deste token ainda válida. Grava o despacho (daqui em diante, desfecho sem
+        // prova é DIVERGÊNCIA durável) e move a versão: o mesmo formulário é recusado no reenvio (#30).
+        // Resposta perdida: a versão PODE ter mudado — a tela tem de recarregar (`edicaoReservada`) e
+        // perguntar ao banco pelo token; a saída da action tenta liberar (só vale se não despachou).
+        const { data: despachoEdit, error: despachoErr } = await supabaseAdmin.rpc("pedido_edicao_omie_despachar", {
+          p_sales_order_id: editSoId,
+          p_token: posseEdicao.token,
+          p_versao: versaoEdit.valor,
+          p_gemeo_presente: gemeoEdit != null,
+          p_gemeo_status: gemeoEdit ? ((gemeoEdit.status as string | null) ?? null) : null,
+        });
+        if (despachoErr) {
+          edicaoReservada = true;
+          throw new Error(`Edição recusada: não consegui confirmar a reserva do pedido (${despachoErr.message}). Nada foi enviado ao Omie — recarregue o pedido.`);
         }
-        if ((reservadasEdit ?? []).length !== 1) {
-          result = { success: false, blocked: "edicao_concorrente", contexto: "edicao", motivo: MOTIVO_EDICAO_CONCORRENTE };
+        const recusaDespacho = recusaDoDespacho(despachoEdit);
+        if (recusaDespacho) {
+          result = { success: false, blocked: recusaDespacho.bloqueio, contexto: "edicao", motivo: recusaDespacho.motivo };
           break;
         }
+        posseEdicao.fase = "despachada";
         edicaoReservada = true;
 
         // Step 2 (cabeçalho ANTES do delete+add): etapa, previsão, frete e classificação são os LIDOS
@@ -4094,18 +4149,24 @@ Deno.serve(async (req) => {
           p_omie_payload: editPayload,
           p_omie_response: editResult,
           p_lido_em: finalLidoEm,
+          // Overload de 9 args: confere, sob FOR UPDATE, deleted_at e que ESTE token despachou a edição, e
+          // conclui a tentativa na MESMA transação do write-back.
+          p_token: posseEdicao.token,
         });
         // A RPC LANÇA em tudo que dá errado, então `error` cobre quase todo o espaço. O eco do
         // id é o que separa "gravou" de "respondeu qualquer coisa": sem ele, um retorno vazio
-        // (RPC ausente/renomeada, assinatura trocada) passaria como sucesso.
+        // (RPC ausente/renomeada, assinatura trocada) passaria como sucesso. `posse: 'concluida'` prova
+        // que foi o overload COM posse (o de 8 args não devolve a chave).
         const editWbEco = (editWb as { sales_order_id?: string } | null)?.sales_order_id;
-        if (editWbErr || editWbEco !== editSoId) {
+        const editWbPosse = (editWb as { posse?: string } | null)?.posse;
+        if (editWbErr || editWbEco !== editSoId || editWbPosse !== "concluida") {
           throw new Error(
             `Omie ATUALIZADO (${editItems.length} itens) mas o registro local falhou ` +
               `(${editWbErr?.message ?? `RPC nao confirmou o pedido (${editWbEco ?? "sem eco"})`}) — NÃO re-salve sem recarregar o pedido; ` +
               `o Omie está com a versão nova e o app com a antiga.`,
           );
         }
+        posseEdicao.fase = "concluida";
         console.log(`[Omie Vendas][${editAccount}] Write-back atômico: ${JSON.stringify(editWb)}`);
 
         result = { success: true, omie_response: editResult };
@@ -4139,6 +4200,8 @@ Deno.serve(async (req) => {
           throw new Error(`Exclusão recusada: o PV informado (${pedidoId}) diverge do registrado (${pidLocal}). Recarregue a página.`);
         }
 
+        // Gêmeo lido (só com PV): a prova de cancelamento — reconferida sob lock na RPC de exclusão.
+        let gemeoExclusao: { presente: boolean; status: string | null } | null = null;
         if (pidLocal !== null) {
           // O app NÃO cancela no Omie (decisão 2026-10-11, ver vereditoExclusaoNoOmie): sai daqui só o
           // pedido cujo cancelamento — feito no Omie — o sync já trouxe para a linha canônica.
@@ -4149,6 +4212,7 @@ Deno.serve(async (req) => {
             .eq("hash_payload", `omie_${orderAccount}_${pidLocal}`)
             .maybeSingle();
           if (canonErr) throw new Error(`Exclusão recusada: não consegui ler o status do pedido no Omie (${canonErr.message}).`);
+          gemeoExclusao = { presente: canon != null, status: (canon?.status as string | null | undefined) ?? null };
           const veredito = vereditoExclusaoNoOmie({
             hashPayload: (orderData.hash_payload as string | null) ?? null,
             omiePedidoId: pidLocal,
@@ -4228,18 +4292,20 @@ Deno.serve(async (req) => {
         // pedido nos últimos 10 min. É o ponto ATÔMICO da corrida envio × exclusão — a consulta ao
         // Omie acima pode dizer "ausente" porque o IncluirPedido ainda não gravou (Colacor não tem
         // rastro ATP); o lock de linha faz o envio e a exclusão disputarem o MESMO pedido.
-        const { data: desfechoDel, error: delError } = await supabaseAdmin
-          .rpc("sales_order_excluir_sem_envio", { p_sales_order_id: soId, p_somente_orcamento: somenteOrcamento });
+        // Conferida (migration 20261127120100): sob o MESMO lock, a conta e o PV ainda são os que a prova de
+        // cancelamento acima leu (o DELETE só por UUID apagaria o recibo de outro PV se a linha trocasse de
+        // identidade no meio — Codex), e nenhuma edição deste pedido está reservada ou em voo.
+        const { data: desfechoDel, error: delError } = await supabaseAdmin.rpc("sales_order_excluir_conferido", {
+          p_sales_order_id: soId,
+          p_somente_orcamento: somenteOrcamento,
+          p_account: orderData.account,
+          p_omie_pedido_id: orderData.omie_pedido_id ?? null,
+          p_gemeo_presente: gemeoExclusao?.presente ?? null,
+          p_gemeo_status: gemeoExclusao?.status ?? null,
+        });
         if (delError) throw new Error(`Exclusão recusada: falha ao apagar o pedido (${delError.message}).`);
-        if (desfechoDel === "envio_em_curso") {
-          throw new Error("Exclusão recusada: o pedido está sendo enviado ao Omie agora. Tente de novo em alguns minutos.");
-        }
-        if (desfechoDel === "nao_e_orcamento") {
-          throw new Error("Exclusão recusada: este registro não é mais um orçamento (virou pedido?). Recarregue a página.");
-        }
-        if (desfechoDel !== "excluido" && desfechoDel !== "ausente") {
-          throw new Error(`Exclusão recusada: resposta inesperada ao apagar o pedido (${String(desfechoDel)}).`);
-        }
+        const recusaDel = recusaDaExclusao(desfechoDel);
+        if (recusaDel) throw new Error(recusaDel);
 
         result = { success: true };
         break;
@@ -4797,6 +4863,9 @@ Deno.serve(async (req) => {
         throw new Error(`Ação desconhecida: ${action}`);
     }
 
+    // Recusa estruturada da edição (crédito, ATP, tint, concorrência…): é sempre ANTES do despacho → libera.
+    await encerrarPosseEdicao(`a edição saiu sem concluir (${JSON.stringify((result as { blocked?: unknown } | null)?.blocked ?? null)})`);
+
     if (vendaLogId && !vendaSyncFinalized) {
       await completeVendaSync(supabaseAdmin, vendaLogId, result);
       vendaSyncFinalized = true;
@@ -4807,6 +4876,8 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error("[Omie Vendas] Erro:", error);
+    // Erro da edição: antes do despacho libera; depois dele, a tentativa fica DIVERGENTE com o motivo.
+    await encerrarPosseEdicao(mensagemDeErro(error) ?? "erro sem mensagem");
     // Finaliza o log de sync órfão como 'error' (best-effort interno → não
     // mascara nem altera a resposta 500 original).
     if (vendaLogId && !vendaSyncFinalized) {

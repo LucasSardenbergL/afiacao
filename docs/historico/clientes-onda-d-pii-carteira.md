@@ -282,6 +282,32 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
     e rua) são SECDEF; `contato_cliente_operacional` e `v_endereco_contato` rodam como dono.
   - A `v_grupo_contatos` ainda lê `addresses` crua até a 4b-1 ser aplicada, e quebraria.
   - Escritores (`Auth.tsx`, `Addresses.tsx`) usam WHERE só em `id`/`user_id`, que continuam com SELECT.
+- **4b-2a no ar (2026-11-27):** #4251 mergeado; migration `20261127000000` aplicada, recibo `db:aplicar` **#1518**,
+  postcondição `fatia 4b-2 ok`. Validação por fora (psql-ro): `contato_cliente_definir_principal` SECDEF com
+  `search_path=""`, anon=f, PUBLIC fora, authenticated=t. `audit:migrations` rc=0. `deriva:corpo:prod` rc=1 só
+  pelas 2 funções AUSENTES da `20261126190127` (envio conferido, outro PR). Edges e Publish: com o founder.
+- **4b-2b preparada:** migration `20261127010000` (REVOKE de tabela + GRANT nas 7 colunas; postcondição C1–C7,
+  com C6 = nenhuma view invoker=on lendo coluna cortada, e C7 = `v_endereco_contato` segue invoker=off).
+  - Pré-voo em prod (psql-ro): anon já sem nada; nenhum trigger nem policy de outra tabela citando `addresses`;
+    as views invoker=on (`v_caca_*`) usam só `city, created_at, is_default, state, user_id`; `service_role` tem
+    BYPASSRLS. As 3 edges que leem a rua usam service_role.
+  - Prova: `db/test-clientes-pii-fatia4b2b-corte-addresses.sh`, 36 OK em C e pt_BR.UTF-8. Parte do pior caso de
+    grants (o default Supabase) e roda as escritas na forma do PostgREST (`json_populate_recordset` +
+    `RETURNING 1`). 5 sabotagens com o vermelho exato e controle verde. A 1ª versão casava a mensagem de erro
+    e ficou vermelha só em pt_BR ("permissão negada"): o vermelho agora casa a SQLSTATE `42501`.
+  - Ensaio em prod ok (postcondição inteira contra as views reais) e ROLLBACK conferido por psql-ro.
+  - **Apply só com o `__BUILD_SHA__` do Publish da 4b-2a servido**: o `select('*')` do front antigo quebraria.
+- **4b-2b no ar (2026-11-27):** #4262 mergeado. Pré-condição conferida nos BYTES do Publish (steu.lovable.app,
+  build 10:29Z): o chunk `Addresses` lê `v_endereco_contato`; `SalesPrintDashboard` manda `impressao_pedido` e
+  já não tem `buscar_por_documento`; `Profile` traz a mensagem neutra do 23505. (O `index.html` servido não
+  expõe `app-commit-sha`: a prova foi pelo conteúdo dos chunks.) Ensaio ok e apply com recibo `db:aplicar`
+  **#1524**, postcondição `fatia 4b-2b ok`. Validação por fora (psql-ro): authenticated lê só as 7 colunas
+  (label/street/number/complement/neighborhood/zip_code=f), mantém INSERT/UPDATE/DELETE; anon sem nada;
+  service_role lê. `audit:migrations` rc=0 e `deriva:corpo:prod` rc=0.
+  - Bytes no ar ≠ adoção: aba aberta antes do Publish e não recarregada mostra erro na tela Endereços até o
+    reload (sem perda de dado).
+  - Ainda com o founder: deploy de `omie-cliente` v1.13, `analyze-unified-order` v1.14 e `omie-sync` v1.19, e o
+    teste logado em prod.
 - **Codex** (`gpt-6.2-astra`, high, 165 s, 132 k tokens): "bloquearia como FECHAMENTO da onda D", sem P0.
   - Integrados nesta fatia:
     - a carteira lê o mapa FRESCO (vínculo vencido não autoriza o contato atual);

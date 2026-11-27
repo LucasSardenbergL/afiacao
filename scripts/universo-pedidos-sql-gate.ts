@@ -46,6 +46,13 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.atp_gate_pedido': { tipo: 'lookup', motivo: 'ATP: gate de UM pedido (por id)' },
   'public.sales_order_reivindicar_envio_conferido': { tipo: 'lookup', motivo: 'claim conferido do envio: relê UM pedido (por id) para dizer por que o claim não carimbou (ausente/excluído/alterado)' },
   'public.sales_order_excluir_sem_envio': { tipo: 'lookup', motivo: 'claim envio × exclusão: apaga UM pedido (por id) se nenhum envio o reivindicou; relê o status dele' },
+  // Posse durável da edição (leva 1 PR 2, migration 20261127120100): todas leem UM pedido por id (e o gêmeo pelo hash).
+  'public.pedido_edicao_omie_reivindicar': { tipo: 'lookup', motivo: 'posse da edição: trava UM pedido (por id) e confere versão/exclusão/PV antes de reivindicar' },
+  'public.pedido_edicao_omie_despachar': { tipo: 'lookup', motivo: 'despacho da edição: trava UM pedido (por id) e relê o gêmeo do mesmo PV pelo hash antes de mover a versão' },
+  'public.pedido_edicao_omie_estado': { tipo: 'lookup', motivo: 'estado da posse para a tela: lê conta e PV de UM pedido (por id)' },
+  'public.pedido_edicao_omie_encerrar_envio': { tipo: 'lookup', motivo: 'encerrar o envio da tela: lê conta e PV de UM pedido (por id) para a lápide do token' },
+  'public.pedido_edicao_omie_resolver': { tipo: 'lookup', motivo: 'resolver a divergência: trava UM pedido (por id) e move a versão dele' },
+  'public.sales_order_excluir_conferido': { tipo: 'lookup', motivo: 'exclusão conferida: trava UM pedido (por id), confere conta/PV/gêmeo e o apaga' },
   'public.atp_reservas_pendentes': { tipo: 'lookup', motivo: 'ATP: lista reservas ativas com o status do pedido vinculado (por id da reserva)' },
   'public.ensure_picking_task_for_sales_order': { tipo: 'lookup', motivo: 'picking: cria a tarefa de UM pedido (por id), com o gate operacional próprio' },
   'public.order_items_herdar_created_at_omie': { tipo: 'lookup', motivo: 'gatilho: o item herda a data do SEU pedido (por id)' },

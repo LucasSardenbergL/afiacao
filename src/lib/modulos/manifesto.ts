@@ -1017,6 +1017,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/analytics-rota-canonica.ts",
       "src/lib/analytics-vitals.ts",
       "src/lib/build-id.ts",
+      // Cor de tinta do item: cupom (loja-afiacao) e WhatsApp (telefonia) — revisão /sales #24.
+      "src/lib/cor-tinta.ts",
       "src/lib/erro-mensagem.ts",
       "src/lib/escape-html.ts",
       // Compartilhado entre `vendas` (useCrossSellEngine) e `farmer-inteligencia`

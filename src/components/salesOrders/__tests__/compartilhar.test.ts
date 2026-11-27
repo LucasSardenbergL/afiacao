@@ -32,6 +32,7 @@ describe('montarCompartilhamento — a régua do cupom na mensagem de WhatsApp',
         { description: 'BASE BRANCA', quantity: 2, unitPrice: 584.5, lineTotal: 1052.1 },
       ],
       quebraDesconto: { subtotalBruto: 1629.25, descontoTotal: 139.91, itensApurados: 2 },
+      itensAOrcar: 0,
       aviso: null,
     });
   });
@@ -44,6 +45,7 @@ describe('montarCompartilhamento — a régua do cupom na mensagem de WhatsApp',
         { description: 'BASE BRANCA', quantity: 2, unitPrice: 584.5, lineTotal: null },
       ],
       quebraDesconto: { subtotalBruto: 1629.25, descontoTotal: 23.01, itensApurados: 1 },
+      itensAOrcar: 0,
       aviso: null,
     });
   });
@@ -88,7 +90,7 @@ describe('montarCompartilhamento — a régua do cupom na mensagem de WhatsApp',
       lida(LINHAS.map((l) => ({ ...l, desconto_valor: 0 }))),
     ];
     for (const leitura of leituras) {
-      expect(montarCompartilhamento(pedido(1629.25), leitura)).toStrictEqual({ items: ITENS_COMO_HOJE, aviso: null });
+      expect(montarCompartilhamento(pedido(1629.25), leitura)).toStrictEqual({ items: ITENS_COMO_HOJE, itensAOrcar: 0, aviso: null });
     }
   });
 
@@ -100,6 +102,25 @@ describe('montarCompartilhamento — a régua do cupom na mensagem de WhatsApp',
   });
 
   it('pedido sem itens no jsonb (null): lista vazia, sem quebrar', () => {
-    expect(montarCompartilhamento({ items: null, total: 0 }, { estado: 'nao-se-aplica' })).toStrictEqual({ items: [], aviso: null });
+    expect(montarCompartilhamento({ items: null, total: 0 }, { estado: 'nao-se-aplica' })).toStrictEqual({ items: [], itensAOrcar: 0, aviso: null });
+  });
+
+  // Revisão /sales #11: a mensagem de /sales omitia `itensAOrcar` — a linha sem preço ia sob um
+  // "Total" definitivo. A conta é a do cupom (`valorUnitario === null`).
+  it('conta os itens sem preco para a mensagem (a orcar)', () => {
+    const itens = [
+      { descricao: 'A', quantidade: 1, valor_unitario: 10 },
+      { descricao: 'B', quantidade: 1, valor_unitario: null },
+      { descricao: 'C', quantidade: 1, valor_unitario: 0 },
+    ] as unknown as SalesOrder['items'];
+    expect(montarCompartilhamento({ items: itens, total: 10 }, { estado: 'nao-se-aplica' }).itensAOrcar).toBe(1);
+  });
+
+  // Revisão /sales #24: o adaptador descartava a cor.
+  it('leva a cor do jsonb (so nome, como o sync grava) ate a mensagem', () => {
+    const itens = [{ descricao: 'BASE', quantidade: 1, valor_unitario: 10, tint_nome_cor: 'AZUL - BS' }] as unknown as SalesOrder['items'];
+    expect(montarCompartilhamento({ items: itens, total: 10 }, { estado: 'nao-se-aplica' }).items).toStrictEqual([
+      { description: 'BASE', quantity: 1, unitPrice: 10, tintNomeCor: 'AZUL - BS' },
+    ]);
   });
 });
