@@ -237,6 +237,9 @@ CENARIO=dec_recibo_lixo;   semeia "$BASE" x; vigia; : > "$F/vigia/recibos-$BASE-
 # Codex PR2 #6: o que o liberar cobre não volta a exigir recibo — a base dos recibos é o liberar
 CENARIO=dec_recibo_base_lib; semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"; rec "$MIG" "$F3" 0; echo 0 > "$F/vigia/pendencias-$F3"
                            decide 0 PUBLICAR "$F3" && { tem_dec "RECIBOS_DE=$MIG"; tem_dec "LIBERADO=recibos+ledger"; }
+# caso real 27/11: liberar de 26/11 MAIS VELHO que o ar — a base é o ar, não o liberar velho
+CENARIO=dec_recibo_lib_velho; semeia "$FRONT" x; vigia; echo "$BASE" > "$F/vigia/liberar"; rec "$FRONT" "$FRONT2" 0
+                           decide 0 PUBLICAR "$FRONT2" && { tem_dec "RECIBOS_DE=$FRONT"; tem_dec "LIBERADO=recibos"; }
 # edge que o ledger não prova: sem versao.ts, ou _shared → ledger=0 NÃO libera; liberar sem mudança depois libera
 git checkout -q -b semv "$FRONT2"; c supabase/functions/h/index.ts sv >/dev/null; SV=$(c src/sv.ts svf); git checkout -q main
 git checkout -q -b shared "$FRONT2"; c supabase/functions/_shared/x.ts sh >/dev/null; SH=$(c src/sh.ts shf); git checkout -q main

@@ -295,11 +295,15 @@ if [ -n "$MIG" ]; then
   [ "$DECIDIR" = 1 ] || retido migration "$MIG"
   # RECIBO de banco (o vigia grava pelo scripts/lovable-recibos.sh; psql-ro em db_aplicacoes e
   # db_migracoes_adiadas, pelo SHA-256 dos bytes de HEAD). Cache por (ar, head): o ar muda o conjunto.
-  # base dos recibos: a atestação humana válida (liberar, depois piso), senão o ar — o que o humano
-  # já cobriu não volta a exigir recibo (Codex PR2 #6: migration do SQL Editor liberada à mão)
+  # base dos recibos: o MAIS NOVO entre ar, liberar e piso (ancestrais de HEAD) — o que o humano
+  # já cobriu não volta a exigir recibo (Codex PR2 #6: migration do SQL Editor liberada à mão).
+  # Nunca um liberar/piso MAIS VELHO que o ar: o PEND já parte do ar, e um liberar de dias atrás
+  # re-exigia recibo de migration já servida (aplicada fora do envelope) e travava TODO recibo
+  # dali em diante (liberar 39ea6374 de 26/11 × 2 sem_recibo de 27/11: recibo nunca liberou).
   RB=$AR
   for cand in "$LIB_ARQ" "$PISO_ARQ"; do
-    c=$(sha40 "$cand" 2>/dev/null) && git merge-base --is-ancestor "$c" "$HEAD_SHA" 2>/dev/null && { RB=$c; break; }
+    c=$(sha40 "$cand" 2>/dev/null) && git merge-base --is-ancestor "$c" "$HEAD_SHA" 2>/dev/null \
+      && git merge-base --is-ancestor "$RB" "$c" 2>/dev/null && RB=$c
   done
   echo "RECIBOS_DE=$RB"
   REC="$ESTADO/recibos-$RB-$HEAD_SHA"
