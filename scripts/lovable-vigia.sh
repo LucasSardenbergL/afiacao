@@ -41,6 +41,16 @@ if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 1048576 ]; then
   mv -f "$LOG" "$LOG.1"
 fi
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+# ── batimento (rodada 2, M6): TODA invocação do launchd o renova — inclusive a que sai porque outro tick vivo
+# segura o lock —, então só um buraco do launchd (Mac dormindo, vigia descarregado) o envelhece. Conteúdo =
+# epoch (portável: `stat` difere entre macOS e Linux). O `--esperar` lê para dizer "vigia parado há N min".
+BURACO_S=${LV_BURACO_S:-300}
+BAT_ANT=$(head -1 "$EST/batimento" 2>/dev/null); BAT_AGORA=$(date +%s)
+printf '%s\n' "$BAT_AGORA" > "$EST/batimento.tmp.$$" && mv -f "$EST/batimento.tmp.$$" "$EST/batimento"
+case "$BAT_ANT" in ''|*[!0-9]*) ;; *)
+  [ $((BAT_AGORA - BAT_ANT)) -gt "$BURACO_S" ] \
+    && log "acordei após buraco de $(( (BAT_AGORA - BAT_ANT) / 60 )) min sem tick (último batimento $(date -r "$BAT_ANT" '+%F %T' 2>/dev/null || date -d "@$BAT_ANT" '+%F %T' 2>/dev/null))" ;;
+esac
 avisa() {
   log "AVISO: $1"
   osascript -e "display notification \"${1//\"/}\" with title \"Vigia Lovable\"" >/dev/null 2>&1 || true
@@ -49,6 +59,10 @@ avisa() {
 avisa_uma_vez() {
   grep -qxF "$1" "$EST/avisados" 2>/dev/null && return 0
   echo "$1" >> "$EST/avisados"; avisa "$2"
+  # teto (rodada 2, M13): as chaves são por SHA/episódio e só crescem; fica com as 100 mais novas
+  if [ "$(wc -l < "$EST/avisados")" -gt "${LV_AVISADOS_MAX:-200}" ]; then
+    tail -n 100 "$EST/avisados" > "$EST/avisados.tmp.$$" && mv -f "$EST/avisados.tmp.$$" "$EST/avisados"
+  fi
 }
 
 # ── lock VINCULADO AO PROCESSO (PR 3): mkdir é atômico e o dono grava o PID. Outro tick só o toma se o
@@ -134,25 +148,33 @@ veredito() { tail -1 "$EST/julgar.txt" | sed -n 's/^VEREDITO=//p'; }
 ar_curto() { sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' "$EST/julgar.txt" | head -1; }
 linha() { sed -n "s/^$1=//p" "$EST/julgar.txt" | head -1; }
 
-# ── episódio RETIDO: 1 aviso quando começa, lembrete a cada LV_RELEMBRA_H h com a idade ─────────
-# (antes era 1 aviso por SHA: cada merge na main re-notificava o mesmo bloqueio)
+# ── episódio (RETIDO ou MECANICA): 1 aviso quando começa, lembrete com a idade, fim logado ──────────
+# (antes RETIDO era 1 aviso por SHA — cada merge re-notificava o mesmo bloqueio — e MECANICA era 1 aviso
+# por DIA, sem lembrete nem fim: 27/11 ficou 5 h em CARIMBO_INVALIDO com um aviso às 07:25 e mais nada)
 RELEMBRA=$(( ${LV_RELEMBRA_H:-4} * 3600 ))
-retido_episodio() {  # <motivo>
-  local agora ini ult chave; agora=$(date +%s); chave="ar=$(ar_curto) main=${HEAD_SHA:0:8} $1"
-  [ "$(cat "$EST/retido-chave" 2>/dev/null)" = "$chave" ] || { log "RETIDO $chave"; grava "$EST/retido-chave" "$chave"; }
-  if { read -r ini ult < "$EST/retido-episodio"; } 2>/dev/null && [ -n "${ult:-}" ]; then
-    [ $((agora - ult)) -ge "$RELEMBRA" ] || return 0
-    grava "$EST/retido-episodio" "$ini $agora"
-    avisa "AINDA RETIDO há $(( (agora - ini) / 3600 ))h ($1). $(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //')"
+RELEMBRA_MEC=$(( ${LV_RELEMBRA_MEC_MIN:-60} * 60 ))
+idade() { [ "$1" -ge 7200 ] && echo "$(( $1 / 3600 ))h" || echo "$(( $1 / 60 )) min"; }
+episodio() {  # <retido|mecanica> <motivo> — RETIDO lembra a cada LV_RELEMBRA_H h; MECANICA a cada LV_RELEMBRA_MEC_MIN
+  local agora ini ult chave rot rel dica; agora=$(date +%s)
+  if [ "$1" = mecanica ]; then rot=MECANICA; rel=$RELEMBRA_MEC; chave="$2"; dica="ver $LOG"
+  else rot=RETIDO; rel=$RELEMBRA; chave="ar=$(ar_curto) main=${HEAD_SHA:0:8} $2"; dica=$(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //'); fi
+  [ "$(cat "$EST/$1-chave" 2>/dev/null)" = "$chave" ] || { log "$rot $chave"; grava "$EST/$1-chave" "$chave"; }
+  if { read -r ini ult < "$EST/$1-episodio"; } 2>/dev/null && [ -n "${ult:-}" ]; then
+    [ $((agora - ult)) -ge "$rel" ] || return 0
+    grava "$EST/$1-episodio" "$ini $agora"
+    avisa "AINDA $rot há $(idade $((agora - ini))) ($2). $dica"
   else
-    grava "$EST/retido-episodio" "$agora $agora"
-    avisa "RETIDO ($1) até ${HEAD_SHA:0:8}. $(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //')"
+    grava "$EST/$1-episodio" "$agora $agora"
+    if [ "$1" = mecanica ]; then avisa "MECANICA: julgamento sem medida ($2) — $dica"
+    else avisa "RETIDO ($2) até ${HEAD_SHA:0:8}. $dica"; fi
   fi
 }
-fim_episodio() {
-  local ini; { read -r ini _ < "$EST/retido-episodio"; } 2>/dev/null || return 0
-  log "fim do episódio RETIDO após $(( ($(date +%s) - ini) / 60 )) min (veredito $1, ar=$(ar_curto) main=${HEAD_SHA:0:8})"
-  rm -f "$EST/retido-episodio" "$EST/retido-chave"
+retido_episodio() { episodio retido "$1"; }
+fim_episodio() {  # <veredito> [retido|mecanica] — default retido
+  local ini t=${2:-retido} rot=RETIDO; [ "$t" = mecanica ] && rot=MECANICA
+  { read -r ini _ < "$EST/$t-episodio"; } 2>/dev/null || return 0
+  log "fim do episódio $rot após $(( ($(date +%s) - ini) / 60 )) min (veredito $1, ar=$(ar_curto) main=${HEAD_SHA:0:8})"
+  rm -f "$EST/$t-episodio" "$EST/$t-chave"
 }
 
 abre_issue tick
@@ -165,7 +187,9 @@ for _ in 1 2 3; do
       # recibo de banco de cada migration de ar..main (db_aplicacoes/db_migracoes_adiadas via psql-ro)
       ARF=$(linha RECIBOS_DE)
       [ -n "$ARF" ] || { log "PRECISA_RECIBOS sem RECIBOS_DE= na decisão — não libero"; exit 0; }
-      rm -f "$EST"/recibos-*
+      # SÓ os caches `recibos-<ar>-<head>` (rodada 2, B2): o glob `recibos-*` levava junto o `recibos-ultimo`,
+      # a memória do dedup logo abaixo, e a mesma linha de ~400 caracteres voltava ao log a cada 5 min
+      rm -f "$EST"/recibos-[0-9a-f]*
       (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$ARF" "$HEAD_SHA") > "$EST/recibos.tmp.$$" 2>>"$LOG"
       mv -f "$EST/recibos.tmp.$$" "$EST/recibos-$ARF-$HEAD_SHA"
       R=$(tr '\n' ' ' < "$EST/recibos-$ARF-$HEAD_SHA" | head -c 400)
@@ -186,6 +210,26 @@ for _ in 1 2 3; do
       decidir; VER=$(veredito) ;;
     *) break ;;
   esac
+done
+AR40=$(linha AR)   # o ar que a decisão MEDIU (40 hex; vazio se não mediu)
+# ── liberar ULTRAPASSADO (rodada 2, B3): a atestação só vale enquanto o ar for ancestral dela. Quando o ar
+# a passa, ela não cobre nada que o ar já não cubra — e, esquecida no disco, virava base velha (o #4278).
+LIB_ATUAL=$(head -1 "$EST/liberar" 2>/dev/null)
+if [ -n "$AR40" ] && [[ "$LIB_ATUAL" =~ ^[0-9a-f]{40}$ ]] && [ "$LIB_ATUAL" != "$AR40" ] \
+   && git -C "$WT" merge-base --is-ancestor "$LIB_ATUAL" "$AR40" 2>/dev/null; then
+  rm -f "$EST/liberar"; log "liberar ${LIB_ATUAL:0:8} apagado: o ar (${AR40:0:8}) já o ultrapassou"
+fi
+# ── ar mudou SEM intenção deste vigia (rodada 2, M9): alguém publicou por fora (clique, sessão pelo MCP)
+if [ -n "$AR40" ]; then
+  AR_ULT=$(head -1 "$EST/ar-ultimo" 2>/dev/null)
+  if [ -n "$AR_ULT" ] && [ "$AR_ULT" != "$AR40" ] && [ ! -f "$EST/intencao" ]; then
+    log "JA_NO_AR por fora (ar ${AR_ULT:0:8}→${AR40:0:8})"
+  fi
+  [ "$AR_ULT" = "$AR40" ] || grava "$EST/ar-ultimo" "$AR40"
+fi
+# ── caches de outra main (rodada 2, M13): a decisão só lê `pendencias-<head>`/`recibos-<base>-<head>` do HEAD atual
+for c in "$EST"/pendencias-[0-9a-f]* "$EST"/recibos-[0-9a-f]*; do
+  [ -e "$c" ] && case "$c" in *"-$HEAD_SHA") ;; *) rm -f "$c" ;; esac
 done
 # camadas atestadas até a main (decisão limpa): o próximo PR julga a partir daqui, não do ar
 P=$(linha PISO); [ -n "$P" ] && [ "$P" != "$(cat "$EST/piso" 2>/dev/null)" ] && grava "$EST/piso" "$P"
@@ -239,13 +283,13 @@ if [ -f "$EST/alerta-divergente" ] && [ -n "$(ar_curto)" ] && [ "$(ar_curto)" !=
   log "fim do alerta de ar divergente ($(cat "$EST/alerta-divergente")) — ar=$(ar_curto)"; rm -f "$EST/alerta-divergente"
 fi
 
+[ "$VER" = MECANICA ] || fim_episodio "$VER" mecanica
 case "$VER" in
   RETIDO) retido_episodio "$(linha RETIDO)"; exit 0 ;;
   PUBLICAR) fim_episodio PUBLICAR ;;
   JA_NO_AR|NADA_A_PUBLICAR) fim_episodio "$VER"; rm -f "$EST/tentativa"; [ "$VER" = JA_NO_AR ] && rm -f "$EST/intencao"; exit 0 ;;
-  *) log "veredito ${VER:-vazio} — $(tr '\n' ' ' < "$EST/julgar.txt" | head -c 300)"
-     [ "$VER" = MECANICA ] && avisa_uma_vez "mecanica-$(date +%F)" "julgamento sem medida (MECANICA) — ver $LOG"
-     exit 0 ;;
+  MECANICA) episodio mecanica "$(sed -n 's/^  motivo: //p' "$EST/julgar.txt" | head -1 | cut -c1-200)"; exit 0 ;;
+  *) log "veredito ${VER:-vazio} — $(tr '\n' ' ' < "$EST/julgar.txt" | head -c 300)"; exit 0 ;;
 esac
 
 if [ "$INT_PENDENTE" = 1 ]; then   # (antes do backoff e da releitura de recibos: nem psql gasta)
@@ -281,7 +325,7 @@ falhou() {
 if case "$LIBERADO" in *recibos*) true ;; *) false ;; esac; then
   RB=$(linha RECIBOS_DE)
   RR=$( (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$RB" "$HEAD_SHA") 2>>"$LOG" | head -1)
-  [ "$RR" = 0 ] || { log "recibos relidos antes do disparo: veredito ${RR:-vazio} — não disparo ${HEAD_SHA:0:8}"; rm -f "$EST"/recibos-*; exit 0; }
+  [ "$RR" = 0 ] || { log "recibos relidos antes do disparo: veredito ${RR:-vazio} — não disparo ${HEAD_SHA:0:8}"; rm -f "$EST"/recibos-[0-9a-f]*; exit 0; }
 fi
 AR_ANTES=$(ar_curto)
 log "PUBLICAR ${AR_ANTES}..${HEAD_SHA:0:8} (tentativa $((N + 1)))${LIBERADO:+ liberado: $LIBERADO}"
@@ -389,6 +433,8 @@ for TENT in 1 2; do
   else RES="ERRO"
   fi
   log "claude ($TENT/2) rc=$CRC mcp=${MCP_ST:-?} usos=${USOS:-nenhum} custo=$(jq -r 'select(.type=="result") | .total_cost_usd // "?"' "$EST/claude.jsonl" 2>/dev/null | head -1) → $RES (modelo: ${TXT:-sem linha VIGIA})"
+  # o último stream que NÃO disparou fica guardado (rodada 2, M13): a 2ª chamada/o próximo tick sobrescrevem o claude.jsonl
+  case "$RES" in DISPARADO*) ;; *) cp -f "$EST/claude.jsonl" "$EST/claude-falha.jsonl" 2>/dev/null ;; esac
   # 2ª chamada só para falha comprovadamente ANTES do deploy (ERRO ⇒ CTRL=SEM_DEPLOY). needs-auth não se
   # resolve na hora: o CLI grava o mcp-needs-auth-cache e as chamadas seguintes nem tentam conectar.
   case "$RES" in ERRO) ;; *) break ;; esac
@@ -429,13 +475,14 @@ while [ $(( $(date +%s) - INI_AR )) -lt "$ESPERA_AR" ]; do
 done
 t=$(( $(date +%s) - INI_AR ))
 if [ "$(veredito)" = JA_NO_AR ]; then
-  rm -f "$EST/tentativa" "$EST/intencao"; log "PUBLICADO ${HEAD_SHA:0:8} — provado pelo ar em ${t}s"; exit 0
+  rm -f "$EST/tentativa" "$EST/intencao"; grava "$EST/ar-ultimo" "$HEAD_SHA"; log "PUBLICADO ${HEAD_SHA:0:8} — provado pelo ar em ${t}s"; exit 0
 fi
 if [ -z "$AR_AGORA" ] || [ "$AR_AGORA" = "$AR_ANTES" ]; then
   falhou "deploy disparado, mas o ar segue em $AR_ANTES após ${t}s"; exit 0   # intenção fica: o ar reconcilia
 fi
 # ── o ar MUDOU, mas não para a main: reconciliar o SHA que entrou (PR 3, Codex #9) ─────────────────────
 rm -f "$EST/tentativa" "$EST/intencao"
+A_FULL=$(git -C "$WT" rev-parse -q --verify "$AR_AGORA^{commit}" 2>/dev/null) && grava "$EST/ar-ultimo" "$A_FULL"
 classifica "$AR_AGORA" "$HEAD_SHA"
 [ "$CLASSE" = alvo ] && log "PUBLICADO ${HEAD_SHA:0:8} — ar=$AR_AGORA é o alvo (veredito $(veredito)) em ${t}s"
 exit 0

@@ -37,6 +37,15 @@ MARCADOR='FIM_APLICACAO_OK'
 LOG_DIR="${TMPDIR:-/tmp}"
 
 msg() { printf '%s\n' "$*" >&2; }
+# Recibo novo → os caches `recibos-<ar>-<head>` do vigia do Publish (scripts/lovable-vigia.sh) ficam velhos:
+# apagá-los faz o PRÓXIMO tick reler o banco, em vez de esperar os LP_CACHE_RECIBO_MIN (5 min) do cache.
+# Só os caches (glob hex): o `recibos-ultimo` é a memória do dedup do log. Nunca falha o apply.
+invalida_recibos_do_vigia() {
+  local v="${LP_VIGIA_ESTADO:-$HOME/.local/state/afiacao/lovable-vigia}"
+  [ -d "$v" ] || return 0
+  rm -f "$v"/recibos-[0-9a-f]* 2>/dev/null || true
+  msg "   cache de recibos do vigia invalidado ($v) — o próximo tick relê o banco"
+}
 morre() { msg "❌ $2"; exit "$1"; }
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
@@ -265,6 +274,7 @@ if [ "$RC" -eq 0 ] && [ "$TEM_MARCADOR" -eq 1 ]; then
     exit 0
   fi
   msg "✅ APLICADO — tentativa #$ID virou recibo, na mesma transação."
+  invalida_recibos_do_vigia
   msg "   log: $APPLY_OUT"
   exit 0
 fi
@@ -327,6 +337,7 @@ rm -f "$LOG_DIR/db-aplicar-pos.$$.log"
 
 if [ "$EST_POS" = "aplicada" ]; then
   msg "⚠️  o recibo #$ID está 'aplicada': o COMMIT CHEGOU e só a resposta se perdeu."
+  invalida_recibos_do_vigia
   msg "   Não reescrevi a linha. Confira o efeito por psql-ro antes de qualquer outra coisa."
   msg "   log: $APPLY_OUT"
   exit 0

@@ -319,6 +319,37 @@ sabota_dec piso 's/atestacao "\$PISO_ARQ" piso \&\& MIG_OK=1/false/' s_piso_mig 
 # filtro de teste/doc de edge desligado → RETIDO por *_test.ts
 sabota_dec teste_edge "s/^NAO_CAMADA=.*/NAO_CAMADA='^\$'/" s_nada 0 PUBLICAR "$ETESTE"
 
+# ═══ Rodada 2 — PR A ═══════════════════════════════════════════════════════════════════════════
+# B3: liberar que o ar já ULTRAPASSOU não é "liberado para SHA antigo" (ar=FRONT, liberar=BASE)
+# shellcheck disable=SC2329
+s_lib_ultra() { semeia "$FRONT" x; vigia; rm -f "$F/vigia"/*; echo "$BASE" > "$F/vigia/liberar"; rec "$FRONT" "$FRONT2" 1; }
+CENARIO=dec_lib_ultrapassado; s_lib_ultra; decide 10 RETIDO "$FRONT2" \
+  && { tem_dec "liberar ${BASE:0:8} ultrapassado"; sem_dec "liberado para SHA antigo"; }
+# falsificação por MENSAGEM (rc e veredito são os mesmos nos dois lados): o sabotado volta a dizer "SHA antigo"
+sabota_msg() {  # <nome> <sed> <semeador> <texto-que-o-real-diz> <rc> <veredito> <head>
+  local nome="$1" expr="$2" sem="$3" txt="$4" s="$base/sabm-$1.sh" out; shift 4
+  sed "$expr" "$ALVO" > "$s"
+  if cmp -s "$ALVO" "$s"; then echo "FALHOU [sabm-$nome]: a sabotagem não pegou (o sed não casou)"; fail=1; return; fi
+  CENARIO="controle-msg-$nome"; "$sem"; decide "$@" || return
+  printf '%s' "$DEC_OUT" | grep -qF -- "$txt" || { echo "FALHOU [controle-msg-$nome]: o real não disse '$txt'"; fail=1; return; }
+  "$sem"; out=$( (decide "$@" "$s"; printf '%s' "$DEC_OUT") 2>&1 )
+  if printf '%s' "$out" | grep -qF -- "$txt"; then echo "FALHOU [sabm-$nome]: cópia sabotada ainda disse '$txt'"; fail=1; fi
+}
+# shellcheck disable=SC2016  # os $ são LITERAIS do fonte sabotado
+sabota_msg lib_ultra 's/if \[ "\$L" != "\$AR" \] \&\& git merge-base --is-ancestor "\$L" "\$AR" 2>\/dev\/null; then/if false; then/' \
+  s_lib_ultra "liberar ${BASE:0:8} ultrapassado" 10 RETIDO "$FRONT2"
+# B3 no ramo de edge sem versão: o helper mudou (L→ar) e VOLTOU aos bytes de L em HEAD — a edge servida é a
+# do ar; o liberar velho não pode atestar (diff L..HEAD vazio mentiria: a edge precisa de deploy)
+git checkout -q -b semvolta "$FRONT2"; mkdir -p supabase/functions/k; echo v1 > supabase/functions/k/index.ts
+git add -A; git commit -qm k1; K1=$(git rev-parse HEAD)
+echo v2 > supabase/functions/k/index.ts; git add -A; git commit -qm k2; K2=$(git rev-parse HEAD)
+echo v1 > supabase/functions/k/index.ts; KH=$(c src/k.ts kh); git checkout -q main
+# shellcheck disable=SC2329
+s_semv_volta() { semeia "$K2" x; vigia; rm -f "$F/vigia"/*; echo "$K1" > "$F/vigia/liberar"; echo 0 > "$F/vigia/pendencias-$KH"; }
+CENARIO=dec_semv_lib_ultrapassado; s_semv_volta; decide 10 RETIDO "$KH" && tem_dec "RETIDO=edge:supabase/functions/k/index.ts"
+# shellcheck disable=SC2016
+sabota_dec semv_ultra 's/^    \[ -n "\$L" \] \&\& ! git merge-base --is-ancestor "\$AR" "\$L" 2>\/dev\/null \&\& L=""$/    true/' s_semv_volta 10 RETIDO "$KH"
+
 # Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
 # numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.
 sabota() { # sabota <nome> <sed> <semeador> <rc> <regex> <sha> — o semeador roda antes de CADA lado
@@ -346,6 +377,13 @@ sabota retido 's/^    1) retido migration "\$MIG" ;;/    1) true ;;/' \
 # o ar vira no meio da espera, mas a cópia lê o ar uma vez só → TIMEOUT
 # shellcheck disable=SC2016
 sabota rele 's/if AR=\$(ar_lido); then/if AR=${AR0:=$(ar_lido)}; then/' s_vira 0 "NO_AR=$FRONT2" "$FRONT"
+# M6 (rodada 2): TIMEOUT com o batimento do vigia velho diz que o vigia está parado; fresco = TIMEOUT cru
+# shellcheck disable=SC2329
+s_bat_velho() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; echo $(( $(date +%s) - 1500 )) > "$F/vigia/batimento"; }
+CENARIO=esperar_bat_fresco; semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; date +%s > "$F/vigia/batimento"
+                            espera 30 TIMEOUT "$FRONT"
+# shellcheck disable=SC2016
+sabota bat 's/\[ "\$P" -gt "\${LP_BATIMENTO_VELHO_S:-300}" \] \&\& sai 30/false \&\& sai 30/' s_bat_velho 30 'TIMEOUT=vigia parado há 2[45] min.*' "$FRONT"
 # front revertido sem sair → a cópia confirma NADA_A_PUBLICAR com exit 0 (verde falso)
 git push -q origin "$C8:refs/heads/main" -f 2>/dev/null
 # shellcheck disable=SC2329
