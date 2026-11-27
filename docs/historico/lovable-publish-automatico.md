@@ -375,3 +375,29 @@ esse número; o modelo **não** sai do disparo agora.
   - **Abaixo de 95%:** o próximo PR tira o LLM do disparo e chama o MCP do Lovable direto.
   - Com denominador pequeno (o vigia só chama o claude quando há o que publicar), registrar o número com o
     denominador e decidir explicitamente. "Ninguém reclamou" não é sinal.
+
+## Fecho do roteiro (2026-11-27): item 12 decidido e base dos recibos corrigida
+
+**Item 12 decidido em 27/11, sem esperar 03/12.** O founder pediu para fechar o roteiro.
+- Medição: `TAXA=85.7% acertos=6 denominador=7 legado_excluido=4 corte95=NAO_ATINGIDO` (7 dias).
+- A única falha é o `NEEDS_AUTH` de 25/11 23:05, quando o token do MCP sumiu do Keychain compartilhado.
+  Com `mcp=connected` foram 6/6 `DISPARADO`. Tirar o LLM **não** cura essa falha: a chamada direta ao MCP
+  usa o mesmo OAuth. A causa já foi tratada no #4193 (store próprio do vigia).
+- **Decisão: o modelo fica no disparo.** É um desvio explícito do corte pré-registrado (<95% → tirar o LLM):
+  o corte media "o modelo erra", e o erro medido é de autenticação. Reabre se aparecer uma falha com
+  `mcp=connected` que não seja `DISPARADO`/`NAO_SINCRONIZADO`. Comando para reabrir: `scripts/vigia-taxa-1a-chamada.sh`.
+
+**Por que a liberação por recibo nunca tinha disparado (bug, corrigido neste PR).** O
+`lovable-publish.sh` escolhia como base dos recibos o arquivo `liberar` antes do ar, mesmo quando o
+`liberar` era MAIS VELHO. O `liberar` de 26/11 08:35 (`39ea6374`) ficou no disco, e o intervalo
+`39ea6374..HEAD` passou a incluir 2 migrations aplicadas fora do envelope e já servidas
+(`20261126190127_sales_orders_claim_envio_conferido`, `20261127120100_pedido_edicao_omie_posse_duravel`).
+Toda leitura de recibo devolvia `1` (`sem_recibo`), e o front ficava RETIDO até um Publish por fora.
+- Correção: a base é o MAIS NOVO entre ar, `liberar` e piso, desde que seja ancestral de HEAD.
+- Não abre fail-open: o `PEND`, que decide se há migration pendente, já parte do ar. O recibo só exigia a
+  mais o que estava antes dele.
+- Teste `dec_recibo_lib_velho` (ar à frente do `liberar`): verde com a correção, vermelho (rc=12
+  `PRECISA_RECIBOS`) com o código antigo, em `C` e em `pt_BR.UTF-8`.
+- Codex não consultado: cota em 99% até 02/12 (Caminho B).
+- A prova em produção é a próxima linha `LIBERADO=recibos` no `vigia.log`
+  (`grep LIBERADO=recibos ~/.local/state/afiacao/lovable-vigia/vigia.log`).
