@@ -179,7 +179,8 @@ export function useSalesOrderEdit() {
           resolverPendente(id, t);
         } else {
           pendenteAberto = true;
-          if (d === 'divergente') marcarDivergente(id);
+          // Só se o token AINDA está pendente: outra abertura pode já tê-lo confirmado enquanto esta esperava (Codex r7).
+          if (d === 'divergente' && tokensPendentes(id).includes(t)) marcarDivergente(id);
         }
         if (velha()) return;
       }
