@@ -205,3 +205,37 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 - Troca de contato principal em 2 requisições, não atômica (Codex P1, pré-existente; 0 linhas hoje).
 - `customer_contacts`: `anon` ainda tem INSERT/DELETE de tabela (ACL `arwdDxtm` herdada; medido 2026-11-26).
   Hoje só a RLS de escrita (exige staff) segura isso → revogar de `anon`.
+
+## Fatia 4b-1 — servidor (migration `20261126230000`)
+- **L6 fechada:** `contato_cliente_operacional` perdeu o ramo "próprio" (`a.cid = v_uid`). Como o chamador é sempre
+  staff, ele só valia para pedido com o vendedor como titular (fallback do front, 19 pedidos). **Codex P1:** titular
+  staff (papel ou flag) também deixa de contar como carteira para quem não é gestão, porque o snapshot é do comprador.
+  Medido em prod: 1 staff dentro de uma carteira, 12 pedidos que a dona dela lia sem registro. Agora vão para o ledger.
+- **anon fora** (REVOKE ALL) de `addresses`, `customer_contacts`, `cliente_grupos`, `cliente_grupo_membros` e
+  `v_grupo_contas_receber_por_doc`. O ACL vinha herdado; até aqui só a RLS segurava.
+- **`v_grupo_contatos`** lê o endereço da `v_endereco_contato`: a rua sai NULL fora da carteira, e cidade/UF seguem.
+  Continua `security_invoker=true`. Latente (Codex P2): quem chama como `service_role` sem `sub` passa a ver cidade/UF
+  NULL. Não há consumidor desse tipo e os grupos estão vazios em prod.
+- **`v_perfil_equipe` por papel:** sai a flag `is_employee`. O ex-funcionário com papel removido sai do diretório.
+  Prod: 0 perfis com a flag sem papel, md5 igual antes/depois e 430 → 9 ms (ensaio como farmer, rollback).
+  Lacuna de produto, não de servidor: não há fluxo de desligamento. Tirar o papel não tira a flag, `commercial_roles`
+  nem a carteira; hoje se faz à mão no banco.
+- **Decisões registradas:**
+  - documento do membro do grupo no CR: quem tem acesso financeiro vê (founder, 2026-11-26);
+  - `cobranca_regua_hoje`: "dona" (`carteira_assignments` eligible) ⊆ carteira e já filtra `gestão OR dona`, então basta;
+  - `resolver_cliente_por_telefone` (telefonia) e `cliente_por_documento` (Omie→perfil, só uuid): exceções no `COMMENT`
+    e em `telefonia.md`.
+- **Prova:** `db/test-clientes-pii-fatia4b1-servidor.sh`, 113 ok em C e pt_BR.UTF-8, com 22 sabotagens, cada uma com o
+  vermelho exato. Ensaio de desempenho em `db/diagnostico/ensaio-clientes-pii-fatia4b1-perf.sql`.
+
+## Fatia 4b-2 — o que falta (front + corte)
+- `addresses`: migrar `Addresses.tsx:108` (`select('*')`), `RecurringSchedules.tsx:82`, `useProfile.ts:63` (head `*`)
+  e `useCustomerDashboard.ts:28` (sem filtro de dono). Depois do Publish, corte por coluna: rua/CEP só pela view.
+- Titular: `submitOrder.ts:268/:440`, `submitQuote.ts:76/:128` e `helpers.ts:154` gravam `customerUserId || user.id`.
+  Staff sem cliente → erro, não fallback.
+- Contato principal: `useCustomerContacts.ts:53-85` usa 2 requisições → RPC atômica.
+- Perfil: o 23505 do documento duplicado (`Profile.tsx:186`) confirma que o documento existe → mensagem própria,
+  sem eco.
+- Edges: `omie-cliente` `pesquisar_clientes`/`consultar_cliente` devolvem PII de qualquer cliente Omie a qualquer staff;
+  `analyze-unified-order:523` lê `email, phone` sem usar.
+
