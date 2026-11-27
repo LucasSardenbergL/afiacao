@@ -3585,6 +3585,33 @@ export type Database = {
         }
         Relationships: []
       }
+      db_migracoes_adiadas: {
+        Row: {
+          adiada_em: string
+          arquivo: string
+          ator: string
+          motivo: string
+          revogada_em: string | null
+          sha256: string
+        }
+        Insert: {
+          adiada_em?: string
+          arquivo: string
+          ator?: string
+          motivo: string
+          revogada_em?: string | null
+          sha256: string
+        }
+        Update: {
+          adiada_em?: string
+          arquivo?: string
+          ator?: string
+          motivo?: string
+          revogada_em?: string | null
+          sha256?: string
+        }
+        Relationships: []
+      }
       default_prices: {
         Row: {
           created_at: string
