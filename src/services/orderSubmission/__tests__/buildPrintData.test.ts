@@ -244,6 +244,17 @@ describe('buildPrintData', () => {
     expect(JSON.stringify(out)).not.toContain('pendente ERP');
   });
 
+  it('L2-b: Oben pendente e Colacor confirmada → só a via da Colacor', () => {
+    const out = buildPrintData(makeParams({
+      obenProductItems: [obenItem()],
+      colacorProductItems: [colacorItem()],
+      results: ['PV Oben (bloqueado: crédito)', 'PV Colacor 456'],
+      contasConfirmadas: { oben: false, colacor: true, afiacao: true },
+    }));
+    expect(out.map((d) => d.orderNumber)).toEqual(['456']);
+    expect(out[0].isOben).toBe(false);
+  });
+
   it('L2-b: controle — tudo confirmado imprime as três vias', () => {
     const out = buildPrintData(makeParams({
       obenProductItems: [obenItem()],
