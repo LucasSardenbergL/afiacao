@@ -193,7 +193,7 @@ case "$SAB" in
       trocar "$MIG" "    RAISE EXCEPTION 'POSCONDICAO omie-os: leitura do espelho fora da regra de gestor';" "    NULL;"
     fi ;;
   sequencia_aberta)
-    trocar "$MIG" "  EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC', pg_get_serial_sequence('public.omie_os_sync_runs', 'id'));" "" ;;
+    trocar "$MIG" "    EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM %s', pg_get_serial_sequence('public.omie_os_sync_runs', 'id'), r.papel);" "    NULL;" ;;
   staging_legivel)
     trocar "$MIG" "  GRANT SELECT ON public.omie_os_sync_runs, public.omie_os_espelho TO authenticated;" \
       "  GRANT SELECT ON public.omie_os_sync_runs, public.omie_os_espelho, public.omie_os_staging TO authenticated;" ;;
