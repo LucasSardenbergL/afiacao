@@ -8834,6 +8834,51 @@ export type Database = {
         }
         Relationships: []
       }
+      funcionario_desligamentos: {
+        Row: {
+          ban_em: string | null
+          ban_erro: string | null
+          ban_status: string
+          commercial_role: string | null
+          criado_em: string
+          desligado_por: string
+          id: string
+          motivo: string
+          novo_dono_user_id: string | null
+          papeis_removidos: string[]
+          resumo: Json
+          user_id: string
+        }
+        Insert: {
+          ban_em?: string | null
+          ban_erro?: string | null
+          ban_status?: string
+          commercial_role?: string | null
+          criado_em?: string
+          desligado_por: string
+          id?: string
+          motivo: string
+          novo_dono_user_id?: string | null
+          papeis_removidos?: string[]
+          resumo?: Json
+          user_id: string
+        }
+        Update: {
+          ban_em?: string | null
+          ban_erro?: string | null
+          ban_status?: string
+          commercial_role?: string | null
+          criado_em?: string
+          desligado_por?: string
+          id?: string
+          motivo?: string
+          novo_dono_user_id?: string | null
+          papeis_removidos?: string[]
+          resumo?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       gamification_scores: {
         Row: {
           consistency_score: number
@@ -12586,6 +12631,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pedido_edicao_omie_tentativa: {
+        Row: {
+          account: string
+          ator: string | null
+          desfecho: string | null
+          desfecho_em: string | null
+          despachada_em: string | null
+          motivo: string | null
+          omie_pedido_id: number
+          reivindicada_em: string
+          resolvida_por: string | null
+          sales_order_id: string
+          token: string
+        }
+        Insert: {
+          account: string
+          ator?: string | null
+          desfecho?: string | null
+          desfecho_em?: string | null
+          despachada_em?: string | null
+          motivo?: string | null
+          omie_pedido_id: number
+          reivindicada_em?: string
+          resolvida_por?: string | null
+          sales_order_id: string
+          token: string
+        }
+        Update: {
+          account?: string
+          ator?: string | null
+          desfecho?: string | null
+          desfecho_em?: string | null
+          despachada_em?: string | null
+          motivo?: string | null
+          omie_pedido_id?: number
+          reivindicada_em?: string
+          resolvida_por?: string | null
+          sales_order_id?: string
+          token?: string
+        }
+        Relationships: []
       }
       pedido_portal_ajuste_email: {
         Row: {
@@ -27363,19 +27450,34 @@ export type Database = {
         Args: { p_erro: string; p_ids: number[] }
         Returns: number
       }
-      aplicar_edicao_pedido_omie: {
-        Args: {
-          p_items: Json
-          p_itens: Json
-          p_lido_em: string
-          p_notes: string
-          p_omie_payload: Json
-          p_omie_response: Json
-          p_sales_order_id: string
-          p_total: number
-        }
-        Returns: Json
-      }
+      aplicar_edicao_pedido_omie:
+        | {
+            Args: {
+              p_items: Json
+              p_itens: Json
+              p_lido_em: string
+              p_notes: string
+              p_omie_payload: Json
+              p_omie_response: Json
+              p_sales_order_id: string
+              p_total: number
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_items: Json
+              p_itens: Json
+              p_lido_em: string
+              p_notes: string
+              p_omie_payload: Json
+              p_omie_response: Json
+              p_sales_order_id: string
+              p_token: string
+              p_total: number
+            }
+            Returns: Json
+          }
       aplicar_exclusao_fornecedores: { Args: never; Returns: Json }
       aplicar_parametros_automatico_diario: {
         Args: { p_empresa: string }
@@ -28233,6 +28335,10 @@ export type Database = {
       desconto_backfill_aplicar: { Args: { p_linhas: Json }; Returns: Json }
       desfazer_contato_radar: { Args: { p_id: string }; Returns: Json }
       desfazer_contato_rota: { Args: { p_id: string }; Returns: Json }
+      desligar_funcionario: {
+        Args: { p_motivo: string; p_novo_dono: string; p_user_id: string }
+        Returns: Json
+      }
       despinar_parametro: {
         Args: { p_empresa: string; p_sku: string }
         Returns: boolean
@@ -29463,6 +29569,16 @@ export type Database = {
           total: number
         }[]
       }
+      pedido_edicao_omie_despachar: {
+        Args: {
+          p_gemeo_presente: boolean
+          p_gemeo_status: string
+          p_sales_order_id: string
+          p_token: string
+          p_versao: string
+        }
+        Returns: string
+      }
       pedido_edicao_omie_encerrar_envio: {
         Args: { p_sales_order_id: string; p_token: string }
         Returns: string
@@ -29471,8 +29587,51 @@ export type Database = {
         Args: { p_sales_order_id: string }
         Returns: Json
       }
+      pedido_edicao_omie_exige_equipe: {
+        Args: { p_so_master: boolean }
+        Returns: string
+      }
+      pedido_edicao_omie_liberar: {
+        Args: { p_token: string }
+        Returns: boolean
+      }
+      pedido_edicao_omie_marcar_divergente: {
+        Args: { p_motivo: string; p_token: string }
+        Returns: boolean
+      }
+      pedido_edicao_omie_registrar_revisao: {
+        Args: {
+          p_codigo_parcela: string
+          p_company: string
+          p_contexto: string
+          p_itens: Json
+          p_omie_codigo_cliente: number
+          p_parcela_origem: string
+          p_sales_order_id: string
+          p_token: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      pedido_edicao_omie_reivindicar: {
+        Args: {
+          p_ator?: string
+          p_sales_order_id: string
+          p_token: string
+          p_versao: string
+        }
+        Returns: string
+      }
       pedido_edicao_omie_resolver: {
         Args: { p_sales_order_id: string; p_token: string }
+        Returns: string
+      }
+      pedido_edicao_omie_situacao: {
+        Args: {
+          p_desfecho: string
+          p_despachada_em: string
+          p_reivindicada_em: string
+        }
         Returns: string
       }
       pedido_por_checkout: {
@@ -30451,6 +30610,10 @@ export type Database = {
         }
         Returns: number
       }
+      registrar_ban_desligamento: {
+        Args: { p_desligamento_id: string; p_erro: string; p_ok: boolean }
+        Returns: undefined
+      }
       registrar_contato_radar: {
         Args: {
           p_acao: string
@@ -30921,6 +31084,17 @@ export type Database = {
         }[]
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
+      sales_order_excluir_conferido: {
+        Args: {
+          p_account: string
+          p_gemeo_presente: boolean
+          p_gemeo_status: string
+          p_omie_pedido_id: number
+          p_sales_order_id: string
+          p_somente_orcamento: boolean
+        }
+        Returns: string
+      }
       sales_order_excluir_sem_envio: {
         Args: { p_sales_order_id: string; p_somente_orcamento?: boolean }
         Returns: string

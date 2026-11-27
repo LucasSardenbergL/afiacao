@@ -327,3 +327,63 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
   - **Dependência:** o `submitOrder` só fecha com o LucasSardenbergL/afiacao#4236.
 - **Fica de fora, registrado:** `process-recurring-orders:96` faz `select('*')` com service_role. O corte não
   o afeta, e trocar exigiria um deploy de edge sem ganho.
+
+## Fatia 4b-3 — as 4 vias preexistentes (busca do Novo Pedido, LLM, impressão, titular da OS)
+- **Regra única:** `omie-cliente/pii-carteira.ts` foi para `_shared/pii-carteira.ts`, agora com a leitura
+  `codigosComContatoVisivel(admin, doChamador, chamadorId, account, codigos)`:
+  - gestão (`pode_ver_carteira_completa`) → "todos";
+  - senão, o mapa FRESCO da conta pedida e `v_perfil_contato.contato_visivel` com o JWT do chamador;
+  - qualquer erro, cron ou código sem vínculo → mascara.
+  - A `omie-cliente` (v1.14, sem mudança de comportamento) e a `omie-vendas-sync` usam a mesma.
+- **1. `omie-vendas-sync` v1.57 `listar_clientes`:** fora da carteira saem documento, endereço, telefone,
+  contato e a razão/fantasia FISCAL (que carregam o CPF do MEI), com `contato_visivel: false`
+  (`pii-busca.ts`).
+  - Ação nova **`revelar_cliente {codigo_cliente}`**. Na seleção, o front pede o cadastro inteiro
+    (`revelar-cliente.ts`, chamado no `selectCustomer`), porque validar vendedor, achar a conta Colacor e o
+    autocadastro dependem do documento.
+  - Na carteira ou para a gestão, abre direto. Fora dela, passa pela `contato_cliente_operacional('novo_pedido')`
+    com o JWT do chamador: grava o ledger, 1 cliente por chamada, teto de 80/dia no banco (54000).
+  - Só abre se o `customer_user_id` da RPC for o dono do código no mapa fresco E o documento local casar
+    ESTRITO com o da Omie (`pedidoEDesteCadastro`, a prova da impressão).
+  - Falha → a seleção para com a mensagem do servidor, nunca segue mascarada.
+  - Medido em prod: mapa oben com 15.795 códigos 1:1 e 0 perfis sem documento.
+  - Os outros consumidores da busca (`useBuscaClienteOmie`/Tarefas e `FarmerCalls`) só exibem; fora da
+    carteira o telefone some, como já acontece no perfil local mascarado.
+- **2. `analyze-unified-order` v1.15:** o documento não vai mais ao LLM, de NENHUM candidato. A IA devolve o
+  documento que está no pedido e o casamento roda no servidor. O `index_test` agora exige que o canário do
+  documento NÃO apareça no system nem nas mensagens.
+- **3. `SalesPrintDashboard`:** `orders.select('*')` → `id, user_id, created_at, items, total, notes, status`.
+  O `orders.address` chegava ao navegador antes do ledger e nada o lia. O endereço da OS impressa vem dos
+  `enderecos` da `contato_cliente_operacional(ordem_servico, lista_os)`.
+- **4. `omie-sync` v1.20 `sync_order`:** o código Omie (colacor_sc) da OS tem de ser do titular
+  (`vinculo-os.ts`), conferido ANTES de qualquer efeito na Omie; senão 400 com `motivo`.
+  - Vale o dono no mapa fresco.
+  - Sem linha no mapa (cliente recém-criado na Afiação), vale o `cnpj_cpf` da Omie para o código casando
+    estrito com o documento do perfil.
+  - Leitura com erro → recusa.
+  - O `omieService` passa a mostrar a mensagem do corpo do 400, não o "non-2xx".
+  - Medido: nenhum perfil do mapa oben tem o mesmo documento com OUTRO usuário no mapa colacor_sc, então os
+    aliases fiscais não são recusados. Só 7 OS em `omie_ordens_servico` (última em 2026-02-26).
+- **Provas:**
+  - Deno: `_shared/pii-carteira_test` (+3, com client fake), `pii-busca_test` (6), `vinculo-os_test` (7).
+  - vitest: `revelar-cliente.test` (4).
+  - Falsificação com controle verde na mesma invocação: 8 sabotagens, uma por camada, todas vermelhas:
+    - fiscal mantida;
+    - sem `sem_vinculo`;
+    - código de outro cliente aceito;
+    - código da Omie não conferido;
+    - mapa da conta errada;
+    - `contato_visivel` ignorado;
+    - documento de volta ao prompt;
+    - front aceitando a resposta mascarada.
+- **Codex:** não consultado. A cota estava em 98% (exit 79, sensor local, janela reabre 02/12): Caminho B,
+  com a régua escrita no PR.
+- **Ordem de deploy:**
+  - Publish ANTES da `omie-vendas-sync` v1.57. O front novo só chama `revelar_cliente` com
+    `contato_visivel === false`, que a v1.56 não manda. O front velho com a v1.57 perderia o documento do
+    cliente fora da carteira na seleção.
+  - `omie-cliente` v1.14, `analyze-unified-order` v1.15 e `omie-sync` v1.20 são independentes.
+- **Abertos (fora desta fatia):**
+  - `omie-vendas-sync` `buscar_cliente` e `omie-sync` `buscar_cliente_por_documento` confirmam código, razão e
+    vendedor a quem já tem o documento: oráculo de existência, sem contato (preexistente).
+  - O rascunho local do Novo Pedido guarda o cliente revelado (preexistente).

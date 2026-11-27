@@ -113,6 +113,9 @@ export function SalesOrderDetailSheet({
   const leituraDesconto = order ? descontosDoPainel(order, descontosItens) : null;
   const desconto = order && leituraDesconto ? resolverDescontoCupom(order.items || [], leituraDesconto.leitura, order.total) : null;
   const quebra = desconto && desconto.quebra ? desconto : null;
+  // Desconto apurado que NÃO fecha com o total: as linhas ficam brutas sob um total líquido — a
+  // diferença precisa estar dita na tela, não só no toast do cupom (revisão /sales #23).
+  const divergencia = desconto && !desconto.quebra ? desconto.divergencia ?? null : null;
   const falhaDesconto = leituraDesconto?.falha ?? null;
   // Cupom/WhatsApp não saem com itens ilegíveis nem como outra empresa — a mesma recusa do clique.
   const motivoBloqueio = order ? motivoSemDocumento(order) : null;
@@ -233,6 +236,13 @@ export function SalesOrderDetailSheet({
               {/* Desconto dos itens que não se conseguiu ler: a tela de hoje, e não "sem desconto" */}
               {falhaDesconto && (
                 <AvisoLeituraFalhou oque="o desconto dos itens" estado={falhaDesconto} testId="aviso-desconto-itens" />
+              )}
+
+              {divergencia && (
+                <p role="status" data-testid="aviso-desconto-divergente" className="text-xs text-status-warning">
+                  Há {fmt(divergencia.apurado)} de desconto nos itens que não fecha com o total gravado
+                  ({fmt(divergencia.totalGravado)}). Os itens aparecem pelo valor bruto.
+                </p>
               )}
 
               {/* Totais */}

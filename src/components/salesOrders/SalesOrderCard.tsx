@@ -14,7 +14,10 @@ import { formatPrecoOuAusente } from '@/lib/format';
 import { formatarDataPedido, horaDoPedido } from '@/lib/pedido/data-pedido';
 import { ORDER_STATUS, type OrderStatus } from '@/types';
 import { track } from '@/lib/analytics';
+import { useLenteAtiva } from '@/lib/impersonation/useLenteAtiva';
 import { chaveDaLinha, podeEditarPedido, podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
+
+const EXCLUSAO_NA_LENTE = { ok: false, motivo: 'Na lente "Ver como" a exclusão fica desligada (somente leitura).' } as const;
 
 type AcaoPedido = 'compartilhar' | 'imprimir' | 'editar' | 'excluir';
 
@@ -146,7 +149,10 @@ export const SalesOrderCard = memo(function SalesOrderCard({
   }, []);
   const isAfiacao = order.origin === 'afiacao';
   // A seleção só serve à exclusão em lote: só entra quem a edge pode excluir.
-  const exclusao = podeExcluirPedido(order);
+  // Na lente "Ver como" a escrita é barrada pelo guard: oferecer "Excluir" só tiraria a linha da tela
+  // e falharia depois (revisão /sales #20).
+  const naLente = useLenteAtiva();
+  const exclusao = naLente ? EXCLUSAO_NA_LENTE : podeExcluirPedido(order);
   const isSelectable = exclusao.ok;
   const podeEditar = podeEditarPedido(order);
   // Afiação usa o vocabulário de ORDER_STATUS; o tom (cor só no que pede atenção) é o mesmo da venda.
@@ -188,7 +194,7 @@ export const SalesOrderCard = memo(function SalesOrderCard({
       role="row"
       tabIndex={focavel ? 0 : -1}
       data-linha-pedido={chave}
-      aria-label={`${nomeAcessivel}, ${status.label}, ${formatPrecoOuAusente(Number(order.total))}`}
+      aria-label={`${nomeAcessivel}, ${status.label}, ${formatPrecoOuAusente(order.total)}`}
       className={cn(
         GRADE_LINHA_PEDIDO,
         'group gap-y-1 px-3 py-2.5 transition-colors md:py-2',
@@ -286,7 +292,7 @@ export const SalesOrderCard = memo(function SalesOrderCard({
       </div>
 
       <div role="cell" className="[grid-area:total] text-right">
-        <p className="font-tabular text-sm font-semibold">{formatPrecoOuAusente(Number(order.total))}</p>
+        <p className="font-tabular text-sm font-semibold">{formatPrecoOuAusente(order.total)}</p>
         {itens && <p className="text-[11px] leading-4 text-muted-foreground">{itens}</p>}
       </div>
 

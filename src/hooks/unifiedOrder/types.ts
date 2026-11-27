@@ -141,7 +141,12 @@ export interface OmieCustomer {
   /** Idem para o nome fantasia: o original, só quando a máscara o mudou; só para o payload do autocadastro. */
   fantasia_fiscal?: string;
   nome_fantasia: string;
+  /** Onda D 4b-3: `null` na busca quando o cliente está fora da carteira (`contato_visivel === false`) —
+   *  a seleção abre o cadastro por `revelar_cliente` (ledger `novo_pedido`). */
   cnpj_cpf: string;
+  /** `false` = a busca mascarou documento, telefone, endereço e contato (fora da carteira/cobertura).
+   *  Ausente = edge antiga, cadastro inteiro. */
+  contato_visivel?: boolean;
   codigo_vendedor: number | null;
   local_user_id?: string | null;
   codigo_cliente_colacor?: number | null;

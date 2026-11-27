@@ -1,2 +1,0 @@
-{ "formato": "deploy-ordem/1",
-  "depoisDe": [{ "edge": "pedido-programado-enviar", "motivo": "a v1.53 recusa o envio conferido LANÇANDO [pedido_alterado] (500); o programado v1.0 lê isso como erro genérico pós-fetch e marca [OMIE-INCERTO] — trava o Cancelar de um PV que não existe. Só a v1.1 reconhece a marca", "pr": 4250 }] }

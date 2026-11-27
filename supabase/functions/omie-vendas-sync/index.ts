@@ -9,6 +9,8 @@ import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type Lista
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { fantasiaParaExibicao, fontesDaRazaoFiscalVendas, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { codigosComContatoVisivel } from "../_shared/pii-carteira.ts";
+import { decidirRevelacao, lerCodigoRevelar, mascararLinhaBusca } from "./pii-busca.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
@@ -706,8 +708,8 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
 }
 
 // Buscar/listar clientes na empresa de vendas
-async function listarClientesVendas(searchTerm: string, account: Account = "oben") {
-  const results: Array<{
+/** Uma linha da busca de cliente (`listar_clientes`/`revelar_cliente`), ANTES do corte da carteira (pii-busca.ts). */
+type LinhaBuscaCliente = {
     codigo_cliente: number;
     razao_social: string;
     /** Só com o CPF de MEI na razão: vai ao payload do autocadastro, nunca à exibição (razaoParaExibicao). */
@@ -727,7 +729,31 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     contato: string;
     tags: string[];
     atividade: string;
-  }> = [];
+  };
+
+function linhaDaBusca(c: OmieClienteCadastro): LinhaBuscaCliente {
+  return {
+    codigo_cliente: c.codigo_cliente_omie ?? 0,
+    ...razaoParaExibicao(c.razao_social || ""),
+    ...fantasiaParaExibicao(c.nome_fantasia || ""),
+    cnpj_cpf: c.cnpj_cpf || "",
+    codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
+    endereco: c.endereco || "",
+    endereco_numero: c.endereco_numero || "",
+    complemento: c.complemento || "",
+    bairro: c.bairro || "",
+    cidade: c.cidade || "",
+    estado: c.estado || "",
+    cep: c.cep || "",
+    telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
+    contato: c.contato || "",
+    tags: (c.tags || []).map((t) => typeof t === 'string' ? t : (t.tag ?? '')),
+    atividade: c.atividade || "",
+  };
+}
+
+async function listarClientesVendas(searchTerm: string, account: Account = "oben") {
+  const results: LinhaBuscaCliente[] = [];
 
   // Try searching by name first
   try {
@@ -747,24 +773,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     const clientes = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
     if (clientes) {
       for (const c of clientes) {
-            results.push({
-              codigo_cliente: c.codigo_cliente_omie ?? 0,
-              ...razaoParaExibicao(c.razao_social || ""),
-              ...fantasiaParaExibicao(c.nome_fantasia || ""),
-              cnpj_cpf: c.cnpj_cpf || "",
-              codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
-              endereco: c.endereco || "",
-              endereco_numero: c.endereco_numero || "",
-              complemento: c.complemento || "",
-              bairro: c.bairro || "",
-              cidade: c.cidade || "",
-              estado: c.estado || "",
-              cep: c.cep || "",
-              telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
-              contato: c.contato || "",
-              tags: (c.tags || []).map((t) => typeof t === 'string' ? t : (t.tag ?? '')),
-              atividade: c.atividade || "",
-            });
+            results.push(linhaDaBusca(c));
       }
     }
   } catch (e) {
@@ -792,24 +801,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
       if (clientes2) {
         for (const c of clientes2) {
           if (!results.find(r => r.codigo_cliente === c.codigo_cliente_omie)) {
-            results.push({
-              codigo_cliente: c.codigo_cliente_omie ?? 0,
-              ...razaoParaExibicao(c.razao_social || ""),
-              ...fantasiaParaExibicao(c.nome_fantasia || ""),
-              cnpj_cpf: c.cnpj_cpf || "",
-              codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
-              endereco: c.endereco || "",
-              endereco_numero: c.endereco_numero || "",
-              complemento: c.complemento || "",
-              bairro: c.bairro || "",
-              cidade: c.cidade || "",
-              estado: c.estado || "",
-              cep: c.cep || "",
-              telefone: c.telefone1_ddd && c.telefone1_numero ? `(${c.telefone1_ddd}) ${c.telefone1_numero}` : "",
-              contato: c.contato || "",
-              tags: (c.tags || []).map((t) => typeof t === 'string' ? t : (t.tag ?? '')),
-              atividade: c.atividade || "",
-            });
+            results.push(linhaDaBusca(c));
           }
         }
       }
@@ -2904,7 +2896,71 @@ Deno.serve(async (req) => {
         const { search } = params;
         if (!search || String(search).length < 2) throw new Error("Busca deve ter ao menos 2 caracteres");
         const clientes = await listarClientesVendas(String(search), account);
-        result = { success: true, clientes };
+        // Onda D 4b-3: PII só da carteira/cobertura do chamador (ou da gestão); cron/sem JWT → tudo mascarado.
+        const visiveisBusca = await codigosComContatoVisivel(
+          supabaseAdmin, supabaseDoUsuario, userId, account, clientes.map((c) => Number(c.codigo_cliente)),
+        );
+        result = {
+          success: true,
+          clientes: clientes.map((c) =>
+            mascararLinhaBusca(c, visiveisBusca === "todos" || visiveisBusca.has(Number(c.codigo_cliente)))
+          ),
+        };
+        break;
+      }
+
+      case "revelar_cliente": {
+        // Onda D 4b-3: o cadastro inteiro do cliente SELECIONADO no Novo Pedido. Na carteira (ou gestão) abre
+        // direto; fora dela, só pela exceção `novo_pedido` (ledger gravado com o JWT de quem chama). Fail-closed.
+        const codigo = lerCodigoRevelar(params.codigo_cliente);
+        if (codigo == null) throw new Error("[revelar_cliente] codigo_cliente inválido");
+        if (!userId || !supabaseDoUsuario) throw new Error("[revelar_cliente] só para staff logado");
+        const cadastro = (await callOmieVendasApi(
+          "geral/clientes/", "ConsultarCliente", { codigo_cliente_omie: codigo }, account,
+          { throwOnTransient: true },
+        )) as OmieClienteCadastro | null;
+        if (!cadastro || Number(cadastro.codigo_cliente_omie) !== codigo) {
+          throw new Error("[revelar_cliente] cliente não encontrado na Omie");
+        }
+        const linha = linhaDaBusca(cadastro);
+        const visiveis = await codigosComContatoVisivel(supabaseAdmin, supabaseDoUsuario, userId, account, [codigo]);
+        const naCarteira = visiveis === "todos" || visiveis.has(codigo);
+        let usuariosDoCodigo = new Set<string>();
+        let linhasRpc: Array<{ customer_user_id?: string | null; document?: string | null; cnpj?: string | null }> = [];
+        if (!naCarteira) {
+          const { data: vinc, error: vincErro } = await supabaseAdmin
+            .from("omie_customer_account_map_fresco")
+            .select("user_id")
+            .eq("account", account)
+            .eq("omie_codigo_cliente", codigo);
+          if (vincErro) throw new Error(`[revelar_cliente] vínculo não lido (${vincErro.code})`);
+          usuariosDoCodigo = new Set((vinc ?? []).map((v) => v.user_id).filter((u): u is string => !!u));
+          if (usuariosDoCodigo.size === 1) {
+            // O ledger: 1 cliente por chamada, teto diário por staff no banco (54000).
+            const { data: rpc, error: rpcErro } = await supabaseDoUsuario.rpc("contato_cliente_operacional", {
+              p_objeto_tipo: "novo_pedido",
+              p_objeto_ids: [...usuariosDoCodigo],
+              p_motivo: "novo_pedido",
+            });
+            if (rpcErro) {
+              throw new Error(
+                rpcErro.code === "54000"
+                  ? "[revelar_cliente] limite diário de clientes fora da sua carteira atingido"
+                  : `[revelar_cliente] exceção operacional recusada (${rpcErro.code})`,
+              );
+            }
+            linhasRpc = (rpc ?? []) as typeof linhasRpc;
+          }
+        }
+        const decisao = decidirRevelacao({ naCarteira, usuariosDoCodigo, linhasRpc, cnpjCpfOmie: cadastro.cnpj_cpf });
+        if (!decisao.abre) {
+          throw new Error(
+            decisao.motivo === "sem_vinculo"
+              ? "[revelar_cliente] cliente fora da sua carteira e sem cadastro vinculado no app: peça à gestão"
+              : "[revelar_cliente] o cadastro local deste cliente não confere com a Omie: peça à gestão",
+          );
+        }
+        result = { success: true, cliente: { ...linha, contato_visivel: true }, via: decisao.via };
         break;
       }
 

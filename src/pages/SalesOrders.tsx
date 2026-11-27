@@ -13,8 +13,9 @@ import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import { agruparPorDia, chaveDaLinha, contagemDoDia, decodeHtml, EFEITO_DA_EXCLUSAO, ultimoDiaAberto, type OrderFeedRow } from '@/components/salesOrders/types';
 import { ALCANCE_VAZIO, alcanceDaExclusao, type AlcanceExclusao } from '@/components/salesOrders/alcance-exclusao';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
+import { mensagemDoErroDaLista } from '@/components/salesOrders/feed';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
-import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
+import { PedidoNaoEncontrado, useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosItensPedido';
 import { SalesOrdersAcoes, SalesOrdersToolbar, ValorDoRecorte } from '@/components/salesOrders/SalesOrdersToolbar';
 import { GRADE_LINHA_PEDIDO, SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
@@ -30,6 +31,7 @@ const SalesOrders = () => {
     authLoading,
     loading,
     loadError,
+    erroDaLista,
     refetchError,
     pausadoSemDados,
     dataUpdatedAt,
@@ -46,6 +48,7 @@ const SalesOrders = () => {
     setStatusFilter,
     periodo,
     setPeriodo,
+    hoje,
     ordem,
     setOrdem,
     search,
@@ -56,6 +59,7 @@ const SalesOrders = () => {
     limparCliente,
     meus,
     setMeus,
+    meusAguardando,
     valorRecorte,
     selectedIds,
     linhasSelecionadas,
@@ -135,8 +139,8 @@ const SalesOrders = () => {
   // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
   // prometida. Aí a linha mostra a data no lugar da hora. Memo: só a lista muda os grupos.
   const porValor = ordem === 'valor';
-  // O dia de HOJE entra na dependência: o rótulo "Hoje"/"Ontem" vira à meia-noite mesmo com o cache igual.
-  const hoje = format(new Date(), 'yyyy-MM-dd');
+  // O dia de HOJE (do hook, que vira sozinho à meia-noite) entra na dependência: o rótulo "Hoje"/"Ontem"
+  // vira mesmo com o cache igual.
   // Dia que as próximas páginas ainda podem engordar: o cabeçalho dele não mostra contagem.
   const ultimo = orders[orders.length - 1];
   const limiteAberto = ultimo ? ultimoDiaAberto(ultimo.created_at) : null;
@@ -156,7 +160,9 @@ const SalesOrders = () => {
   const ultimoAlcance = useRef<AlcanceExclusao>(ALCANCE_VAZIO);
   if (alcanceAberto) ultimoAlcance.current = alcanceAberto;
 
-  if (authLoading || loading) {
+  // "Meus" esperando o usuário efetivo (lente carregando): as consultas não saíram — nem a lista
+  // anterior (placeholder) nem "Nenhum pedido" descrevem o recorte (revisão /sales #14).
+  if (authLoading || loading || meusAguardando) {
     return (
       <PageSkeleton variant="list" />
     );
@@ -171,7 +177,7 @@ const SalesOrders = () => {
           tone="operational"
           icon={online ? AlertTriangle : WifiOff}
           title="Não foi possível carregar os pedidos"
-          description={online ? 'O servidor não respondeu. Tente de novo em instantes.' : 'Sem conexão com a internet.'}
+          description={mensagemDoErroDaLista(erroDaLista, online)}
           actionLabel="Tentar de novo"
           onAction={() => refetch()}
         />
@@ -372,8 +378,9 @@ const SalesOrders = () => {
             label: 'Excluir',
             icon: Trash2,
             variant: 'destructive',
-            // Filtro novo a caminho: espera a lista certa antes de abrir o alcance do lote.
-            disabled: buscando,
+            // Filtro novo a caminho: espera a lista certa antes de abrir o alcance do lote. Na lente,
+            // a escrita é barrada pelo guard (revisão /sales #20).
+            disabled: buscando || isImpersonating,
             onClick: () => setConfirmandoLote(true),
           },
         ]}
@@ -462,14 +469,15 @@ const SalesOrders = () => {
       <SalesOrderDetailSheet
         open={!!detailRow}
         loading={detailQuery.isPending}
-        erro={detailQuery.isError}
+        // "Não existe" não é "falhou": sem o "Tentar de novo" inútil (revisão /sales #40).
+        erro={detailQuery.isError && !(detailQuery.error instanceof PedidoNaoEncontrado)}
         onRetry={() => void detailQuery.refetch()}
         order={detailQuery.data?.order ?? null}
         resumo={detailRow ? {
           status: detailRow.status,
           account: detailRow.account,
           pv: detailRow.order_number,
-          total: Number(detailRow.total),
+          total: detailRow.total,
           created_at: detailRow.created_at,
         } : null}
         onCloseAutoFocus={(e) => {
@@ -517,9 +525,14 @@ function plural(n: number, um: string, varios: string): string {
   return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`;
 }
 
-// O total só vem sem busca (com busca contaria os ~32 k de novo — ver useSalesOrders).
+// O total é o do recorte (RPC do valor); null enquanto carrega ou se ela falhou.
 function rodapeDaLista(carregados: number, total: number | null, temMais: boolean, comBusca: boolean): string {
   const n = (v: number) => v.toLocaleString('pt-BR');
+  // Tudo carregado: as linhas SÃO o recorte (inclusive durante a exclusão otimista, antes do total reconciliar).
+  if (!temMais) {
+    const r = comBusca ? (carregados === 1 ? 'encontrado' : 'encontrados') : (carregados === 1 ? 'pedido' : 'pedidos');
+    return `${n(carregados)} ${r}`;
+  }
   if (total !== null) return carregados >= total ? `${n(total)} ${total === 1 ? 'pedido' : 'pedidos'}` : `${n(carregados)} de ${n(total)} pedidos`;
   const rotulo = comBusca
     ? (carregados === 1 ? 'encontrado' : 'encontrados')
