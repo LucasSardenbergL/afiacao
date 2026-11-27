@@ -28,16 +28,21 @@ verifica() {
   local tok u t sha st
   [ -f "$CFG_DIR/.vigia-pronto" ] || { echo "VERIFICAR=FALHOU store próprio ausente ($CFG_DIR/.vigia-pronto) — rode --login" >&2; return 1; }
   tok=$(security find-generic-password -s claude-vigia-lovable -w 2>/dev/null) || { echo "VERIFICAR=FALHOU token claude-vigia-lovable ausente" >&2; return 1; }
+  PATH="$PATH_LAUNCHD" command -v jq >/dev/null || { echo "VERIFICAR=FALHOU jq ausente no PATH do launchd ($PATH_LAUNCHD)" >&2; return 1; }
   u=$(id -un); t=$(mktemp -d); chmod 700 "$t"
+  for _ in 1 2; do
   printf '{"mcpServers":{"lovable":{"type":"http","url":"https://mcp.lovable.dev"}}}\n' > "$t/mcp.json"
   (cd "$t" && printf 'Chame mcp__lovable__get_project com project_id %s e responda só OK.' "$PROJETO" \
     | env -i HOME="$HOME" USER="$u" LOGNAME="$u" PATH="$PATH_LAUNCHD" CLAUDE_CONFIG_DIR="$CFG_DIR" \
         CLAUDE_CODE_OAUTH_TOKEN="$tok" ENABLE_TOOL_SEARCH=false MCP_TIMEOUT=60000 \
         timeout 300 "${LV_CLAUDE:-claude}" -p --model haiku --strict-mcp-config --mcp-config "$t/mcp.json" \
         --tools "" --setting-sources "" --allowedTools "mcp__lovable__get_project" --output-format stream-json --verbose) > "$t/s.jsonl" 2>"$t/err" || true
+    # como o vigia: 2ª chamada só se a 1ª nem usou ferramenta (falha comprovadamente transitória do modelo)
+    PATH="$PATH_LAUNCHD" jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use")' "$t/s.jsonl" >/dev/null 2>&1 && break
+  done
   unset tok
-  st=$(jq -r 'select(.type=="system" and .subtype=="init") | (.mcp_servers[]? | select(.name=="lovable") | .status)' "$t/s.jsonl" 2>/dev/null | head -1)
-  sha=$(jq -rs --arg p "$PROJETO" '
+  st=$(PATH="$PATH_LAUNCHD" jq -r 'select(.type=="system" and .subtype=="init") | (.mcp_servers[]? | select(.name=="lovable") | .status)' "$t/s.jsonl" 2>/dev/null | head -1)
+  sha=$(PATH="$PATH_LAUNCHD" jq -rs --arg p "$PROJETO" '
     [.[] | select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name=="mcp__lovable__get_project" and (.input.project_id // "")==$p) | .id] as $ids
     | .[] | select(.type=="user") | .message.content[]?
     | select(.type=="tool_result" and (.is_error != true) and ((.tool_use_id as $i | $ids | index($i)) != null))
@@ -93,6 +98,7 @@ cat > "$PLIST" <<EOF
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>$PATH_LAUNCHD</string>
     <key>HOME</key><string>$HOME</string>
+    <key>LV_CLAUDE_DIR</key><string>$CFG_DIR</string>
   </dict>
   <key>StandardOutPath</key><string>$EST/launchd.log</string>
   <key>StandardErrorPath</key><string>$EST/launchd.log</string>

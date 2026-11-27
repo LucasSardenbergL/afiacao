@@ -90,7 +90,8 @@ trap '[ "$(cat "$EST/lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$EST/lock"' EXI
 
 # ── main fresca num clone SÓ do vigia (nenhuma sessão mexe nele) ───────────────────────────────
 # PR 4: `ls-remote` (1 ida e volta) a cada tick; `fetch` só quando a main aponta para um commit que o clone
-# ainda não tem. O checkout só quando o HEAD local não é a main.
+# ainda não tem. O checkout é SEMPRE (local, sem rede) e com -f: o decisor que roda é o da main, mesmo que
+# um arquivo do clone tenha sido alterado/restaurado à mão (Codex PR4 #2).
 REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>>"$LOG" | cut -f1)
 case "$REMOTA" in *[!0-9a-f]*|'') log "ls-remote falhou (${REMOTA:-vazio})"; exit 0 ;; esac
 [ ${#REMOTA} = 40 ] || { log "ls-remote sem SHA de 40 hex"; exit 0; }
@@ -100,8 +101,7 @@ else
   if ! timeout 90 git -C "$WT" fetch -q origin "$RAMO" 2>>"$LOG"; then log "fetch falhou"; exit 0; fi
   HEAD_SHA=$(git -C "$WT" rev-parse FETCH_HEAD) || exit 0
 fi
-[ "$(git -C "$WT" rev-parse HEAD 2>/dev/null)" = "$HEAD_SHA" ] \
-  || git -C "$WT" checkout -q --detach "$HEAD_SHA" 2>>"$LOG" || { log "checkout falhou"; exit 0; }
+git -C "$WT" checkout -q -f --detach "$HEAD_SHA" 2>>"$LOG" || { log "checkout falhou"; exit 0; }
 
 # auto-atualização: a versão da main vale a partir do PRÓXIMO tick (mv = inode novo; o bash que
 # está lendo este arquivo continua no velho)
