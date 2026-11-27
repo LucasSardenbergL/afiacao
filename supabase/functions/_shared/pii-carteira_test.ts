@@ -6,7 +6,9 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 import {
   aplicarVisibilidade,
   CAMPOS_PII_OMIE,
+  codigosComContatoVisivel,
   codigosVisiveis,
+  type LeitorCarteira,
   lerAcessoOperacional,
   pedidoEDesteCadastro,
 } from "./pii-carteira.ts";
@@ -112,4 +114,47 @@ Deno.test("documento divergente, ausente ou malformado → não abre", () => {
   assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "123" }], "123", doCodigo), false);
   // lixo que a normalização tolerante reduziria aos 11 dígitos de um CPF
   assertEquals(pedidoEDesteCadastro([{ customer_user_id: A, document: "XX123.456.789-01" }], "12345678901", doCodigo), false);
+});
+
+// ── codigosComContatoVisivel (onda D 4b-3: a leitura compartilhada omie-cliente / omie-vendas-sync) ──
+
+type Resp = { data: unknown; error: { code?: string } | null };
+function fake(r: { gestao?: Resp; mapa?: Resp; perfis?: Resp }, log: string[] = []): LeitorCarteira {
+  const fim = (k: "mapa" | "perfis") => Promise.resolve((r[k] ?? { data: [], error: null }) as never);
+  return {
+    rpc: (fn) => { log.push(`rpc:${fn}`); return Promise.resolve(r.gestao ?? { data: false, error: null }); },
+    from: (t) => ({
+      select: () => ({
+        eq: (c, v) => { log.push(`${t}:${c}=${v}`); return { in: () => fim("mapa") }; },
+        in: () => { log.push(`${t}:in`); return fim("perfis"); },
+      }),
+    }),
+  };
+}
+const MAPA = { data: [{ omie_codigo_cliente: 1, user_id: "a" }, { omie_codigo_cliente: 2, user_id: "b" }], error: null };
+
+Deno.test("carteira: gestão vê todos", async () => {
+  assertEquals(await codigosComContatoVisivel(fake({ gestao: { data: true, error: null } }), fake({}), "s", "oben", [1]), "todos");
+});
+
+Deno.test("carteira: só o código cujo user tem contato_visivel; lê o mapa DA CONTA pedida", async () => {
+  const log: string[] = [];
+  const r = await codigosComContatoVisivel(
+    fake({ mapa: MAPA }, log),
+    fake({ perfis: { data: [{ user_id: "a", contato_visivel: true }, { user_id: "b", contato_visivel: false }], error: null } }),
+    "s", "oben", [1, 2],
+  );
+  assertEquals([...(r as Set<number>)], [1]);
+  assertEquals(log.includes("omie_customer_account_map_fresco:account=oben"), true, `conta errada: ${log}`);
+});
+
+Deno.test("carteira: sem chamador (cron), erro em qualquer leitura ou sem vínculo → nada visível", async () => {
+  const visivel = { data: [{ user_id: "a", contato_visivel: true }], error: null };
+  const vazio = (r: Set<number> | "todos") => r !== "todos" && r.size === 0;
+  assertEquals(vazio(await codigosComContatoVisivel(fake({ mapa: MAPA }), null, null, "oben", [1])), true, "cron");
+  assertEquals(vazio(await codigosComContatoVisivel(fake({ gestao: { data: null, error: { code: "X" } }, mapa: MAPA }), fake({ perfis: visivel }), "s", "oben", [1])), true, "gestão");
+  assertEquals(vazio(await codigosComContatoVisivel(fake({ mapa: { data: null, error: { code: "X" } } }), fake({ perfis: visivel }), "s", "oben", [1])), true, "mapa");
+  assertEquals(vazio(await codigosComContatoVisivel(fake({ mapa: MAPA }), fake({ perfis: { data: null, error: { code: "X" } } }), "s", "oben", [1])), true, "perfis");
+  assertEquals(vazio(await codigosComContatoVisivel(fake({ mapa: { data: [], error: null } }), fake({ perfis: visivel }), "s", "oben", [1])), true, "sem vínculo");
+  assertEquals(vazio(await codigosComContatoVisivel(fake({ mapa: MAPA }), fake({ perfis: visivel }), "s", "oben", [0, -1, NaN])), true, "códigos inválidos");
 });

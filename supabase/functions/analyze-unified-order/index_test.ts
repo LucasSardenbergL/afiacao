@@ -135,8 +135,12 @@ Deno.test("unified-order (texto): body e banco fora do system, dentro do bloco, 
   igual(ia.chamadas.length, 1, "texto: esperava uma chamada (a análise)");
 
   const conteudo = conferirAnalise(ia.chamadas[0], true, [
-    C.produtoBody, C.produtoBanco, C.ferramenta, C.servico, C.perfil, C.documento,
+    C.produtoBody, C.produtoBanco, C.ferramenta, C.servico, C.perfil,
   ]);
+  // Onda D 4b-3: o documento do candidato não vai ao LLM (nem system, nem mensagens).
+  if ((textoDoSystem(ia.chamadas[0]) + textoDasMensagens(ia.chamadas[0])).includes(C.documento)) {
+    throw new Error("o documento do candidato chegou ao LLM");
+  }
   igual(conteudo.map((b) => b.type), ["text", "text"], "texto: a mensagem deveria ter dados + pedido");
   if (!conteudo[1].text?.includes(C.pedido)) throw new Error("o texto do vendedor não é o 2º bloco");
   if (textoDasMensagens(ia.chamadas[0]).indexOf(C.pedido) < (conteudo[0].text ?? "").length) {

@@ -27,6 +27,7 @@ import type {
   OmieCustomer,
   AddressData,
 } from './types';
+import { revelarClienteSelecionado } from './revelar-cliente';
 
 /* Types for purchase-history merge (jsonb items + price history rows) */
 interface SalesOrderItemSnapshot {
@@ -503,6 +504,16 @@ export function useCustomerSelection({
     setCustomerParcelaRankingOben([]);
     setCustomerParcelaRankingColacor([]);
     try {
+      // Onda D 4b-3: cliente fora da carteira chega da busca sem documento/contato; o cadastro inteiro vem
+      // da `revelar_cliente` (ledger `novo_pedido` no servidor). Falha LANÇA para o catch: a seleção para.
+      try {
+        cust = await revelarClienteSelecionado(cust);
+      } catch (e) {
+        // Sem cliente pela metade: o anterior não fica na tela com o vínculo já limpo.
+        if (!isStale()) { setSelectedCustomer(null); setEstadoCadastro('nao_verificado'); }
+        throw e;
+      }
+      if (isStale()) return;
       setSelectedCustomer(cust);
 
       // 8.2: a busca do cadastro grava o PRÓPRIO desfecho (`indisponivel` bloqueia o envio; saída "Trocar").

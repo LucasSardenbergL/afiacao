@@ -589,13 +589,17 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Onda D 4b-3: o documento dos candidatos NÃO vai ao LLM (de nenhum candidato — o da carteira também
+      // não faz falta): a IA devolve o documento que ESTÁ no pedido, e o casamento com o candidato
+      // (`matchedCandidate`, abaixo) roda aqui no servidor. Antes ia o CPF/CNPJ de qualquer cliente Omie
+      // com nome parecido, fora da carteira de quem pediu.
       if (customerCandidates.length > 0) {
         customerSection = "\n\nCLIENTES ENCONTRADOS NA BASE (para identificação):\n" +
           customerCandidates.map((c, i) => {
             if (c.nome_fantasia !== undefined) {
-              return `- [${i}] NomeFantasia:${c.nome_fantasia} | RazãoSocial:${c.razao_social} | CNPJ/CPF:${c.cnpj_cpf} | Cidade:${c.cidade || 'N/A'} | Estado:${c.estado || 'N/A'} | CódigoCliente:${c.codigo_cliente}`;
+              return `- [${i}] NomeFantasia:${c.nome_fantasia} | RazãoSocial:${c.razao_social} | Cidade:${c.cidade || 'N/A'} | Estado:${c.estado || 'N/A'} | CódigoCliente:${c.codigo_cliente}`;
             }
-            return `- [${i}] Nome:${c.nome} | Documento:${c.documento || 'N/A'} | CódigoCliente:${c.codigo_cliente || 'N/A'}`;
+            return `- [${i}] Nome:${c.nome} | CódigoCliente:${c.codigo_cliente || 'N/A'}`;
           }).join("\n");
       }
     }

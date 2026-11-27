@@ -6,7 +6,12 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
 import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
-import { aplicarVisibilidade, codigosVisiveis, lerAcessoOperacional, pedidoEDesteCadastro } from "./pii-carteira.ts";
+import {
+  aplicarVisibilidade,
+  codigosComContatoVisivel as codigosVisiveisNaConta,
+  lerAcessoOperacional,
+  pedidoEDesteCadastro,
+} from "../_shared/pii-carteira.ts";
 import {
   type ClienteOmieConsultado,
   codigoUnicoDoDocumento,
@@ -664,49 +669,14 @@ async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ c
 }
 
 // Onda D 4b-2: quais códigos Omie (conta colacor_sc, a que `callOmieApi` consulta) têm o contato visível
-// para o chamador. "todos" = gestão (`pode_ver_carteira_completa`). Qualquer erro → conjunto vazio
-// (mascara tudo): ausente ≠ visível.
-async function codigosComContatoVisivel(
+// para o chamador. A regra (e o fail-closed) vive em `_shared/pii-carteira.ts`, a mesma da omie-vendas-sync.
+function codigosComContatoVisivel(
   codigos: number[],
   chamadorId: string | null,
   clienteDoChamador: SupabaseClient | null,
 ): Promise<Set<number> | "todos"> {
-  const vazio = new Set<number>();
-  if (!chamadorId || !clienteDoChamador) return vazio;
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const { data: gestao, error: gestaoErro } = await admin.rpc("pode_ver_carteira_completa", { _uid: chamadorId });
-  if (gestaoErro) {
-    console.error(`[pii-carteira] gestão não lida (${gestaoErro.code}): mascarando`);
-    return vazio;
-  }
-  if (gestao === true) return "todos";
-  const alvo = [...new Set(codigos.filter((c) => Number.isFinite(c) && c > 0))];
-  if (alvo.length === 0) return vazio;
-  // Mapa FRESCO (Codex P1): o vínculo vencido (código que a Omie já reatribuiu) não autoriza o contato atual.
-  const { data: vinculos, error: vincErro } = await admin
-    .from("omie_customer_account_map_fresco")
-    .select("omie_codigo_cliente, user_id")
-    .eq("account", "colacor_sc")
-    .in("omie_codigo_cliente", alvo);
-  if (vincErro) {
-    console.error(`[pii-carteira] vínculos não lidos (${vincErro.code}): mascarando`);
-    return vazio;
-  }
-  const userIds = [...new Set((vinculos ?? []).map((v) => v.user_id).filter((u): u is string => !!u))];
-  if (userIds.length === 0) return vazio;
-  // Sob o JWT do chamador: `contato_visivel` é a regra da carteira/cobertura do banco.
-  const { data: perfis, error: perfErro } = await clienteDoChamador
-    .from("v_perfil_contato")
-    .select("user_id, contato_visivel")
-    .in("user_id", userIds);
-  if (perfErro) {
-    console.error(`[pii-carteira] carteira não lida (${perfErro.code}): mascarando`);
-    return vazio;
-  }
-  const visiveis = new Set(
-    (perfis ?? []).filter((p) => p.contato_visivel === true && p.user_id).map((p) => p.user_id as string),
-  );
-  return codigosVisiveis(vinculos ?? [], visiveis);
+  return codigosVisiveisNaConta(admin, clienteDoChamador, chamadorId, "colacor_sc", codigos);
 }
 
 /** user_ids vinculados (mapa fresco, colacor_sc) a um código Omie; erro → `null` (não abre nada). */

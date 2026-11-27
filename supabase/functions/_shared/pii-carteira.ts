@@ -8,7 +8,7 @@
 //
 // Fail-closed em tudo: erro de leitura, código Omie sem vínculo local, vínculo sem perfil → mascarado.
 
-import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
+import { normalizarDocumento } from "./cnpj-alfanumerico.ts";
 
 /** Campos de PII que a resposta de `pesquisar_clientes`/`consultar_cliente` carrega. */
 export const CAMPOS_PII_OMIE = [
@@ -104,4 +104,68 @@ export function pedidoEDesteCadastro(
     typeof l.customer_user_id === "string" && usuariosDoCodigo.has(l.customer_user_id) &&
     [l.document, l.cnpj].some((d) => documentoEstrito(d) === alvo)
   );
+}
+
+/** O mínimo do client Supabase que a leitura da carteira usa (fake nos testes, sem rede). */
+type ResultadoLeitura<T> = PromiseLike<{ data: T[] | null; error: { code?: string } | null }>;
+export interface LeitorCarteira {
+  rpc(fn: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { code?: string } | null }>;
+  from(tabela: string): {
+    select(colunas: string): {
+      eq(c: string, v: unknown): { in(c: string, v: unknown[]): ResultadoLeitura<Record<string, unknown>> };
+      in(c: string, v: unknown[]): ResultadoLeitura<Record<string, unknown>>;
+    };
+  };
+}
+
+/**
+ * Quais códigos Omie (da `account` do mapa) têm o contato visível para o chamador. "todos" = gestão
+ * (`pode_ver_carteira_completa`). Qualquer erro, chamador ausente (cron) ou código sem vínculo → fora:
+ * ausente ≠ visível.
+ *  - `admin` (service_role): gestão e o mapa FRESCO (Codex P1: vínculo vencido não autoriza o contato atual);
+ *  - `doChamador` (JWT de quem chama): `v_perfil_contato.contato_visivel`, a regra da carteira/cobertura.
+ */
+export async function codigosComContatoVisivel(
+  admin: LeitorCarteira,
+  doChamador: LeitorCarteira | null,
+  chamadorId: string | null,
+  account: "oben" | "colacor" | "colacor_sc",
+  codigos: number[],
+): Promise<Set<number> | "todos"> {
+  const vazio = new Set<number>();
+  if (!chamadorId || !doChamador) return vazio;
+  const { data: gestao, error: gestaoErro } = await admin.rpc("pode_ver_carteira_completa", { _uid: chamadorId });
+  if (gestaoErro) {
+    console.error(`[pii-carteira] gestão não lida (${gestaoErro.code}): mascarando`);
+    return vazio;
+  }
+  if (gestao === true) return "todos";
+  const alvo = [...new Set(codigos.filter((c) => Number.isFinite(c) && c > 0))];
+  if (alvo.length === 0) return vazio;
+  const { data: vinculos, error: vincErro } = await admin
+    .from("omie_customer_account_map_fresco")
+    .select("omie_codigo_cliente, user_id")
+    .eq("account", account)
+    .in("omie_codigo_cliente", alvo);
+  if (vincErro) {
+    console.error(`[pii-carteira] vínculos não lidos (${vincErro.code}): mascarando`);
+    return vazio;
+  }
+  const pares = (vinculos ?? []) as Array<{ omie_codigo_cliente: number | null; user_id: string | null }>;
+  const userIds = [...new Set(pares.map((v) => v.user_id).filter((u): u is string => !!u))];
+  if (userIds.length === 0) return vazio;
+  const { data: perfis, error: perfErro } = await doChamador
+    .from("v_perfil_contato")
+    .select("user_id, contato_visivel")
+    .in("user_id", userIds);
+  if (perfErro) {
+    console.error(`[pii-carteira] carteira não lida (${perfErro.code}): mascarando`);
+    return vazio;
+  }
+  const visiveis = new Set(
+    ((perfis ?? []) as Array<{ user_id?: unknown; contato_visivel?: unknown }>)
+      .filter((p) => p.contato_visivel === true && typeof p.user_id === "string")
+      .map((p) => p.user_id as string),
+  );
+  return codigosVisiveis(pares, visiveis);
 }

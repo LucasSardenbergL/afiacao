@@ -60,7 +60,10 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 //   regrava (decisão do founder depois de 2 rodadas do Codex no #4174). Endereço/turno seguem FORA da assinatura (PR 2.5).
 // v1.19 (2026-11-26) — onda D 4b-2: `sync_order` sem `staffContext.customerUserId` é recusado (400) antes de tocar a
 //   Omie; o fallback para o id do chamador gravava a OS no nome do vendedor (o chamador é sempre staff/cron).
-export const VERSAO = "v1.19-titular-sem-fallback";
+// v1.20 (2026-11-27, onda D 4b-3) — `sync_order` confere que o código Omie (colacor_sc) da OS é do titular
+//   (`staffContext.customerUserId`) ANTES de tocar a Omie: dono no mapa fresco, ou, sem linha no mapa, o documento
+//   da Omie casando com o do perfil (`vinculo-os.ts`). Senão 400 com `motivo`.
+export const VERSAO = "v1.20-vinculo-os";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

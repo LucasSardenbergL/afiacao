@@ -14,6 +14,7 @@ import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaO
 import { enderecoDaOs, MODALIDADE_LEGADA, modalidadeDaOs, turnoDaOs } from "./modalidade-os.ts";
 import { avisoEnderecoTurnoOs } from "./reenvio-os-local.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
+import { decidirVinculoOS, type DesfechoVinculoOS, mensagemVinculoOS } from "./vinculo-os.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 // Origem fixa "*" (igual ao `_shared/auth.ts`; a auth é por Bearer, não cookie): o secret ALLOWED_ORIGIN
@@ -297,6 +298,46 @@ async function sendOrderNotificationEmail(
     console.error("[Notificação] Erro ao enviar email de notificação:", error);
   }
 }
+// Onda D 4b-3: o código Omie (colacor_sc) da OS é DESTE titular? Mapa fresco primeiro; sem linha no mapa,
+// o documento da Omie para o código contra o do perfil (vinculo-os.ts). Leitura com erro → indeterminado.
+async function conferirVinculoOS(
+  supabase: SupabaseClient,
+  customerUserId: string,
+  codigo: number,
+): Promise<DesfechoVinculoOS> {
+  if (!Number.isSafeInteger(codigo) || codigo <= 0) return { ok: false, motivo: "indeterminado" };
+  const { data: mapaRows, error: mapaErr } = await supabase
+    .from("omie_customer_account_map_fresco")
+    .select("user_id")
+    .eq("account", "colacor_sc")
+    .eq("omie_codigo_cliente", codigo);
+  const mapa = mapaErr
+    ? { erro: true as const }
+    : { erro: false as const, userIds: (mapaRows ?? []).map((r) => r.user_id).filter((u): u is string => !!u) };
+  if (mapa.erro || mapa.userIds.length > 0) return decidirVinculoOS({ customerUserId, codigo, mapa });
+  let omie: { erro: true } | { erro: false; codigo: number | null; cnpjCpf: string | null };
+  try {
+    const r = await callOmieApi("geral/clientes/", "ListarClientes", {
+      pagina: 1, registros_por_pagina: 2, clientesFiltro: { codigo_cliente_omie: codigo },
+    }) as unknown as OmieListarClientesResponse;
+    const lista = r.clientes_cadastro ?? [];
+    const c = lista.length === 1 ? lista[0] : null;
+    omie = { erro: false, codigo: c ? Number(c.codigo_cliente_omie) : null, cnpjCpf: c?.cnpj_cpf ?? null };
+  } catch (e) {
+    console.error(`[vinculo-os] cliente ${codigo} não lido na Omie: ${e instanceof Error ? e.message : "erro"}`);
+    omie = { erro: true };
+  }
+  const { data: perfilRow, error: perfilErr } = await supabase
+    .from("profiles")
+    .select("document, cnpj")
+    .eq("user_id", customerUserId)
+    .maybeSingle();
+  const perfil = perfilErr
+    ? { erro: true as const }
+    : { erro: false as const, document: perfilRow?.document ?? null, cnpj: perfilRow?.cnpj ?? null };
+  return decidirVinculoOS({ customerUserId, codigo, mapa, omie, perfil });
+}
+
 interface ClienteOmieResult {
   omieCodigoCliente: number;
   omieCodigoVendedor?: number;
@@ -1103,6 +1144,17 @@ Deno.serve(async (req) => {
             userId!,
             profileData,
             addressData
+          );
+        }
+
+        // Onda D 4b-3: o código da OS tem de ser DESTE titular (A com o código de B mandava a OS para o
+        // cadastro de B). Recusa ANTES de qualquer efeito na Omie.
+        const vinculoOS = await conferirVinculoOS(supabaseAdmin, orderUserId, Number(clienteResult.omieCodigoCliente));
+        if (!vinculoOS.ok) {
+          console.error(`[vinculo-os] OS ${orderId} recusada: ${vinculoOS.motivo}`);
+          return new Response(
+            JSON.stringify({ versao: VERSAO, error: mensagemVinculoOS(vinculoOS.motivo), motivo: vinculoOS.motivo }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
