@@ -64,6 +64,7 @@ const FORA_DAS_ATIVIDADES: ReadonlyArray<{ linha: string; rotulo: string; explic
   { linha: 'equivalente_caixa', rotulo: 'Aplicações de liquidez (equivalentes de caixa)', explicacao: 'Resgate ou aplicação de liquidez imediata — troca entre caixa e equivalente.' },
   { linha: 'pendente_identidade', rotulo: 'Pendente de identidade', explicacao: 'Baixa sem identificador do Omie igual a uma baixa já contada (provável versão antiga) — fora para não dobrar.' },
   { linha: 'pendente_revisao', rotulo: 'Pendente de revisão', explicacao: 'Baixa sem identificador num título que já tem outra baixa de valor diferente — pode ser parcela legítima; revise no Omie.' },
+  { linha: 'pendente_conciliacao', rotulo: 'Pendente de conciliação com o título', explicacao: 'Baixa que o título no Omie não sustenta hoje (título sem pagamento, ou mais de uma baixa somando além do líquido) — pode ter sido cancelada ou refeita; confira no Omie antes de contar como caixa.' },
   { linha: 'nao_classificado', rotulo: 'Não classificado', explicacao: 'Categoria sem decisão no mapa de fluxo — entra aqui até alguém classificar.' },
 ];
 
