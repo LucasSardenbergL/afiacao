@@ -102,7 +102,7 @@ export function thDescontoHtml(data: PrintOrderData): string {
 }
 
 /** Célula de desconto da linha: R$ da linha, ou "—" quando não apurado (nunca R$ 0,00). */
-export function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items'][number]): string {
+function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items'][number]): string {
   if (!data.quebraDesconto) return '';
   return `<td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.descontoValor)}</td>`;
 }

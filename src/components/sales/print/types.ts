@@ -103,7 +103,7 @@ export function getPeriod(dateStr: string): 'manha' | 'tarde' {
  * frouxo de propósito, porque a folha imprime pedido de venda e pedido de AFIAÇÃO (`orders.items`,
  * outra forma: category/name/quantity/unitPrice). NULL = sem itens; não-array ou item não-objeto lança.
  */
-export function itensImpressaoDoJson(v: Json | null, fonte: string): OrderItem[] {
+function itensImpressaoDoJson(v: Json | null, fonte: string): OrderItem[] {
   if (v === null) return [];
   if (!Array.isArray(v)) throw new Error(`${fonte}: items não é array`);
   return v.map((item, i) => {
