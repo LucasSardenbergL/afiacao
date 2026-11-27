@@ -37,7 +37,7 @@ function obj(v: unknown): Record<string, unknown> | null {
 }
 
 /** Inteiro seguro > 0 vindo de número ou de string só com dígitos. Qualquer outra coisa → null. */
-export function inteiroPositivo(v: unknown): number | null {
+function inteiroPositivo(v: unknown): number | null {
   if (typeof v === "number") return Number.isSafeInteger(v) && v > 0 ? v : null;
   if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) {
     const n = Number(v.trim());
@@ -47,7 +47,7 @@ export function inteiroPositivo(v: unknown): number | null {
 }
 
 /** Inteiro seguro ≥ 0 (dias de parcela). Vazio, nulo, fração ou negativo → null. */
-export function inteiroNaoNegativo(v: unknown): number | null {
+function inteiroNaoNegativo(v: unknown): number | null {
   if (typeof v === "number") return Number.isSafeInteger(v) && v >= 0 ? v : null;
   if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) {
     const n = Number(v.trim());
