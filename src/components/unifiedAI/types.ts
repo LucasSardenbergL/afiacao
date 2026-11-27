@@ -93,4 +93,9 @@ export interface UnifiedAIAssistantProps {
   /** Preço de partida ainda não firme (tier/config carregando): o painel não exibe número e o ADD
    *  fica bloqueado — o MESMO gate do ADD da lista (`precoLoading` do ProductItemForm). */
   precoLoading?: boolean;
+  /** Sensor do funil do Novo Pedido (ledger, PR 9.1). Opcional: o assistente funciona sem ele. */
+  aoSensor?: (
+    evento: 'novo_pedido.ia_analise_pedida' | 'novo_pedido.ia_itens_adicionados' | 'novo_pedido.ia_itens_descartados',
+    props: { [chave: string]: string | number | boolean | null },
+  ) => void;
 }

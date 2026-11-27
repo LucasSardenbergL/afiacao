@@ -22,6 +22,7 @@ export function useUnifiedAIAssistant({
   customerUserId,
   hasCustomerSelected = false,
   isLoading = false,
+  aoSensor,
 }: UnifiedAIAssistantProps) {
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -189,6 +190,9 @@ export function useUnifiedAIAssistant({
       return;
     }
     if (isRecording) stopRecording();
+    aoSensor?.('novo_pedido.ia_analise_pedida', {
+      com_texto: !!text.trim(), imagens: images.length, cliente_na_tela: hasCustomerSelected,
+    });
 
     setIsAnalyzing(true);
     setAiMessage(null);
@@ -278,6 +282,7 @@ export function useUnifiedAIAssistant({
     setIdentifiedCustomer(null);
     clearImages();
     const total = identifiedProducts.length + identifiedServices.length;
+    aoSensor?.('novo_pedido.ia_itens_adicionados', { n: total, via: 'confirmar' });
     toast.success('Itens adicionados!', { description: `${total} item(ns) adicionado(s) ao pedido.` });
   };
 
@@ -301,6 +306,7 @@ export function useUnifiedAIAssistant({
         account: (suggestion.account || 'oben') as 'oben' | 'colacor',
       };
       onItemsIdentified({ products: [prod], services: [] });
+      aoSensor?.('novo_pedido.ia_itens_adicionados', { n: 1, via: 'sugestao' });
       toast.success('Produto adicionado!', { description: suggestion.descricao });
     } else if (suggestion.type === 'product' && (!suggestion.product_id || suggestion.product_id === '')) {
       // Suggestion without exact product_id - try to find it in products list
@@ -317,6 +323,7 @@ export function useUnifiedAIAssistant({
           account: (matchProd.account || suggestion.account || 'oben') as 'oben' | 'colacor',
         };
         onItemsIdentified({ products: [prod], services: [] });
+        aoSensor?.('novo_pedido.ia_itens_adicionados', { n: 1, via: 'sugestao' });
         toast.success('Produto adicionado!', { description: matchProd.descricao });
       } else {
         toast.error('Produto não encontrado', { description: 'Busque manualmente no catálogo.' });
@@ -329,12 +336,15 @@ export function useUnifiedAIAssistant({
         quantity: suggestion.quantity || 1,
       };
       onItemsIdentified({ products: [], services: [svc] });
+      aoSensor?.('novo_pedido.ia_itens_adicionados', { n: 1, via: 'sugestao' });
       toast.success('Serviço adicionado!', { description: suggestion.descricao });
     }
     setSuggestions(prev => prev.filter(s => s !== suggestion));
   };
 
   const clearSuggestions = () => {
+    const pendentes = identifiedProducts.length + identifiedServices.length + suggestions.length;
+    if (pendentes > 0) aoSensor?.('novo_pedido.ia_itens_descartados', { n: pendentes, via: 'limpar' });
     setAiMessage(null);
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
@@ -343,6 +353,7 @@ export function useUnifiedAIAssistant({
   };
 
   const removeIdentifiedProduct = (idx: number) => {
+    aoSensor?.('novo_pedido.ia_itens_descartados', { n: 1, via: 'remover' });
     setIdentifiedProducts(prev => prev.filter((_, i) => i !== idx));
   };
 
