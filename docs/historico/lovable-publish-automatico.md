@@ -251,3 +251,53 @@ atrás do ar (o gate não a olharia de novo: o caminho é aplicar); e, liberado 
 recibos imediatamente antes do disparo (uma revogação durante o ledger perdia para o cache de 5 min).
 Grant por COLUNA (`attacl`) e membro herdando `claude_rw`: medidos em PROD em 26/11 — zero `attacl` na
 tabela, único membro do `claude_rw` é o dono `postgres`; sem migration nova, fica registrado.
+
+**Pronto do PR 2 no `vigia.log` (26/11 22:59):** o vigia já roda a versão de `f81162f6`, lê os recibos
+(`recibos ar=39ea6374 main=f81162f6: 1 …`) e RETÉM corretamente: 10 `aplicada` e 3 `sem_recibo`
+(`20261126233000_omie_os_espelho`, `20261127000000_fin_mov_chave_ncodbaixa`,
+`20261127100000_credito_painel_nome_grupo`). O par `liberado: recibos` → `PUBLICADO` ainda não aconteceu:
+fica para quando essas 3 tiverem recibo (ou forem adiadas por `db-adiar.sh`).
+
+## PR 3 (2026-11-27): disparo à prova de erro
+
+**Incidente:** o mesmo do plano (auditoria Fable + Codex, itens 4/6/7/8/9). Os buracos eram de disparo:
+store padrão como fallback (o blob onde o token do lovable SUMIU em 25/11), nenhuma memória de um deploy
+em voo quando o stream terminava inconclusivo, `DISPARADO` aceito sem conferir projeto/slug/SHA, ar
+divergente só em log, lock roubado pela idade, prazos por contagem de `sleep`.
+
+- **Store próprio obrigatório:** sem `$CFG_DIR/.vigia-pronto` o vigia avisa 1x por episódio (`$EST/sem-store`)
+  e PARA, sem chamar o claude. `needs-auth` é por episódio: acaba na 1ª leitura do PROJETO em qualquer das
+  2 chamadas.
+- **Intenção** (`$EST/intencao`: `sha= hora= tentativa= ar=` + `dep=` quando lido), gravada atomicamente
+  ANTES de qualquer `claude -p`. Se a gravação falhar, não há disparo. Só some quando: o stream está COMPLETO
+  (tem `result`) sem `deploy_project`; o ar mudou (é reclassificado contra o `sha` da intenção, mesmo num
+  tick posterior); ou passaram `LV_INTENCAO_S` (1200 s). Enquanto pendente, nenhum disparo e nem releitura
+  de recibos. Stream truncado sem deploy visível = `INDETERMINADO`, sem 2ª chamada.
+- **Controle determinístico do stream** (`controle()` em jq): ≤1 `deploy_project`; `project_id` = PROJETO;
+  `name` = `steu`; `get_project` do mesmo projeto com resultado sem erro e ANTERIOR ao deploy na ordem do
+  stream; `latest_commit_sha` NA RAIZ do JSON (o texto real vem com o prefixo `[Image: …]`) = HEAD. Fora
+  disso → `VIOLACAO`: desiste do SHA na hora (3/3, aviso + Issue) e mantém a intenção. A escrita no Lovable
+  não é interceptável pelo stream: o controle impede que o vigia aceite um deploy fora do roteiro e o escala.
+  `SHA_LOV`/`DEP_ID` só valem de chamadas com o `project_id` certo.
+- **Reconciliação do ar** (`classifica()`): alvo · `PUBLICADO_ADIANTE` (descendente limpo) · descendente COM
+  camada (aviso por SHA, nomeando o arquivo) · **divergente** → `$EST/alerta-divergente` + aviso por
+  episódio, que só acaba quando o ar sai daquele SHA. Carimbo que o clone não conhece → `fetch` e o curto cru. Stream vazio (sem `init`) = nada rodou.
+- **Lock = PID + posse:** `$EST/lock/pid`; só é tomado se o dono morreu ou se o PID foi reciclado por algo
+  que não é `bash …/lovable-vigia.sh` (um `tail -f vigia.log` não segura o lock). A tomada passa por
+  `lock.tomada` com re-conferência do PID. Dono vivo há >60 min → aviso, sem roubo.
+- **Relógio:** a prova pelo ar mede `date +%s` decorrido (`LV_PASSO_AR`); o backoff conta do FIM da falha
+  (`adia`). A Issue de desistência que não abriu (gh fora) fica em `$EST/issue-pendente` e é re-tentada no
+  máximo a cada 15 min.
+
+Testes: `scripts/test-lovable-vigia.sh` OK (53). As falsificações rodam com controle verde na MESMA invocação
+(`falsifica <nome> <sed> <roteiro>`: o roteiro passa no vigia real, a sabotagem tem de casar e o roteiro
+tem de reprovar o sabotado): `controle`, `intencao`, `lock`, `backoff`, `truncado`, `le_e_cai`, `issue`,
+`store` e o lembrete do episódio RETIDO.
+
+**Challenge Codex do PR 3 (gpt-6.2-astra/high, 89 s): 10 achados, todos tratados.** Timeout podia gerar
+2 deploys num tick (stream truncado = `SEM_DEPLOY` → 2ª chamada). Dois ticks podiam tomar o mesmo lock
+morto (B renomeava o lock novo de A). Intenção não gravada ainda disparava. O SHA era casado no texto
+inteiro, e um objeto aninhado passava. Publicação tardia divergente apagava a intenção sem alerta. Carimbo
+não resolvível virava "ar segue". PID reciclado por `tail -f vigia.log` travava todo tick. `get_project` de
+outro projeto adiava para sempre. O episódio `needs-auth` se perdia entre as 2 chamadas. A Issue que não
+abriu sumia em silêncio.

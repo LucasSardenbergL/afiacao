@@ -366,7 +366,9 @@ for TENT in 1 2; do
   CTRL=$(controle)
   # stream COMPLETO = tem o evento `result`. Truncado (timeout, morte) sem deploy visível NÃO prova que não
   # houve deploy (Codex PR3 #1): o tool_use pode ter ido ao Lovable sem chegar ao arquivo.
+  # Sem o `init` a sessão nem começou: nenhuma ferramenta pode ter rodado (stream vazio = SEM_DEPLOY mesmo).
   COMPLETO=0; jq -e 'select(.type=="result")' "$EST/claude.jsonl" >/dev/null 2>&1 && COMPLETO=1
+  jq -e 'select(.type=="system" and .subtype=="init")' "$EST/claude.jsonl" >/dev/null 2>&1 || COMPLETO=1
   [ -n "$SHA_LOV" ] && LIDO=1
   if [ "$CTRL" = SEM_DEPLOY ] && [ "$COMPLETO" = 0 ] && [ -z "$DEP_ID" ]; then CTRL=TRUNCADO; fi
   if case "$CTRL" in VIOLACAO*) true ;; *) false ;; esac; then RES="$CTRL"

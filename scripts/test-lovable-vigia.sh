@@ -34,7 +34,7 @@ printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$LVT/cfgdir"
 cp intencao "$LVT/intencao-visto" 2>/dev/null || : > "$LVT/intencao-visto"   # cwd = $EST
 n=$(wc -l < "$LVT/chamadas" | tr -d ' '); f="$LVT/stream-$LVT_CENARIO.jsonl"; [ -f "$LVT/stream-$LVT_CENARIO-$n.jsonl" ] && f="$LVT/stream-$LVT_CENARIO-$n.jsonl"
 sed "s/@HEAD@/$(cat "$LVT/head")/g" "$f"
-case "$LVT_CENARIO" in fabricado|divergente|needs_auth|sem_ar|gp_outro|le_e_cai) ;; *) touch "$LVT/ar-novo" ;; esac
+case "$LVT_CENARIO" in fabricado|divergente|needs_auth|sem_ar|gp_outro|le_e_cai|vazio) ;; *) touch "$LVT/ar-novo" ;; esac
 [ "$LVT_CENARIO" = truncado ] && exit 124
 [ "$LVT_CENARIO" = timeout_pos_deploy ] && exit 124
 exit 0
@@ -73,7 +73,7 @@ DEPR='{\"status\":\"pending\",\"deployment_id\":\"dep-9\"}'
 { init connected; uso t1 get_project '{"project_id":"x"}'; res t1 "$(gp "$OUTRO")"; fim "VIGIA=NAO_SINCRONIZADO"; } > "$TMP/stream-gp_outro.jsonl"
 # Codex PR3 #9: 1ª chamada lê a main e cai sem deploy; a 2ª volta em needs-auth
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; fim "VIGIA=ERRO x"; } > "$TMP/stream-le_e_cai-1.jsonl"
-cp "$TMP/stream-needs_auth.jsonl" "$TMP/stream-le_e_cai-2.jsonl"; cp "$TMP/stream-needs_auth.jsonl" "$TMP/stream-le_e_cai.jsonl"
+{ init needs-auth; fim "VIGIA=ERRO x"; } > "$TMP/stream-le_e_cai-2.jsonl"; cp "$TMP/stream-le_e_cai-2.jsonl" "$TMP/stream-le_e_cai.jsonl"
 for c in issue tardia; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
 { init connected; fim "VIGIA=DISPARADO inventado"; } > "$TMP/stream-fabricado.jsonl"
 { init connected; uso t1 get_project; res t1 "$(gp "$OUTRO")"; fim "VIGIA=DISPARADO x"; } > "$TMP/stream-divergente.jsonl"
@@ -220,9 +220,11 @@ done
 r_controle() { roda viol_nome; tem "→ VIOLACAO" && ! tem "PUBLICADO"; }
 roda prefixo; tem "→ DISPARADO dep-9" && tem "PUBLICADO" && ok "texto real com prefixo [Image: …] → controle OK, PUBLICADO" || nok "prefixo: $(tail -2 "$LOGV")"
 r_truncado() { roda truncado; [ "$CHAMADAS" = 1 ] && tem "rc=124" && tem "→ INDETERMINADO" && ! tem "intenção" ; }
+: > "$TMP/stream-vazio.jsonl"; roda vazio
+{ [ "$CHAMADAS" = 2 ] && tem "→ ERRO" && [ ! -f "$TMP/est-vazio/intencao" ]; } && ok "stream vazio (sem init) → nada rodou: ERRO, 2ª chamada, intenção resolvida" || nok "vazio: chamadas=$CHAMADAS $(tail -2 "$LOGV")"
 r_truncado && ok "stream truncado sem deploy visível → INDETERMINADO, SEM 2ª chamada" || nok "truncado: chamadas=$CHAMADAS $(tail -2 "$LOGV")"
 roda gp_outro
-{ [ "$CHAMADAS" = 2 ] && tem "→ ERRO" && ! tem "NAO_SINCRONIZADO" && tem "FALHOU (1/3)"; } \
+{ [ "$CHAMADAS" = 2 ] && tem "→ ERRO" && ! tem "→ NAO_SINCRONIZADO" && tem "FALHOU (1/3)"; } \
   && ok "get_project de outro projeto não vale como leitura (ERRO, não NAO_SINCRONIZADO eterno)" || nok "gp_outro: chamadas=$CHAMADAS $(tail -2 "$LOGV")"
 r_le_e_cai() { local e="$TMP/est-le_e_cai"; rm -rf "$e"; mkdir -p "$e"; date +%s > "$e/needs-auth"
   LVT_MANTEM=1 roda le_e_cai; [ "$CHAMADAS" = 2 ] && tem "→ NEEDS_AUTH" && tem "AVISO: MCP lovable em needs-auth"; }
@@ -313,10 +315,12 @@ falsifica() {  # <nome> <sed> <roteiro>
 # shellcheck disable=SC2016  # os $ são LITERAIS do fonte sabotado
 falsifica controle 's/if case "\$CTRL" in VIOLACAO\*) true ;; \*) false ;; esac; then RES="\$CTRL"/if false; then RES=x/' r_controle
 falsifica intencao 's/^    INT_PENDENTE=1$/    INT_PENDENTE=0/' r_intencao
-falsifica lock 's/grep -q vigia && exit 0/grep -q vigia \&\& true/' r_lock
+# shellcheck disable=SC2016  # $DONO é LITERAL do fonte sabotado
+falsifica lock 's/^    if dono_vivo "\$DONO"; then$/    if false; then/' r_lock
 # shellcheck disable=SC2016
 falsifica backoff 's/^adia() { grava "\$EST\/tentativa" "\$HEAD_SHA \$N \$(( \$(date +%s) + \$1 ))"; }/adia() { grava "$EST\/tentativa" "$HEAD_SHA $N $((AGORA + $1))"; }/' r_backoff
 falsifica truncado 's/then CTRL=TRUNCADO; fi/then true; fi/' r_truncado
+# shellcheck disable=SC2016  # $SHA_LOV é LITERAL do fonte sabotado
 falsifica le_e_cai 's/^  \[ -n "\$SHA_LOV" \] \&\& LIDO=1$/  true/' r_le_e_cai
 falsifica issue 's/^abre_issue tick$/true/' r_issue
 # shellcheck disable=SC2016
