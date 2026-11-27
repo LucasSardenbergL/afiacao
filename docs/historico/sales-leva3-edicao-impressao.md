@@ -35,6 +35,14 @@ endereço da OS pela `contato_cliente_operacional`) — nada dos achados abaixo.
   `useSalesOrderEdit.catalogAccount.test.tsx` (#28, #40), `SalesPrintDashboard.leituras.test.tsx` (L2-c, L2-d, #36).
 - Falsificação: 14 sabotagens, uma camada por vez, controle verde na mesma invocação, `LC_ALL=C` e `pt_BR.UTF-8`.
 
+## Revisão (sem Codex: cota em 99% até 02/12 → Caminho B)
+Revisor adversarial por subagente, sem a conclusão no prompt: nenhum P1/P2. **P3-1 consertado aqui**: a impressão
+passava enquanto o nome/contato ainda estavam sendo lidos (as novas tentativas do react-query deixam `isError` em
+`false`) e a via saía com "Cliente" — agora espera também a leitura PENDENTE de query habilitada. P3-2 (endereço e
+código Omie que falham só avisam, não travam) fica como desenho: é ausência avisada, não dado inventado.
+O teste do print lê o HTML real que o cupom escreve na janela (nem import nem `vi.mock` do `OrderPrintLayout`,
+que é do módulo loja-afiacao — `fronteiras.gate`).
+
 ## Resíduos / fica para depois
 - A queryFn das FORMAS no print degrada conta a conta e não lança: o `isError` só cobre exceção inesperada.
 - "PV Oben (já enviado)" (reenvio de envelope confirmado) segue imprimindo o rótulo no lugar do número — é
