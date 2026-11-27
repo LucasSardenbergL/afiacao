@@ -333,3 +333,45 @@ e `token` (sem o token, o dublê não o recebe).
 - **Resíduo (anterior ao PR 4):** o Lovable pode sincronizar um commit B entre o `get_project` (= A) e o
   `deploy_project`, que não recebe SHA. O pós-deploy classifica B e avisa "COM camada" se houver migration
   ou edge no meio, mas DEPOIS do Publish. Fechar isso exige um deploy por SHA, que o MCP não oferece.
+
+## PR 5 (2026-11-27): medir a 1ª chamada antes de tirar o modelo do disparo
+
+O disparo ainda passa por um LLM (Haiku), que chama `get_project` + `deploy_project`. Tirar o modelo e chamar o
+MCP direto é decisão de arquitetura e espera um **número**, não impressão. O PR 5 versiona o comando que gera
+esse número; o modelo **não** sai do disparo agora.
+
+- **Comando:** `scripts/vigia-taxa-1a-chamada.sh [log] [dias]` (default `vigia.log` + `.1`/`.2`, 7 dias).
+  - Conta as linhas `claude (1/2) rc=… → <RESULTADO>`.
+  - **Acerto** = `DISPARADO` ou `NAO_SINCRONIZADO`, quando o protocolo andou e o veredito saiu do tool_result.
+  - Imprime o **denominador**. Sem 1ª chamada na janela → `TAXA=SEM_DADO denominador=0` e exit 3 (ausente ≠ zero).
+  - Só conta a era do protocolo, ou seja, as linhas com ` mcp=` (desde o #4189). As linhas legadas `VIGIA=…`
+    traziam o texto do modelo, que chegou a fabricar DISPARADO. Por isso saem do denominador e aparecem à
+    parte em `legado_excluido=`.
+- **Teste:** `scripts/test-vigia-taxa-1a-chamada.sh` (no `test:hooks`) dá OK (18). O log fabricado tem 3
+  arquivos e o `.2` contribui. Esperado: `TAXA=37.5% acertos=3 denominador=8 legado_excluido=1` em 7 dias e
+  `28.6%` com denominador 7 em 5 dias; a comparação é LITERAL, em `C` e em `pt_BR.UTF-8`. Também cobre:
+  - vazio/ausente → exit 3;
+  - só ERRO → `0.0%` com exit 0 (zero ≠ ausente);
+  - 113/119 aparece `95.0%` com `corte95=NAO_ATINGIDO`;
+  - arquivo rotacionado ilegível → exit 2, sem taxa parcial.
+  As sabotagens têm controle verde na mesma invocação e o mutante precisa RODAR: `janela`, `teto`,
+  `rotacionados`, `legado`, `acerto`, `so_primeira`, `primeira_seta`, `dias` e `locale`.
+- **Challenge Codex do PR 5 (gpt-6.2-astra/high, 80 s): 8 achados, todos tratados.**
+  - O mais grave: `sub(/.* → /)` pegava a ÚLTIMA seta, e `→ ERRO (modelo: … → DISPARADO)` contava como
+    acerto. Agora o resultado é a 1ª palavra depois da 1ª seta, e o cabeçalho é reconhecido por CAMPO
+    (`$3=claude $4=(1/2) $5=rc= $6=mcp=`). Antes, um legado que terminava em `mcp=…` entrava no
+    denominador, e um `(2/2)` que citava `(1/2)` também.
+  - Leitura que falha aborta (antes saía com taxa parcial e exit 0). Rotação durante a leitura é detectada
+    por inode e relida.
+  - Janela com teto (linha do futuro não entra) e início validado (um GNU `date` que não converte deixava
+    a janela vazia, ou seja, todo o histórico).
+  - `LC_ALL=C`: em pt_BR o awk do macOS imprimia `33,3`, e o `grep` do teste aceitava, porque o `.` é curinga.
+  - O corte sai em inteiro em `corte95=`: o % arredondado pode virar a decisão.
+  - Teste: o `.2` contribui, `dias` varia, há o caso zero-acerto, e mutante quebrado não conta como vermelho.
+- **1ª medição (2026-11-27):** `TAXA=75.0% acertos=3 denominador=4 legado_excluido=4 corte95=NAO_ATINGIDO`. São 3 DISPARADO e
+  1 NEEDS_AUTH (o episódio de 25/11, em que o token sumiu). **Denominador 4 não decide nada.**
+- **Decisão, por volta de 03/12/2026:** rodar o comando (janela de 7 dias) e registrar a linha `TAXA=` aqui. Quem decide é `corte95=`, não o %.
+  - **≥95%:** fica como está, fechado com o número.
+  - **Abaixo de 95%:** o próximo PR tira o LLM do disparo e chama o MCP do Lovable direto.
+  - Com denominador pequeno (o vigia só chama o claude quando há o que publicar), registrar o número com o
+    denominador e decidir explicitamente. "Ninguém reclamou" não é sinal.
