@@ -126,6 +126,9 @@ export function desfechoDoEnvioPeloBanco(resp: { data: unknown; error: unknown }
  * descontos só os DESTE pedido (cancelar por prefixo interrompia a leitura do cupom de outro pedido).
  * O chamador não espera: o refetch de uma consulta ativa não segura a navegação.
  */
+const canonico = (v: unknown) => (typeof v === 'string' ? v.toLowerCase().replace(/[^0-9a-f]/g, '') : null);
+const mesmoPedido = (a: unknown, b: string) => { const x = canonico(a); return x !== null && x !== '' && x === canonico(b); };
+
 export async function invalidarCachesDoPedido(
   queryClient: Pick<QueryClient, 'invalidateQueries' | 'cancelQueries'>,
   pedidoId: string,
@@ -134,8 +137,9 @@ export async function invalidarCachesDoPedido(
     { queryKey: ['order-feed'] },
     { queryKey: ['order-feed-total'] },
     // orderDetailQueryKey = ['order-detail', userId, origin, id]; descontosItensQueryKey = [..., userId, id]
-    { queryKey: ['order-detail'], predicate: (q: { queryKey: readonly unknown[] }) => q.queryKey[3] === pedidoId },
-    { queryKey: ['order-descontos-itens'], predicate: (q: { queryKey: readonly unknown[] }) => q.queryKey[2] === pedidoId },
+    // Pela forma CANÔNICA do UUID nos dois lados: a rota aceita maiúsculas/sem hífen, a lista usa o do banco (Codex r4).
+    { queryKey: ['order-detail'], predicate: (q: { queryKey: readonly unknown[] }) => mesmoPedido(q.queryKey[3], pedidoId) },
+    { queryKey: ['order-descontos-itens'], predicate: (q: { queryKey: readonly unknown[] }) => mesmoPedido(q.queryKey[2], pedidoId) },
   ];
   await Promise.all(filtros.map((f) => queryClient.cancelQueries(f)));
   await Promise.all(filtros.map((f) => queryClient.invalidateQueries(f)));

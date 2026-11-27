@@ -904,6 +904,31 @@ describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', (
     expect(b.result.current.formularioTravado).toBe(true);
   });
 
+  it('F5 NO MEIO do envio: o token já estava pendente antes do despacho e reabrir o encerra (Codex r4)', async () => {
+    const a = await renderLoaded();
+    mockedInvoke.mockImplementation((async (_n: string, o: { body?: { action?: string } }) =>
+      o?.body?.action === 'alterar_pedido' ? new Promise(() => {}) : { data: { formas: [] }, error: null }) as never);
+    act(() => { void a.result.current.handleSave(); });
+    await waitFor(() => expect(bodyDoAlterar()?.token).toBeTruthy());
+    const token = bodyDoAlterar()?.token;
+    a.unmount();
+    const { esquecerMemoriaParaTeste } = await import('../registroEnvios');
+    esquecerMemoriaParaTeste(); // F5: a memória (em voo, divergente) some; o storage fica
+    posseMock.encerrar = { data: 'abandonada', error: null };
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    const b = await renderLoaded();
+    expect(encerramentos().map((c) => (c.args as { p_token: string }).p_token)).toEqual([token]);
+    expect(b.result.current.precisaRecarregar).toBeNull();
+  });
+
+  it('sucesso provado tira o token do pendente (não fica rastro para encerrar)', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    const { tokensPendentes } = await import('../registroEnvios');
+    expect(tokensPendentes('ord-1')).toEqual([]);
+  });
+
   it('token pendente que um master resolveu: reabrir com o PV livre destrava (não fica pendente para sempre)', async () => {
     posseMock.encerrar = { data: null, error: { message: 'rede' } };
     const { result } = await renderLoaded();

@@ -182,8 +182,6 @@ export function useSalesOrderEdit() {
           if (d === 'divergente') marcarDivergente(id);
         }
       }
-      // Concluiu depois que a tela desistiu: o cache pode ter relido o total de antes (cupom/WhatsApp).
-      if (algumConcluiu) void invalidarCachesDoPedido(queryClient, id);
       const { data, error } = await supabase
         .from('sales_orders')
         .select('id, customer_user_id, created_by, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, updated_at, hash_payload')
@@ -192,6 +190,8 @@ export function useSalesOrderEdit() {
       if (error) throw error;
       if (velha()) return;
       const row = data;
+      // Concluiu depois que a tela desistiu: o cache pode ter relido o total de antes (cupom/WhatsApp).
+      if (algumConcluiu) void invalidarCachesDoPedido(queryClient, row.id);
       // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
       // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
       // {...order.omie_payload, cabecalho:{codigo_parcela}} — sem o payload atual, salvar APAGARIA
@@ -607,6 +607,10 @@ export function useSalesOrderEdit() {
     // Token DESTE salvamento: a edge reivindica a posse por ele, e é por ele que a tela pergunta ao banco o que
     // houve quando a resposta se perde (migration 20261127100200).
     const tokenEnvio = viaOmie ? crypto.randomUUID() : null;
+    // PENDENTE desde ANTES do despacho (Codex r4): um F5 no meio do envio deixa o token no aparelho, e reabrir o
+    // encerra no banco. Só sai com desfecho PROVADO (sucesso, recusa conhecida antes do Omie, banco decidido).
+    let manterPendente = true;
+    if (tokenEnvio) marcarPendente(pedidoEnviado, tokenEnvio);
     // Desfecho desconhecido (#30; Codex no desenho do PR 2): o banco decide, e a consulta ENCERRA o token — se a
     // edge ainda não despachou, nada deste save vai mais ao Omie. Leitura que falha ou não fecha = divergente.
     const desfechoDesconhecido = async (titulo: string) => {
@@ -618,8 +622,8 @@ export function useSalesOrderEdit() {
         desfecho = await desfechoNoBanco(pedidoEnviado, tokenEnvio);
         if (desfecho !== 'em_voo') break;
       }
-      // Sem prova: o token fica PENDENTE — reabrir o pedido o encerra no banco antes de destravar.
-      if ((desfecho === 'divergente' || desfecho === 'em_voo') && tokenEnvio) marcarPendente(pedidoEnviado, tokenEnvio);
+      // Sem prova: o token SEGUE pendente — reabrir o pedido o encerra no banco antes de destravar.
+      manterPendente = desfecho === 'divergente' || desfecho === 'em_voo';
       // Resolvido por um master no meio: esta aba não sabe como o Omie ficou — trava até reler (sem pendente: o
       // banco já decidiu este token).
       if (desfecho === 'divergente' || desfecho === 'resolvido') marcarDivergente(pedidoEnviado);
@@ -712,8 +716,15 @@ export function useSalesOrderEdit() {
           return;
         }
         const { data, error } = despacho.valor;
+        {
+          const d = data as { success?: unknown; blocked?: unknown } | null;
+          if (!error && (d?.success === true || (typeof d?.blocked === 'string' && RECUSAS_ANTES_DO_OMIE.includes(d.blocked)))) {
+            manterPendente = false;
+          }
+        }
         if (error) {
           const falha = await lerFalhaDoEnvio(error);
+          if (!falha.exigeRecarregar) manterPendente = false;
           const mensagem = falha.mensagem || error.message || 'Erro desconhecido';
           if (falha.exigeRecarregar) {
             // #30: o Omie pode já ter mudado (ou o desfecho é desconhecido) — o banco decide.
@@ -929,6 +940,7 @@ export function useSalesOrderEdit() {
       setSaving(false);
     } finally {
       envioEmVooRef.current = false;
+      if (tokenEnvio && !manterPendente) resolverPendente(pedidoEnviado, tokenEnvio);
       if (viaOmie) encerrarEnvio(pedidoEnviado);
     }
   };
