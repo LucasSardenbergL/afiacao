@@ -57,8 +57,13 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * `admitir_vinculo_conferido` (migration 20261116180000). `criar_perfil_local` usa o documento e os dados
  * da Omie, não os do body; ação nova `vincular_aprovado` (tela de aprovações). Sem resposta da Omie, nada
  * é gravado.
+ *
+ * `v1.13-pii-carteira` (2026-11-26, onda D 4b-2): `pesquisar_clientes` e `consultar_cliente` devolvem
+ * documento, e-mail, telefone, endereço e IE só do cliente na carteira/cobertura do chamador (ou para a
+ * gestão); fora dela, `null` e `contato_visivel: false` (`pii-carteira.ts`). A impressão do pedido abre
+ * pela `contato_cliente_operacional` (ledger) quando o documento do pedido casa com o da Omie.
  */
-export const VERSAO = "v1.12-vinculo-conferido";
+export const VERSAO = "v1.13-pii-carteira";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

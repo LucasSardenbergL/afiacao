@@ -6,6 +6,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
 import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
+import { aplicarVisibilidade, codigosVisiveis, documentoDoPedidoCasa, lerAcessoOperacional } from "./pii-carteira.ts";
 import {
   type ClienteOmieConsultado,
   codigoUnicoDoDocumento,
@@ -662,6 +663,51 @@ async function pesquisarClientes(query: string, pagina: number = 1): Promise<{ c
   }
 }
 
+// Onda D 4b-2: quais códigos Omie (conta colacor_sc, a que `callOmieApi` consulta) têm o contato visível
+// para o chamador. "todos" = gestão (`pode_ver_carteira_completa`). Qualquer erro → conjunto vazio
+// (mascara tudo): ausente ≠ visível.
+async function codigosComContatoVisivel(
+  codigos: number[],
+  chamadorId: string | null,
+  clienteDoChamador: SupabaseClient | null,
+): Promise<Set<number> | "todos"> {
+  const vazio = new Set<number>();
+  if (!chamadorId || !clienteDoChamador) return vazio;
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data: gestao, error: gestaoErro } = await admin.rpc("pode_ver_carteira_completa", { _uid: chamadorId });
+  if (gestaoErro) {
+    console.error(`[pii-carteira] gestão não lida (${gestaoErro.code}): mascarando`);
+    return vazio;
+  }
+  if (gestao === true) return "todos";
+  const alvo = [...new Set(codigos.filter((c) => Number.isFinite(c) && c > 0))];
+  if (alvo.length === 0) return vazio;
+  const { data: vinculos, error: vincErro } = await admin
+    .from("omie_customer_account_map")
+    .select("omie_codigo_cliente, user_id")
+    .eq("account", "colacor_sc")
+    .in("omie_codigo_cliente", alvo);
+  if (vincErro) {
+    console.error(`[pii-carteira] vínculos não lidos (${vincErro.code}): mascarando`);
+    return vazio;
+  }
+  const userIds = [...new Set((vinculos ?? []).map((v) => v.user_id).filter((u): u is string => !!u))];
+  if (userIds.length === 0) return vazio;
+  // Sob o JWT do chamador: `contato_visivel` é a regra da carteira/cobertura do banco.
+  const { data: perfis, error: perfErro } = await clienteDoChamador
+    .from("v_perfil_contato")
+    .select("user_id, contato_visivel")
+    .in("user_id", userIds);
+  if (perfErro) {
+    console.error(`[pii-carteira] carteira não lida (${perfErro.code}): mascarando`);
+    return vazio;
+  }
+  const visiveis = new Set(
+    (perfis ?? []).filter((p) => p.contato_visivel === true && p.user_id).map((p) => p.user_id as string),
+  );
+  return codigosVisiveis(vinculos ?? [], visiveis);
+}
+
 async function consultarClienteCompleto(codigoCliente: number): Promise<OmieCliente | null> {
   try {
     const result = await callOmieApi("geral/clientes/", "ConsultarCliente", {
@@ -757,6 +803,9 @@ Deno.serve(async (req) => {
     // Só o master escolhe o vendedor responsável (achado b339bb5b; decisão do founder). Fica true
     // apenas quando o gate abaixo LÊ o papel master do chamador; qualquer outro caminho é false.
     let chamadorEhMaster = false;
+    // Onda D 4b-2: quem pergunta e com que JWT — a carteira é decidida pelo banco sob o JWT do chamador.
+    let chamadorId: string | null = null;
+    let clienteDoChamador: SupabaseClient | null = null;
     // v1.12 (b339bb5b residual): o employee não grava mais vínculo pela RPC de carteira com o próprio
     // JWT (a v1.11 fazia isso). O vínculo novo dele passa pela conferência do código na Omie e pela
     // `admitir_vinculo_conferido` (service_role, que só o servidor executa) — ver criar_perfil_local e
@@ -782,6 +831,8 @@ Deno.serve(async (req) => {
       if (authError || !user) {
         return jsonRes({ error: "Token inválido" }, 401);
       }
+      chamadorId = user.id;
+      clienteDoChamador = supabaseAuth;
 
       // Staff-only gate for sensitive/privileged actions. Only buscar_por_documento
       // remains JWT-only (used by the public client lookup flow with rate limit).
@@ -850,8 +901,13 @@ Deno.serve(async (req) => {
         }
 
         const searchResult = await pesquisarClientes(query);
+        const visiveisBusca = await codigosComContatoVisivel(
+          searchResult.clientes.map((c) => Number(c.codigo_cliente_omie || c.codigo_cliente)),
+          chamadorId,
+          clienteDoChamador,
+        );
         result = {
-          clientes: searchResult.clientes.map(c => ({
+          clientes: searchResult.clientes.map(c => aplicarVisibilidade({
             codigo_cliente: c.codigo_cliente_omie || c.codigo_cliente,
             // Busca do staff: o CPF do titular de MEI na razão (e no fantasia, que costuma repeti-la) sai mascarado.
             razao_social: razaoSemCpf(c.razao_social),
@@ -862,7 +918,7 @@ Deno.serve(async (req) => {
             cidade: c.cidade,
             estado: c.estado,
             codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
-          })),
+          }, visiveisBusca === "todos" || visiveisBusca.has(Number(c.codigo_cliente_omie || c.codigo_cliente)))),
           total: searchResult.total,
         };
         break;
@@ -955,9 +1011,23 @@ Deno.serve(async (req) => {
 
         const clienteCompleto = await consultarClienteCompleto(codigo_cliente);
         if (clienteCompleto) {
+          const visiveisConsulta = await codigosComContatoVisivel([codigo_cliente], chamadorId, clienteDoChamador);
+          let visivel = visiveisConsulta === "todos" || visiveisConsulta.has(codigo_cliente);
+          // Exceção operacional (impressão do pedido): a RPC valida o staff, grava o ledger e devolve o
+          // documento do cliente DO PEDIDO; só abre se for este cadastro Omie.
+          const operacional = lerAcessoOperacional(body.operacional);
+          if (!visivel && operacional && clienteDoChamador) {
+            const { data: linhas, error: opErro } = await clienteDoChamador.rpc("contato_cliente_operacional", {
+              p_objeto_tipo: operacional.objeto_tipo,
+              p_objeto_ids: [operacional.objeto_id],
+              p_motivo: operacional.motivo,
+            });
+            if (opErro) console.error(`[consultar_cliente] exceção operacional recusada (${opErro.code})`);
+            else visivel = documentoDoPedidoCasa(linhas ?? [], clienteCompleto.cnpj_cpf);
+          }
           result = {
             found: true,
-            cliente: {
+            cliente: aplicarVisibilidade({
               codigo_cliente: clienteCompleto.codigo_cliente,
               razao_social: razaoSemCpf(clienteCompleto.razao_social),
               nome_fantasia: razaoSemCpf(clienteCompleto.nome_fantasia),
@@ -974,7 +1044,7 @@ Deno.serve(async (req) => {
               pessoa_fisica: clienteCompleto.pessoa_fisica,
               inscricao_estadual: clienteCompleto.inscricao_estadual,
               codigo_vendedor: clienteCompleto.recomendacoes?.codigo_vendedor || clienteCompleto.codigo_vendedor,
-            },
+            }, visivel),
           };
         } else {
           result = { found: false, cliente: null };

@@ -520,7 +520,7 @@ Deno.serve(async (req) => {
           try {
             const { data: profiles } = await supabase
               .from("profiles")
-              .select("user_id, name, document, email, phone")
+              .select("user_id, name, document")
               .or(ilikeOr(term, "name"))
               .limit(20);
             if (profiles) {

@@ -58,7 +58,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // v1.18 (2026-11-25) — reenvio que RECONCILIA a OS devolve `aviso_local` quando o endereço/turno deste envio difere do
 //   gravado em `orders` (o upsert com ignoreDuplicates mantinha o da tentativa anterior em silêncio). Só AVISA, não
 //   regrava (decisão do founder depois de 2 rodadas do Codex no #4174). Endereço/turno seguem FORA da assinatura (PR 2.5).
-export const VERSAO = "v1.18-reenvio-endereco-turno";
+// v1.19 (2026-11-26) — onda D 4b-2: `sync_order` sem `staffContext.customerUserId` é recusado (400) antes de tocar a
+//   Omie; o fallback para o id do chamador gravava a OS no nome do vendedor (o chamador é sempre staff/cron).
+export const VERSAO = "v1.19-titular-sem-fallback";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

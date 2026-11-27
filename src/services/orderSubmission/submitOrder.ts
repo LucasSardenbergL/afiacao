@@ -19,6 +19,8 @@ import {
   getToolName,
   missingAccountIdentities,
   resolveCustomerPhone,
+  titularDoPedido,
+  MSG_TITULAR_SEM_CLIENTE,
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
 import { ensureSalesOrderRow } from './idempotency';
@@ -131,6 +133,17 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   // Frente B (PR1): registros da decisão de prazo correm em PARALELO ao resto do envio e são
   // esperados com teto só no fim — a auditoria da Oben nunca segura o PV da Colacor (Codex P1 #3).
   const registrosPrazo: Promise<void>[] = [];
+
+  // Onda D 4b-2: titular resolvido ANTES de qualquer efeito; staff sem cliente vinculado não grava.
+  const titular = titularDoPedido(customerUserId, user.id, isCustomerMode);
+  if (!titular) {
+    return {
+      success: false,
+      results: [],
+      errors: [{ step: 'validate_titular', message: MSG_TITULAR_SEM_CLIENTE }],
+      allConfirmed: false,
+    };
+  }
 
   if (!obenProductItems.length && !colacorProductItems.length && !serviceItems.length) {
     return {
@@ -265,7 +278,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'oben', origem, atendimentoId,
         fields: {
-          customer_user_id: customerUserId || user.id,
+          customer_user_id: titular,
           created_by: user.id,
           items: itemsPayload,
           subtotal: subtotals.oben,
@@ -288,7 +301,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         stage: 'supabase_insert',
         account: 'oben',
         customerId: customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: titular,
         itemCount: obenProductItems.length,
         error: e,
       });
@@ -437,7 +450,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'colacor', origem, atendimentoId,
         fields: {
-          customer_user_id: customerUserId || user.id,
+          customer_user_id: titular,
           created_by: user.id,
           items: itemsPayload,
           subtotal: subtotals.colacor,
@@ -458,7 +471,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         stage: 'supabase_insert',
         account: 'colacor',
         customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: titular,
         itemCount: colacorProductItems.length,
         error: e,
       });
@@ -709,7 +722,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         customerOmieCode: isCustomerMode
           ? (customer.codigo_cliente_afiacao || customer.codigo_cliente)
           : customer.codigo_cliente_afiacao!,
-        customerUserId: customerUserId || null,
+        customerUserId: titular,
         // Vendedor é por-conta: NUNCA cair no vendedor Oben (comissão errada). Ausente = null (edge tolera).
         customerCodigoVendedor: customer.codigo_vendedor_afiacao ?? null,
       };

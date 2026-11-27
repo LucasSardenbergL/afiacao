@@ -60,7 +60,7 @@ export function useProfileStats(userId: string | undefined) {
     queryKey: ['profile', 'stats', userId],
     queryFn: async () => {
       const [addrRes, orderRes, toolRes] = await Promise.all([
-        supabase.from('addresses').select('*', { count: 'exact', head: true }).eq('user_id', userId!),
+        supabase.from('addresses').select('id', { count: 'exact', head: true }).eq('user_id', userId!),
         supabase.from('orders').select('*', { count: 'exact', head: true }).eq('user_id', userId!).eq('status', 'entregue'),
         supabase.from('user_tools').select('*', { count: 'exact', head: true }).eq('user_id', userId!),
       ]);

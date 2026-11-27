@@ -172,6 +172,8 @@ export interface SubmitOrderResult {
 export interface SubmitQuoteParams {
   customer: OmieCustomer;
   customerUserId: string | null;
+  /** O próprio cliente comprando. Ausente = staff (ver `titularDoPedido`). */
+  isCustomerMode?: boolean;
   user: User;
   cart: Pick<SubmitCart, 'obenProductItems' | 'colacorProductItems'>;
   subtotals: Pick<SubmitSubtotals, 'oben' | 'colacor'>;

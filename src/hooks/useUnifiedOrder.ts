@@ -895,6 +895,7 @@ export function useUnifiedOrder() {
       const result = await submitQuoteService({
         customer: selectedCustomer,
         customerUserId,
+        isCustomerMode,
         user,
         cart: { obenProductItems, colacorProductItems },
         subtotals: { oben: obenSubtotal, colacor: colacorProdSubtotal },
@@ -928,7 +929,7 @@ export function useUnifiedOrder() {
       }
     });
   }, [
-    selectedCustomer, user, customerUserId,
+    selectedCustomer, user, customerUserId, isCustomerMode,
     obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
     deliveryOption, addresses, selectedAddress, notes,
     clearCart, limparCamposDoPedido, navigate, setCart, cart,
