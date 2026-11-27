@@ -79,8 +79,7 @@ export async function registrarRevisao<T extends ItemPayload>(
   },
 ): Promise<{ revisao: RevisaoCredito | null; itensEnvio: T[]; parcelaEnvio: string }> {
   try {
-    const { data, error } = await supabase.rpc(args.tokenEdicao ? "pedido_edicao_omie_registrar_revisao" : "credito_registrar_revisao", {
-      ...(args.tokenEdicao ? { p_token: args.tokenEdicao } : {}),
+    const params = {
       p_sales_order_id: args.salesOrderId,
       p_company: args.company,
       p_contexto: args.contexto,
@@ -89,7 +88,12 @@ export async function registrarRevisao<T extends ItemPayload>(
       p_parcela_origem: args.parcela.origem,
       p_itens: projetarItens(args.items),
       p_user_id: args.userId,
-    });
+    };
+    // Nome LITERAL em cada ramo: o pré-voo de deploy (`preflight:rpcs`) só enxerga RPC cujo nome está no
+    // sítio da chamada — um ternário no nome deixa a lista de pré-condições INCOMPLETA e trava o pacote.
+    const { data, error } = args.tokenEdicao
+      ? await supabase.rpc("pedido_edicao_omie_registrar_revisao", { p_token: args.tokenEdicao, ...params })
+      : await supabase.rpc("credito_registrar_revisao", params);
     if (error) throw new Error(error.message);
     const rev = data as RevisaoCredito | null;
     if (!rev || typeof rev.revisao !== "string" || !Array.isArray(rev.itens)) {
