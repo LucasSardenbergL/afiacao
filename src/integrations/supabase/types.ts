@@ -30913,9 +30913,17 @@ export type Database = {
         Args: { p_sales_order_id: string; p_somente_orcamento?: boolean }
         Returns: string
       }
+      sales_order_itens_projecao_envio: {
+        Args: { p_itens: Json }
+        Returns: Json
+      }
       sales_order_reivindicar_envio: {
         Args: { p_sales_order_id: string }
         Returns: boolean
+      }
+      sales_order_reivindicar_envio_conferido: {
+        Args: { p_itens: Json; p_sales_order_id: string; p_versao: string }
+        Returns: string
       }
       sales_orders_instante_envio: { Args: never; Returns: string }
       sales_orders_registrar_vendedor_omie: {
