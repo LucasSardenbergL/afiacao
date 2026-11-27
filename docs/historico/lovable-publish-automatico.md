@@ -358,12 +358,3 @@ esse número; o modelo **não** sai do disparo agora.
   - **Abaixo de 95%:** o próximo PR tira o LLM do disparo e chama o MCP do Lovable direto.
   - Com denominador pequeno (o vigia só chama o claude quando há o que publicar), registrar o número com o
     denominador e decidir explicitamente. "Ninguém reclamou" não é sinal.
-
-### Pronto do PR 2 no `vigia.log` (conferido em 2026-11-27)
-O vigia está **RETIDO**, corretamente, por 3 migrations `sem_recibo`:
-- `20261126233000_omie_os_espelho`
-- `20261127000000_fin_mov_chave_ncodbaixa`
-- `20261127100000_credito_painel_nome_grupo`
-
-O par `liberado: recibos` → `PUBLICADO` ainda não aconteceu na produção. Pendência do founder: aplicar via
-`db:aplicar` (que gera o recibo) ou adiar com `db-adiar.sh`.
