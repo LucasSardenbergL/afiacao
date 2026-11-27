@@ -151,3 +151,54 @@ cópia velha apaga o token de todo mundo. **Conserto: store próprio do vigia** 
 com 1 escritor (o lock do vigia). Ativação única pelo founder: `scripts/lovable-vigia-instalar.sh --login`
 (OAuth no navegador); o vigia só passa a usar o store quando existe `.vigia-pronto` — sem ele, segue no
 padrão. As sessões interativas também perderam o `lovable` nesse episódio: `/mcp` → lovable para religar.
+
+## Plano de 5 PRs pós-auditoria (2026-11-26) — PR 1: liberação que funciona
+
+**Medido no `vigia.log` (22–26/11, auditoria Fable):** 36 RETIDO por migration contra 2 liberações
+manuais, e NENHUMA das duas virou PUBLICADO; mediana ~5 h retido (pior 42,7 h). As duas liberações
+morreram pelo mesmo motivo: `liberar` exigia `== main de agora`, e a main andou minutos depois
+(25/11 23:04 liberou `3bda3e02`, a main foi a `c39f1f5a`; 26/11 08:36 liberou `39ea6374`, a main foi
+a `8ca02e51` às 08:38). O `--esperar` saía RETIDO com o `liberar` gravado.
+
+O que mudou (só `scripts/` e docs):
+
+- **Decisão única** `lovable-publish.sh --decidir <sha>`: o vigia e o `--esperar` chamam a MESMA função,
+  com o mesmo estado (`$LP_ESTADO` = o diretório do vigia) e a mesma validade do cache de edge
+  (`LP_CACHE_EDGE_MIN`, 15 min). Antes o `--esperar` reimplementava a política e lia o cache sem idade.
+  Últimas linhas preservadas: o vigia lê `VEREDITO=`; o `--esperar` segue saindo `RETIDO=migration:<arq>`.
+- **`liberar` vale para descendentes:** aceito se for SHA de 40 hex, ancestral de HEAD e
+  `git diff LIBERADO HEAD -- supabase/migrations` vazio (tecnicamente: as camadas passam a ser julgadas
+  em `LIBERADO..HEAD`). `HEAD`, ramo e abreviado são ignorados com aviso. Comando novo:
+  `bash scripts/lovable-publish.sh --liberar <sha40>` — valida contra a origin/main, mostra a main
+  medida e as migrations cobertas, grava atômico (tmp + mv). Vale também para `LP_LIBERAR_SHA` do workflow.
+- **`liberar` cobre SÓ migration:** edge entre o ar e o liberado segue pelo ledger — o humano atesta "apliquei as migrations", não edge.
+- **Piso de migrations atestadas** (`$EST/piso`): decisão limpa que se apoiou em atestação humana
+  (liberar ou piso anterior) imprime `PISO=<main>` e o vigia grava — o PR de front seguinte a uma
+  migration liberada não re-trava, mesmo que o `liberar` seja sobrescrito.
+- **Só migration/inerte no intervalo → `NADA_A_PUBLICAR`** (sem avançar o piso): ninguém espera Publish,
+  e a camada continua no intervalo do próximo PR porque o marcador é o ar.
+- **Não retêm:** `supabase/functions/**/*_test.ts` e `supabase/functions/**/*.md`.
+- **Aviso por episódio:** 1 notificação quando o RETIDO começa, lembrete a cada `LV_RELEMBRA_H` (4 h) com a
+  idade, log `RETIDO ar=… main=… <motivo>` quando o par muda e `fim do episódio RETIDO após N min`.
+  Antes era 1 aviso por SHA (cada merge re-notificava o mesmo bloqueio). `PUBLICAR` loga `liberado: <fonte>`.
+- **`--esperar` em RETIDO** imprime o comando de liberação da main atual e distingue
+  `liberado para SHA antigo <sha> — migration(s) depois dele`.
+
+**Challenge Codex (gpt-6.2-astra/high) — 9 achados, 8 novos, todos aceitos:**
+o piso NÃO cobre edge (o ledger vale 15 min e a edge pode sofrer rollback depois — edge é sempre
+`ar..HEAD` + ledger fresco para HEAD); o ledger mede a main que ele mesmo buscou → o vigia confere
+`ls-remote` depois e descarta a prova se a main andou; `JA_NO_AR` e decisão sem atestação humana não
+gravam piso (carimbo igual prova o front, não a migration — um rollback do ar deixaria piso falso);
+`git diff --no-renames` (mover `index.ts` para `index_test.ts` esconderia a remoção da edge); cada
+atestação (ar, liberar, piso) é testada SOZINHA contra HEAD — piso e liberar em ramos irmãos são
+incomparáveis e a regra "a mais nova" ignorava o liberar; o `--esperar` usa o ar que a decisão MEDIU
+(`AR=` completo) e sai `MECANICA=FRONT_SUPERADO` quando a main reverteu o front pedido sem publicá-lo;
+e o `--esperar` roda o decisor da main medida (`git show <main>:scripts/lovable-publish.sh`), para que
+um worktree velho não decida com a regra velha.
+
+Prova: `scripts/test-lovable-publish.sh` reproduz os dois casos reais (`dec_caso_2511` pelo `--decidir`,
+`esperar_caso_2611` pelo `--esperar`) e ambos saem LIBERADO/NO_AR; falsificação com controle verde na
+mesma invocação (ancestral→igualdade, piso ignorado, filtro de teste de edge desligado, sabotagem do
+RETIDO do `--esperar`), mais 4 sabotagens externas da suíte inteira (filtro, piso, linha `PISO=`, gravação
+do `--liberar`) — todas vermelhas no cenário certo. `scripts/test-lovable-vigia.sh`: ledger renovado pelo
+vigia + piso gravado, e o roteiro do episódio RETIDO (falsificado: vigia que re-avisa a cada tick reprova).

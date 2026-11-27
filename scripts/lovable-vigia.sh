@@ -7,9 +7,11 @@
 # launchd a cada 3 min e NÃO chama LLM no tick:
 #
 #   1. tick barato: `scripts/lovable-publish.sh --julgar origin/main` (ar vs main + gate de ordem);
-#   2. RETIDO só por EDGE → libera se `bun run pendencias:deploy` sair 0 (ledger deploy_atestacoes:
-#      toda edge da main está servida). Exit 1/2 = não libera. MIGRATION no intervalo → segue
-#      RETIDO (aviso 1x por SHA); libera-se à mão escrevendo o SHA em $EST/liberar;
+#   2. a decisão é `lovable-publish.sh --decidir` (a MESMA do `--esperar`): camadas julgadas a partir
+#      da atestação mais nova (ar, $EST/piso, $EST/liberar). Só EDGE → o vigia renova o cache do
+#      ledger (`bun run pendencias:deploy`, 0 = toda edge servida) e decide de novo. MIGRATION →
+#      RETIDO (1 aviso por episódio, lembrete a cada LV_RELEMBRA_H h); libera-se à mão com
+#      `bash scripts/lovable-publish.sh --liberar <sha40>` — vale para descendentes sem migration nova;
 #   3. veredito PUBLICAR → `claude -p` (Haiku) com SÓ get_project+deploy_project, token de 1 ano
 #      no Keychain (`claude-vigia-lovable`);
 #   4. PROVA pelo ar: o carimbo `__BUILD_SHA__` servido tem de virar a main. Sem isso é falha:
@@ -70,52 +72,63 @@ if [ -f "$WT/scripts/lovable-vigia.sh" ] && ! cmp -s "$WT/scripts/lovable-vigia.
     && log "vigia atualizado para a versão de ${HEAD_SHA:0:8}"
 fi
 
-# main sem o --julgar (instalado antes do merge do próprio vigia) → espera calado, sem aviso
-grep -q -- '--julgar' "$WT/scripts/lovable-publish.sh" 2>/dev/null || { log "main sem lovable-publish.sh --julgar — aguardando"; exit 0; }
+# main sem o --decidir (vigia mais novo que o lovable-publish.sh do clone) → espera calado, sem aviso
+grep -q -- '--decidir' "$WT/scripts/lovable-publish.sh" 2>/dev/null || { log "main sem lovable-publish.sh --decidir — aguardando"; exit 0; }
 
-julgar() { (cd "$WT" && LP_LIBERAR_SHA="${1:-}" bash scripts/lovable-publish.sh --julgar "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
+# grava <arquivo> <conteúdo> — atômico (tmp + mv): um tick morto no meio nunca deixa meia linha
+grava() { printf '%s\n' "$2" > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
+julgar() { (cd "$WT" && LP_LIBERAR_SHA='' bash scripts/lovable-publish.sh --julgar "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
+# a DECISÃO ÚNICA (a mesma do `--esperar`): ar, piso, liberar e o cache do ledger, tudo em $EST
+decidir() { (cd "$WT" && LP_LIBERAR_SHA='' LP_ESTADO="$EST" bash scripts/lovable-publish.sh --decidir "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
 veredito() { tail -1 "$EST/julgar.txt" | sed -n 's/^VEREDITO=//p'; }
 ar_curto() { sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' "$EST/julgar.txt" | head -1; }
+linha() { sed -n "s/^$1=//p" "$EST/julgar.txt" | head -1; }
 
-julgar ""
-VER=$(veredito)
-LIB_MANUAL=$(cat "$EST/liberar" 2>/dev/null || true)
-
-if [ "$VER" = RETIDO ]; then
-  if grep -q '^  - supabase/migrations/' "$EST/julgar.txt"; then
-    if [ -n "$LIB_MANUAL" ] && [ "$(git -C "$WT" rev-parse --verify --quiet "$LIB_MANUAL^{commit}")" = "$HEAD_SHA" ]; then
-      julgar "$HEAD_SHA"; VER=$(veredito); log "liberado à mão para ${HEAD_SHA:0:8} ($EST/liberar)"
-    else
-      avisa_uma_vez "retido-mig-$HEAD_SHA" "RETIDO: migration no intervalo até ${HEAD_SHA:0:8}. Aplique a migration e: echo $HEAD_SHA > $EST/liberar"
-      exit 0
-    fi
+# ── episódio RETIDO: 1 aviso quando começa, lembrete a cada LV_RELEMBRA_H h com a idade ─────────
+# (antes era 1 aviso por SHA: cada merge na main re-notificava o mesmo bloqueio)
+RELEMBRA=$(( ${LV_RELEMBRA_H:-4} * 3600 ))
+retido_episodio() {  # <motivo>
+  local agora ini ult chave; agora=$(date +%s); chave="ar=$(ar_curto) main=${HEAD_SHA:0:8} $1"
+  [ "$(cat "$EST/retido-chave" 2>/dev/null)" = "$chave" ] || { log "RETIDO $chave"; grava "$EST/retido-chave" "$chave"; }
+  if { read -r ini ult < "$EST/retido-episodio"; } 2>/dev/null && [ -n "${ult:-}" ]; then
+    [ $((agora - ult)) -ge "$RELEMBRA" ] || return 0
+    grava "$EST/retido-episodio" "$ini $agora"
+    avisa "AINDA RETIDO há $(( (agora - ini) / 3600 ))h ($1). $(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //')"
   else
-    # só edge no intervalo: o ledger diz se TODA edge da main já está servida (cache 15 min/SHA)
-    CACHE="$EST/pendencias-$HEAD_SHA"
-    if [ -z "$(find "$CACHE" -mmin -15 2>/dev/null)" ]; then
-      rm -f "$EST"/pendencias-*
-      [ "$(shasum "$WT/bun.lock" 2>/dev/null)" = "$(cat "$EST/bun-lock.sha" 2>/dev/null)" ] \
-        || { (cd "$WT" && timeout 600 bun install --frozen-lockfile >>"$LOG" 2>&1) && shasum "$WT/bun.lock" > "$EST/bun-lock.sha"; }
-      (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1
-      echo $? > "$CACHE"
-    fi
-    PRC=$(cat "$CACHE")
-    if [ "$PRC" = 0 ]; then
-      log "RETIDO só por edge e pendencias:deploy=0 (edges servidas) → liberado para ${HEAD_SHA:0:8}"
-      julgar "$HEAD_SHA"; VER=$(veredito)
-    elif [ "$PRC" = 1 ]; then
-      avisa_uma_vez "retido-edge-$HEAD_SHA" "RETIDO: edge da main ainda não deployada (pendencias:deploy=1) — o vigia publica sozinho quando ela estiver no ar"
-      exit 0
-    else
-      log "pendencias:deploy exit $PRC (mecânica) — não libero; ver $EST/pendencias.txt"
-      exit 0
-    fi
+    grava "$EST/retido-episodio" "$agora $agora"
+    avisa "RETIDO ($1) até ${HEAD_SHA:0:8}. $(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //')"
   fi
+}
+fim_episodio() {
+  local ini; { read -r ini _ < "$EST/retido-episodio"; } 2>/dev/null || return 0
+  log "fim do episódio RETIDO após $(( ($(date +%s) - ini) / 60 )) min (veredito $1, ar=$(ar_curto) main=${HEAD_SHA:0:8})"
+  rm -f "$EST/retido-episodio" "$EST/retido-chave"
+}
+
+decidir
+VER=$(veredito)
+if [ "$VER" = PRECISA_LEDGER ]; then
+  # só edge no intervalo: o ledger diz se TODA edge da main já está servida. O --decidir só lê o cache
+  # (validade LP_CACHE_EDGE_MIN, a mesma para o --esperar); quem o renova é este tick.
+  rm -f "$EST"/pendencias-*
+  [ "$(shasum "$WT/bun.lock" 2>/dev/null)" = "$(cat "$EST/bun-lock.sha" 2>/dev/null)" ] \
+    || { (cd "$WT" && timeout 600 bun install --frozen-lockfile >>"$LOG" 2>&1) && shasum "$WT/bun.lock" > "$EST/bun-lock.sha"; }
+  (cd "$WT" && timeout 300 bun run pendencias:deploy) > "$EST/pendencias.txt" 2>&1; PRC=$?
+  # o ledger mede a main que ELE buscou: se ela andou durante a consulta, a prova não é deste SHA
+  REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>/dev/null | cut -f1)
+  [ "$REMOTA" = "$HEAD_SHA" ] || { log "ledger descartado: a main foi a ${REMOTA:0:8} durante a consulta de ${HEAD_SHA:0:8}"; exit 0; }
+  grava "$EST/pendencias-$HEAD_SHA" "$PRC"
+  log "ledger consultado para ${HEAD_SHA:0:8}: pendencias:deploy exit $(cat "$EST/pendencias-$HEAD_SHA")"
+  decidir; VER=$(veredito)
 fi
+# camadas atestadas até a main (decisão limpa): o próximo PR julga a partir daqui, não do ar
+P=$(linha PISO); [ -n "$P" ] && [ "$P" != "$(cat "$EST/piso" 2>/dev/null)" ] && grava "$EST/piso" "$P"
+LIBERADO=$(linha LIBERADO)
 
 case "$VER" in
-  PUBLICAR) ;;
-  JA_NO_AR|NADA_A_PUBLICAR) rm -f "$EST/tentativa"; exit 0 ;;
+  RETIDO) retido_episodio "$(linha RETIDO)"; exit 0 ;;
+  PUBLICAR) fim_episodio PUBLICAR ;;
+  JA_NO_AR|NADA_A_PUBLICAR) fim_episodio "$VER"; rm -f "$EST/tentativa"; exit 0 ;;
   *) log "veredito ${VER:-vazio} — $(tr '\n' ' ' < "$EST/julgar.txt" | head -c 300)"
      [ "$VER" = MECANICA ] && avisa_uma_vez "mecanica-$(date +%F)" "julgamento sem medida (MECANICA) — ver $LOG"
      exit 0 ;;
@@ -141,7 +154,7 @@ falhou() {
 }
 
 AR_ANTES=$(ar_curto)
-log "PUBLICAR ${AR_ANTES}..${HEAD_SHA:0:8} (tentativa $((N + 1)))"
+log "PUBLICAR ${AR_ANTES}..${HEAD_SHA:0:8} (tentativa $((N + 1)))${LIBERADO:+ liberado: $LIBERADO}"
 [ "${LV_SECO:-0}" = 1 ] && { log "LV_SECO=1 — não chamei o claude"; exit 0; }
 
 TOKEN=$(security find-generic-password -s claude-vigia-lovable -w 2>/dev/null) \
