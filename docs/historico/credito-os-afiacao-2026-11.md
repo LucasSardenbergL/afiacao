@@ -75,3 +75,11 @@ Uma sessão começou a opção C e mediu antes de construir. **Decisão do Lucas
   - P1: OS sem movimento há N dias é **suspeita de abandono**, não liberação automática. Mostrar a exposição com e sem ela.
   - P2: o cron leva `{"action":"sync"}` (sem o corpo cai no `probe`) e não usa o minuto `:17`, que já é do `omie-pv-exclusao-reconciliar`.
 
+
+## 2026-11-27 — fatia 1 implementada (#4241) e revertida
+
+- Depois do cancelamento, a fatia 1 (edge `omie-os-sync` + migration `20261126233000_omie_os_espelho.sql`) foi implementada e auto-mergeada em `31d58958e` (#4241), **sem nada aplicado em prod** (psql-ro: tabela ausente, cron 0, ledger 0).
+- Perguntado se mantinha, o Lucas respondeu "decida o fable e o codex". **Os dois votaram C (reverter):**
+  - Codex (gpt-6.2-astra · high · 17s · 2.060 tokens): `retomar_opcao_c` segue falso; a fatia 2 arriscaria reserva em DUPLICIDADE com os títulos manuais que a sombra já soma; reverter não exige rollback de banco/edge.
+  - Fable: código dormente na main não é neutro — edge nunca atestada deixa `pendencias:deploy` vermelho para sempre e a migration retém o Publish (`lovable-publish.sh` → `RETIDO=migration`) até um `--liberar` que seria atestação falsa.
+- **Para retomar:** quando `retomar_opcao_c = true`, reverter este revert, renomear a migration para um timestamp atual e re-provar no PG17 (`db/test-omie-os-sync.sh`, 45 asserts + 19 sabotagens) antes de aplicar.
