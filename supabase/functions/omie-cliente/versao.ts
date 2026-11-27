@@ -62,8 +62,12 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * documento, e-mail, telefone, endereço e IE só do cliente na carteira/cobertura do chamador (ou para a
  * gestão); fora dela, `null` e `contato_visivel: false` (`pii-carteira.ts`). A impressão do pedido abre
  * pela `contato_cliente_operacional` (ledger) quando o documento do pedido casa com o da Omie.
+ *
+ * `v1.14-pii-carteira-shared` (2026-11-27, onda D 4b-3): sem mudança de comportamento. A regra da carteira
+ * (`pii-carteira.ts`, com a leitura de gestão/mapa fresco/`v_perfil_contato`) foi para `_shared/`, para a
+ * omie-vendas-sync usar a MESMA na busca do Novo Pedido.
  */
-export const VERSAO = "v1.13-pii-carteira";
+export const VERSAO = "v1.14-pii-carteira-shared";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

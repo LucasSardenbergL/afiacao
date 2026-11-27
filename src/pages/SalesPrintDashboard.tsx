@@ -136,7 +136,10 @@ const SalesPrintDashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*')
+        // Onda D 4b-3: só o que a folha usa. O `*` trazia `orders.address` (rua da OS) para o navegador
+        // ANTES do ledger; o endereço impresso da OS vem dos `enderecos` da `contato_cliente_operacional`
+        // (ordem_servico/lista_os, abaixo), que registra a exceção fora da carteira.
+        .select('id, user_id, created_at, items, total, notes, status')
         .gte('created_at', dayStart)
         .lte('created_at', dayEnd)
         .neq('status', 'cancelado')

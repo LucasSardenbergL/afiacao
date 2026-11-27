@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { logger } from "@/lib/logger";
+import { mensagemDoErroEdge } from "@/lib/invoke-function";
 
 interface OrderData {
   items: Array<{
@@ -84,7 +85,9 @@ export async function syncOrderToOmie(
         orderId,
         error,
       });
-      return { success: false, error: error.message };
+      // O 400 da edge (titular ausente, código de OUTRO cliente — onda D) traz a instrução no corpo;
+      // o `error.message` do supabase-js é só "non-2xx".
+      return { success: false, error: (await mensagemDoErroEdge(error)) ?? error.message };
     }
 
     return data as OmieSyncResult;

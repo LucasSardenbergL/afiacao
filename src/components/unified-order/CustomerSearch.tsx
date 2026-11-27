@@ -249,7 +249,9 @@ export function CustomerSearch({
                   >
                     <p className="text-sm font-medium">{decodeHtmlEntities(c.nome_fantasia || c.razao_social)}</p>
                     <div className="flex items-center gap-1 flex-wrap">
-                      <span className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</span>
+                      <span className="text-xs text-muted-foreground">{c.contato_visivel === false
+                        ? `Fora da sua carteira${c.cidade ? ` • ${c.cidade}/${c.estado ?? ''}` : ''}`
+                        : <>{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</>}</span>
                       {c.tags && c.tags.length > 0 && c.tags.map((tag, i) => (
                         <Badge key={i} variant="outline" className="text-[8px] px-1 py-0">{tag}</Badge>
                       ))}
