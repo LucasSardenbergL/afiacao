@@ -44,7 +44,13 @@ Todos os achados desta entrega ainda existiam. Conferido em prod (psql-ro, 2026-
   `LC_ALL=C` e `pt_BR.UTF-8`. O 1º controle saiu VERMELHO por bug do próprio script (dois caminhos num
   argumento só), e foi isso que impediu um "tudo vermelho" falso.
 - **Codex: não consultado** (exit 79, cota em 98% até 02/12). Caminho B: revisão adversarial independente do
-  diff por subagente.
+  diff por subagente (sem a minha conclusão no prompt). Ela achou 5 defeitos, todos corrigidos e falsificados:
+  - o rodapé usava o total do recorte NOVO sobre as linhas do anterior (placeholder);
+  - com tudo carregado, o rodapé contradizia a exclusão otimista. Agora, sem próxima página, ele conta as linhas;
+  - `{ error }` na marca do lote não prova que nada gravou (504 depois do commit). Agora desfaz pelo carimbo, também
+    em exceção no meio da marcação;
+  - com o Mac suspenso o timeout da meia-noite atrasava horas. Agora há checagem de 60 s mais `visibilitychange`/`focus`;
+  - na lente, o aviso do cupom dizia "tente de novo" para uma leitura barrada por desenho.
 
 ## Fica para depois (leva 3)
 - **PR A2 (front)**: #28 catálogo × formas de pagamento na edição · #40 na tela de edição · L2-b envio parcial ·

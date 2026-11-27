@@ -66,7 +66,7 @@ function clienteDoFiltro(v: string | null | undefined): string | null {
 }
 
 /** 'yyyy-MM-dd' de `agora` no fuso do navegador (o mesmo de `corteDoPeriodo` e `agruparPorDia`). */
-export function diaLocal(agora: Date): string {
+function diaLocal(agora: Date): string {
   return format(agora, 'yyyy-MM-dd');
 }
 
