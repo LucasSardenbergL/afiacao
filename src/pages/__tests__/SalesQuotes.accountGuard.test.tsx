@@ -169,6 +169,22 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     expect(h.updateSalesOrder).not.toHaveBeenCalled();
   });
 
+  it('orçamento mudou depois que a tela o leu (claim conferido, edge v1.53) → toast próprio, sem sucesso', async () => {
+    h.quotes = [makeQuote('oben')];
+    // A edge LANÇA com a marca estável (caller antigo leria `blocked` desconhecido como sucesso).
+    const corpo = { error: 'Envio recusado [pedido_alterado]: o pedido q1 foi alterado (em outra aba ou por outra pessoa)' };
+    const erro = { message: 'Edge Function returned a non-2xx status code', context: new Response(JSON.stringify(corpo), { status: 500 }) };
+    h.invoke.mockResolvedValueOnce({ data: null, error: erro as { message: string } });
+    renderPage();
+    await clickEnviar();
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith(
+      'Conversão recusada: o orçamento mudou',
+      expect.objectContaining({ description: expect.stringContaining('Esta tentativa NÃO enviou nada ao Omie') }),
+    ));
+    expect(h.toastSuccess).not.toHaveBeenCalled();
+    expect(h.updateSalesOrder).not.toHaveBeenCalled();
+  });
+
   it('edge bloqueou por crédito → aviso e NÃO marca rascunho (não foi criado PV)', async () => {
     h.quotes = [makeQuote('colacor')];
     h.invoke.mockResolvedValueOnce({ data: { blocked: 'credito' }, error: null });

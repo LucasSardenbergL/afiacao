@@ -16,6 +16,7 @@ import { edicaoExigeGate, gateCredito, MENSAGEM_CREDITO_INDISPONIVEL } from "./g
 import { gateV2Efetivo } from "./gate-v2.ts";
 import { calendarioDaParcela, parcelaEfetiva, registrarRevisao, totalCentavos } from "./revisao-credito.ts";
 import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
+import { mensagemPedidoAlterado, mesmosItensDeEnvio } from "./claim-conferido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -3025,7 +3026,7 @@ Deno.serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow, error: soErr } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at, ready_by_date")
+          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at, ready_by_date, items, updated_at")
           .eq("id", sales_order_id)
           .maybeSingle();
         // Guard de REENVIO (achado Codex 2026-08-29) — ANTES do IncluirPedido, porque um CHECK
@@ -3050,6 +3051,16 @@ Deno.serve(async (req) => {
           throw new Error(
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
           );
+        }
+        // Claim conferido, 1ª metade (./claim-conferido.ts): a versão da linha é lida AQUI, antes do
+        // gate ATP (que reserva sobre a LINHA), e o claim lá embaixo só carimba se ela não mudou. A
+        // pré-checagem recusa a foto velha de uma tela aberta antes de outra salvar SEM reservar estoque.
+        const versaoLida = (soRow as { updated_at?: unknown } | null)?.updated_at;
+        if (typeof versaoLida !== "string" || versaoLida === "") {
+          throw new Error(`Envio recusado: o pedido ${sales_order_id} veio sem versão (updated_at) — não dá para provar que ele não mudou.`);
+        }
+        if (!mesmosItensDeEnvio((soRow as { items?: unknown } | null)?.items, items)) {
+          throw new Error(mensagemPedidoAlterado(sales_order_id));
         }
         // [2026-07-16] O guard de coerência conta×código (P0-A) saiu daqui: ele lia o rótulo
         // `empresa_omie` do espelho `omie_clientes`, que é default poluído (ver o tombstone acima),
@@ -3211,13 +3222,29 @@ Deno.serve(async (req) => {
         // carimba o pedido SÓ se ele não está marcado para exclusão. A leitura de deleted_at lá em
         // cima é só o atalho; esta é a disputa de verdade com o excluir_pedido (lock de linha).
         // Falha da RPC RECUSA: sem o carimbo a exclusão concorrente apagaria o pedido com o PV vivo.
-        const { data: reivindicou, error: claimErr } = await supabaseAdmin
-          .rpc("sales_order_reivindicar_envio", { p_sales_order_id: sales_order_id });
+        // CONFERIDO (migration 20261126190127): o carimbo só sai se os itens da LINHA forem os que vão
+        // ao Omie. Uma tela aberta antes de outra salvar o orçamento mandaria a foto velha: o PV
+        // nasceria com os itens/total antigos e a linha (e a reserva ATP, que lê a linha) com os novos.
+        // Lança (não `blocked`): caller antigo lê `blocked` desconhecido como sucesso (Codex, #6).
+        const { data: claimVeredito, error: claimErr } = await supabaseAdmin
+          .rpc("sales_order_reivindicar_envio_conferido", {
+            p_sales_order_id: sales_order_id,
+            p_itens: itensEnvio.map((it) => ({
+              omie_codigo_produto: it.omie_codigo_produto,
+              quantidade: it.quantidade,
+              valor_unitario: it.valor_unitario,
+              tint_cor_id: (it as { tint_cor_id?: unknown }).tint_cor_id ?? null,
+            })),
+            p_versao: versaoLida,
+          });
         if (claimErr) {
           throw new Error(`Envio recusado: não consegui reservar o pedido ${sales_order_id} para o envio (${claimErr.message}).`);
         }
-        if (reivindicou !== true) {
-          throw new Error(`Envio recusado: o pedido ${sales_order_id} está sendo excluído.`);
+        if (claimVeredito === "pedido_alterado") {
+          throw new Error(mensagemPedidoAlterado(sales_order_id));
+        }
+        if (claimVeredito !== "reivindicado") {
+          throw new Error(`Envio recusado: o pedido ${sales_order_id} está sendo excluído (${String(claimVeredito)}).`);
         }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,

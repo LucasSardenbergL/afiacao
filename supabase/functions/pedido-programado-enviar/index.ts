@@ -49,6 +49,8 @@ export interface ItemResolvido {
 // client-side bloqueia ao vê-lo — precisão > recall: cancelar na incerteza é o caminho
 // da duplicata. "Enviar agora" (idempotente) é o caminho de resolução.
 export const OMIE_INCERTO_MARK = '[OMIE-INCERTO]';
+/** Marca da recusa do claim conferido (omie-vendas-sync/claim-conferido.ts) — cópia: edge não importa de outra edge. */
+export const PEDIDO_ALTERADO_MARK = '[pedido_alterado]';
 
 export function motivoComIncerteza(motivo: string, incerto: boolean): string {
   return incerto && !motivo.includes(OMIE_INCERTO_MARK) ? `${OMIE_INCERTO_MARK} ${motivo}` : motivo;
@@ -160,30 +162,36 @@ async function processarEnvio(
     .update({ status: "processando" })
     .eq("id", envio.id)
     .in("status", ["agendado", "erro"])
-    .select("sales_orders_map");
+    .select("sales_orders_map, erro_motivo");
   if (claimErr) return { ok: false, skip: true, motivo: `Claim falhou: ${claimErr.message}` };
-  const envioFresco = ((claimRows ?? []) as Array<{ sales_orders_map: Record<string, string> | null }>)[0];
+  const envioFresco = ((claimRows ?? []) as Array<{ sales_orders_map: Record<string, string> | null; erro_motivo: string | null }>)[0];
   if (!envioFresco) {
     return { ok: false, skip: true, motivo: "Envio não está mais 'agendado'/'erro' (cancelado, enviado ou claim de outro runner) — nada a fazer." };
   }
+  // Incerteza HERDADA, lida NO claim (sob o lock da linha — a listagem pode estar velha: outro runner
+  // pode ter terminado em 'erro' com [OMIE-INCERTO] entre ela e este claim). Toda saída de erro daqui
+  // em diante a preserva: o release regrava erro_motivo, e apagá-la liberaria o "Cancelar" de um PV
+  // que pode existir no Omie (Codex r3).
+  const incertoHerdado = (envioFresco.erro_motivo ?? "").includes(OMIE_INCERTO_MARK);
+  const falha = (motivo: string) => ({ ok: false, motivo: motivoComIncerteza(motivo, incertoHerdado) });
 
   const { data: pedido, error: pErr } = await supabase
     .from("pedidos_programados").select("*").eq("id", envio.pedido_programado_id).single();
-  if (pErr || !pedido) return { ok: false, motivo: `Header não encontrado: ${pErr?.message}` };
+  if (pErr || !pedido) return falha(`Header não encontrado: ${pErr?.message}`);
   // Pedido cancelado/concluído no meio do caminho: envio 'agendado' órfão NÃO vira
   // PV no Omie. Vira 'erro' visível (sai da fila do cron; humano decide).
   if (pedido.status !== "ativo") {
-    return { ok: false, motivo: `Pedido está '${pedido.status}' (não ativo) — envio não processado.` };
+    return falha(`Pedido está '${pedido.status}' (não ativo) — envio não processado.`);
   }
 
   const { data: itensRaw, error: iErr } = await supabase
     .from("pedidos_programados_itens")
     .select("id, codigo_item_cliente, descricao_cliente, quantidade, preco_final, mapa:cliente_item_mapa(omie_products(omie_codigo_produto, codigo, descricao, unidade, account))")
     .eq("envio_id", envio.id);
-  if (iErr) return { ok: false, motivo: `Itens não carregaram: ${iErr.message}` };
+  if (iErr) return falha(`Itens não carregaram: ${iErr.message}`);
 
   const { data: cfgRows, error: cErr } = await supabase.from("pedidos_programados_config").select("*");
-  if (cErr) return { ok: false, motivo: `Config não carregou: ${cErr.message}` };
+  if (cErr) return falha(`Config não carregou: ${cErr.message}`);
   const configs = Object.fromEntries((cfgRows ?? []).map((c) => [c.account, c])) as Record<AccountPP, ConfigConta>;
 
   const itens: ItemResolvido[] = ((itensRaw ?? []) as unknown as LinhaItem[]).map((r) => {
@@ -205,7 +213,7 @@ async function processarEnvio(
   // numeroPc validado no gate (header é nullable — nunca deixar "null" virar texto de NF).
   const numeroPc = typeof pedido.numero_pedido_compra === "string" ? pedido.numero_pedido_compra.trim() : "";
   const problemas = validarEnvioResolvido(numeroPc || null, itens, configs);
-  if (problemas.length > 0) return { ok: false, motivo: problemas.join(" | ") };
+  if (problemas.length > 0) return falha(problemas.join(" | "));
 
   const grupos = agruparItensPorAccount(itens);
   // map = CACHE pra UI/diagnóstico (fresco do claim). A convergência de retry/corrida
@@ -218,7 +226,8 @@ async function processarEnvio(
   // true a partir do momento em que QUALQUER chamada externa foi disparada. Timeout/
   // crash pós-fetch = resultado DESCONHECIDO: o PV pode existir no Omie sem
   // omie_pedido_id gravado — tratar como "Omie tocado", nunca como "nada aconteceu".
-  let tentouOmie = false;
+  // Herdada: se uma tentativa anterior deixou o PV incerto, uma recusa de agora não a apaga.
+  let tentouOmie = incertoHerdado;
 
   for (const [account, itensGrupo] of Object.entries(grupos) as Array<[AccountPP, ItemResolvido[]]>) {
     const cfg = configs[account];
@@ -337,6 +346,7 @@ async function processarEnvio(
       // 2. criar_pedido via omie-vendas-sync (service role) — guards de preço/ativo lá.
       //    (O check pré-fetch do #1158 saiu: com o claim, cancelamento durante o
       //    processamento é impossível — a janela que ele estreitava não existe mais.)
+      const tentouAntes = tentouOmie;
       tentouOmie = true;
       const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-vendas-sync`, {
         method: "POST",
@@ -363,6 +373,15 @@ async function processarEnvio(
         }),
       });
       const body = await resp.json().catch(() => ({}));
+      // Claim conferido (omie-vendas-sync v1.53): `[pedido_alterado]` é recusa ANTES do IncluirPedido —
+      // esta chamada não tocou o Omie, então não marca incerteza (o marcador travaria o "Cancelar").
+      if (!resp.ok && String(body?.error ?? "").includes(PEDIDO_ALTERADO_MARK)) {
+        tentouOmie = tentouAntes;
+        throw new Error(
+          `criar_pedido ${account} recusado: o rascunho em /sales foi editado depois de montado e não bate com os itens ` +
+            `do programado — revise o rascunho ou cancele e reprograme (${body.error})`,
+        );
+      }
       if (!resp.ok || body?.error) throw new Error(`criar_pedido ${account} falhou: ${body?.error ?? resp.status}`);
       // Trava de crédito (Fase 2): recusa estruturada vem como 200 {success:false, blocked}
       // SEM body.error — tratar como sucesso marcaria 'enviado' sem PV no Omie.

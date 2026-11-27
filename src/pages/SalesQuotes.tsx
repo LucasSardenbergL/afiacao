@@ -141,6 +141,17 @@ const SalesQuotes = () => {
         // O texto da edge vem no CORPO: o `omieError.message` é o genérico "non-2xx" e escondia o
         // OMIE_ESCRITA_INDETERMINADA ("o Omie PODE ter gravado") — lido como "não foi" (M-33 p3).
         const doServidor = await mensagemDoErroEdge(omieError);
+        if (doServidor?.includes('[pedido_alterado]')) {
+          // Claim conferido (edge v1.53): este orçamento foi salvo em outra aba/por outra pessoa depois
+          // que esta lista o leu — converter mandaria ao Omie os itens VELHOS. Recarrega a lista para a
+          // próxima conversão já sair com os itens que estão no banco.
+          queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
+          toast.error('Conversão recusada: o orçamento mudou', {
+            description: 'Ele foi alterado depois que esta tela o abriu. A lista foi recarregada — confira os itens e o status (outra tela pode já tê-lo enviado) e converta de novo se ainda for orçamento. Esta tentativa NÃO enviou nada ao Omie.',
+            duration: 12000,
+          });
+          return;
+        }
         toast.error('Não foi possível confirmar o envio ao Omie: ' + (doServidor ?? omieError.message ?? 'erro desconhecido'));
         return;
       }
