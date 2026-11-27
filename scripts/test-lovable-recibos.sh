@@ -12,7 +12,7 @@ ALVO="$here/lovable-recibos.sh"
 base="$(mktemp -d)"; trap 'rm -rf "$base"' EXIT
 F="$base/f"; mkdir -p "$F"; fail=0
 
-cat > "$base/psql" <<'FAKE'
+cat > "$base/ro-falso" <<'FAKE'
 #!/usr/bin/env bash
 F="$LR_FAKE"; q=""
 while [ $# -gt 0 ]; do case "$1" in -c) q="$2"; shift ;; esac; shift; done
@@ -28,7 +28,7 @@ case "$q" in
   *) exit 3 ;;
 esac
 FAKE
-chmod +x "$base/psql"
+chmod +x "$base/ro-falso"
 
 cd "$base" && git init -q -b main r && cd r || exit 1
 git config user.email t@t && git config user.name t
@@ -39,7 +39,7 @@ S2=$(git show "$M2:supabase/migrations/2_b.sql" | shasum -a 256 | cut -c1-64)
 git rm -q supabase/migrations/1_a.sql; D=$(git commit -qm rm && git rev-parse HEAD)
 
 # roda <rc> <regex da saída inteira> <ar> <head> [alvo]
-roda() { local esp="$1" re="$2" out rc; : ; out=$(LP_PSQL_RO="$base/psql" LR_FAKE="$F" bash "${5:-$ALVO}" "$3" "$4" 2>&1); rc=$?
+roda() { local esp="$1" re="$2" out rc; : ; out=$(LP_PSQL_RO="$base/ro-falso" LR_FAKE="$F" bash "${5:-$ALVO}" "$3" "$4" 2>&1); rc=$?
   if [ "$rc" = "$esp" ] && [ "$(printf '%s\n' "$out" | head -1)" = "$esp" ] && printf '%s' "$out" | grep -qE "$re"; then return 0; fi
   echo "FALHOU [$CEN]: esperado rc=$esp /$re/, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; fail=1; return 1; }
 limpa() { rm -f "$F"/*; }
