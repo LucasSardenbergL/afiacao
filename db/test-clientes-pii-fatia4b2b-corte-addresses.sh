@@ -51,6 +51,8 @@ B1=20000000-0000-0000-0000-000000000001
 
 # ── ZONA 1: o que o corte toca, espelhando a PROD ──
 P -q <<'SQL'
+-- service_role tem BYPASSRLS em prod (psql-ro: rolbypassrls=t).
+ALTER ROLE service_role BYPASSRLS;
 CREATE TYPE public.app_role AS ENUM ('master', 'employee', 'customer');
 CREATE TABLE public.user_roles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, role public.app_role NOT NULL);
 CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
