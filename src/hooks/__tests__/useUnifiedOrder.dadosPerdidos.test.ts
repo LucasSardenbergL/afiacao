@@ -72,7 +72,12 @@ describe('Novo Pedido — fiação do PR B', () => {
     expect(ramoEspera).not.toContain('h.setCart(');
     // A seleção resolve a pendência: só o cliente DO rascunho aplica.
     expect(pagina).toContain('const decisao = resolverRestorePendente(pendente.codigoCliente, codigoClienteSelecionado);');
-    expect(pagina).toContain("if (decisao === 'aplicar') { aplicarDadosRef.current(pendente.dados, true); return; }");
+    // Só o ramo 'aplicar' solta a pendência e aplica (o cliente errado a MANTÉM — #4271; o render
+    // disso é provado em src/pages/__tests__/UnifiedOrder.restore-pendente.test.tsx).
+    const efeito = pagina.slice(pagina.indexOf('const decisao = resolverRestorePendente('), pagina.indexOf('}, [codigoClienteSelecionado]);'));
+    const ramoAplicar = efeito.slice(efeito.indexOf("if (decisao === 'aplicar') {"), efeito.indexOf('return;', efeito.indexOf("if (decisao === 'aplicar') {")));
+    expect(ramoAplicar).toContain('aplicarDadosRef.current(pendente.dados, true);');
+    expect(ramoAplicar).toContain('restorePendenteRef.current = null;');
   });
 
   it('B4: o carrinho trata serviço com preço ≤0 como A orçar e rotula Subtotal conhecido', () => {
