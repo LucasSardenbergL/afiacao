@@ -38,6 +38,12 @@ interface SaveInput {
   source?: 'manual' | 'omie' | 'auto_detected_call' | 'auto_import';
 }
 
+/** Contato já salvo; se a troca do principal falhar, o erro diz isso (o contato NÃO se perde). */
+async function definirPrincipal(contatoId: string): Promise<void> {
+  const { error } = await supabase.rpc('contato_cliente_definir_principal', { p_contato_id: contatoId });
+  if (error) throw new Error(`Contato salvo, mas não foi marcado como principal: ${error.message}`);
+}
+
 export function useSaveContact() {
   const qc = useQueryClient();
   return useMutation({
@@ -47,13 +53,10 @@ export function useSaveContact() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Não autenticado');
 
-      // Se setar is_primary=true, desliga primary de outros do mesmo cliente primeiro
-      if (input.is_primary) {
-         
-        await supabase.from('customer_contacts')
-          .update({ is_primary: false })
-          .eq('customer_user_id', input.customer_user_id);
-      }
+      // Onda D 4b-2: "principal" não vai mais por 2 UPDATEs soltos (desligar todos do dono informado pelo
+      // browser, depois gravar). O contato é salvo SEM mexer no principal e a RPC atômica
+      // `contato_cliente_definir_principal` troca o principal do dono DA LINHA numa transação.
+      const quer_principal = input.is_primary ?? false;
 
       const payload = {
         customer_user_id: input.customer_user_id,
@@ -62,7 +65,8 @@ export function useSaveContact() {
         cargo: input.cargo ?? null,
         email: input.email ?? null,
         is_decision_maker: input.is_decision_maker ?? false,
-        is_primary: input.is_primary ?? false,
+        // Novo contato nasce não-principal; a RPC liga depois (o UNIQUE parcial recusaria 2 principais).
+        is_primary: false,
         whatsapp_only: input.whatsapp_only ?? false,
         birthday: input.birthday ?? null,
         notas: input.notas ?? null,
@@ -73,24 +77,31 @@ export function useSaveContact() {
       if (input.id) {
         // O dono do contato e quem o criou são imutáveis na edição (grant de coluna de UPDATE, 20261126170000):
         // reatribuir um contato para um cliente da carteira o exibiria inteiro pela view.
-        const { customer_user_id: _dono, created_by: _criador, ...edicao } = payload;
+        // Marcar como principal fica com a RPC; desmarcar grava direto (não troca o principal de ninguém).
+        const { customer_user_id: _dono, created_by: _criador, is_primary: _principal, ...resto } = payload;
+        const edicao = quer_principal ? resto : { ...resto, is_primary: false };
         const { data, error } = await supabase.from('customer_contacts')
           .update(edicao).eq('id', input.id).select('id, customer_user_id').single();
         if (error) throw error;
+        if (quer_principal) await definirPrincipal(data.id);
         return data;
       }
 
-       
       const { data, error } = await supabase.from('customer_contacts')
         .insert(payload).select('id, customer_user_id').single();
       if (error) throw error;
+      if (quer_principal) await definirPrincipal(data.id);
       return data;
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['customer-contacts', data.customer_user_id] });
       toast.success('Contato salvo');
     },
-    onError: (err) => toast.error('Erro ao salvar', { description: err instanceof Error ? err.message : '' }),
+    onError: (err, input) => {
+      // O contato pode ter sido salvo antes de a troca do principal falhar: relê a lista do cliente.
+      qc.invalidateQueries({ queryKey: ['customer-contacts', input.customer_user_id] });
+      toast.error('Erro ao salvar', { description: err instanceof Error ? err.message : '' });
+    },
   });
 }
 

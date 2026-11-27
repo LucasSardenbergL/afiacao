@@ -38,6 +38,9 @@ const ALLOWED = new Set([
   // useContatosDoDia: effectiveUserId SÓ filtra a LEITURA de venda_contato (.eq('farmer_user_id', …)) na lente.
   // Hook 100% read-only; a escrita do desfecho mora em useRegistrarContato (auth.uid() no servidor, sem lente).
   'src/hooks/useContatosDoDia.ts',
+  // useCustomerDashboard: effectiveUserId SÓ no filtro .eq('user_id', …) da LEITURA de v_endereco_contato (onda D 4b-2);
+  // hook 100% read-only.
+  'src/components/customerDashboard/useCustomerDashboard.ts',
   // useMinhasSugestoes: effectiveUserId SÓ escolhe de quem é a LISTA lida na lente (get_venda_sugestoes_for,
   // master-only no banco) + queryKey. Hook 100% read-only; a escrita (marcar mostrada/desfecho) mora na ficha,
   // bloqueada na lente, e usa auth.uid() no servidor.

@@ -104,9 +104,10 @@ const Addresses = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
+    // Onda D 4b-2: rua/CEP/rótulo saem da tabela por grant de coluna; o dono lê tudo pela view mascarada.
     const { data, error } = await supabase
-      .from('addresses')
-      .select('*')
+      .from('v_endereco_contato')
+      .select('id, user_id, label, street, number, complement, neighborhood, city, state, zip_code, is_default, is_from_omie, created_at')
       .eq('user_id', user.id)
       .order('is_from_omie', { ascending: false })
       .order('is_default', { ascending: false });

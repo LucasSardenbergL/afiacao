@@ -1,6 +1,6 @@
 import type { SubmitQuoteParams, SubmitQuoteResult, SubmitErrorEntry } from './types';
 import { logger } from '@/lib/logger';
-import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
+import { formatCustomerAddress, resolveCustomerPhone, titularDoPedido, MSG_TITULAR_SEM_CLIENTE } from './helpers';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 import { bloqueioTabelaTint } from './tabelaTint';
@@ -10,7 +10,7 @@ import { bloqueioTabelaTint } from './tabelaTint';
  * Inserts one row per account into sales_orders with status='orcamento'.
  */
 export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuoteResult> {
-  const { customer, customerUserId, user, cart, subtotals, delivery, meta, supabase } = params;
+  const { customer, customerUserId, user, cart, subtotals, delivery, meta, supabase, isCustomerMode = false } = params;
   const { obenProductItems, colacorProductItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
@@ -20,6 +20,12 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
 
   if (obenProductItems.length === 0 && colacorProductItems.length === 0) {
     return { success: false, results: [], errors: [{ step: 'validate', message: 'Carrinho vazio' }] };
+  }
+
+  // Onda D 4b-2: staff sem cliente vinculado não grava orçamento no próprio nome (ver titularDoPedido).
+  const titular = titularDoPedido(customerUserId, user.id, isCustomerMode);
+  if (!titular) {
+    return { success: false, results: [], errors: [{ step: 'validate_titular', message: MSG_TITULAR_SEM_CLIENTE }] };
   }
 
   // Guard money-path: orçamento com produto a preço ≤ 0 vira pedido depois — bloqueia
@@ -73,7 +79,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         } : {}),
       }));
       const { error } = await supabase.from('sales_orders').insert({
-        customer_user_id: customerUserId || user.id,
+        customer_user_id: titular,
         created_by: user.id,
         items: itemsPayload,
         subtotal: subtotals.oben,
@@ -95,7 +101,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         stage: 'supabase_insert',
         account: 'oben',
         customerId: customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: titular,
         itemCount: obenProductItems.length,
         kind: 'quote',
         error: e,
@@ -125,7 +131,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         valor_total: c.quantity * c.unit_price,
       }));
       const { error } = await supabase.from('sales_orders').insert({
-        customer_user_id: customerUserId || user.id,
+        customer_user_id: titular,
         created_by: user.id,
         items: itemsPayload,
         subtotal: subtotals.colacor,
@@ -145,7 +151,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         stage: 'supabase_insert',
         account: 'colacor',
         customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
+        customerUserId: titular,
         itemCount: colacorProductItems.length,
         kind: 'quote',
         error: e,

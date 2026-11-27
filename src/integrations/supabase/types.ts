@@ -27937,6 +27937,10 @@ export type Database = {
         Args: { p_empresa: string; p_sku_antigo: string; p_sku_novo: string }
         Returns: undefined
       }
+      contato_cliente_definir_principal: {
+        Args: { p_contato_id: string }
+        Returns: string
+      }
       contato_cliente_operacional: {
         Args: {
           p_motivo: string

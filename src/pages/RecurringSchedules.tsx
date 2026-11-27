@@ -79,7 +79,8 @@ const RecurringSchedules = () => {
         supabase.from('user_tools')
           .select('id, generated_name, custom_name, tool_categories (name)')
           .eq('user_id', user.id),
-        supabase.from('addresses')
+        // Onda D 4b-2: rua/rótulo só pela view mascarada (o dono vê tudo).
+        supabase.from('v_endereco_contato')
           .select('id, label, street, number, city')
           .eq('user_id', user.id),
       ]);

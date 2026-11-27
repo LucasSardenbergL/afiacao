@@ -182,3 +182,25 @@ export async function resolveCustomerPhone(
   }
   return phone;
 }
+
+/** Mensagem do envio de staff sem cliente vinculado (onda D 4b-2). */
+export const MSG_TITULAR_SEM_CLIENTE =
+  'Este cliente ainda não tem cadastro vinculado no sistema. Selecione o cliente de novo para concluir o cadastro antes de enviar.';
+
+/**
+ * Titular (`customer_user_id`) do pedido/orçamento — onda D 4b-2.
+ * Antes: `customerUserId || user.id`. Sem vínculo local, o titular virava o VENDEDOR e o snapshot de
+ * contato do comprador ficava pendurado no staff (19 pedidos de 3 staff em prod). Agora:
+ *  - cliente vinculado → ele;
+ *  - modo cliente (o próprio cliente comprando) → o próprio usuário;
+ *  - staff sem cliente vinculado → `null` (o chamador recusa o envio ANTES de gravar).
+ * `isCustomerMode` ausente conta como staff: o lado que recusa, nunca o que grava no vendedor.
+ */
+export function titularDoPedido(
+  customerUserId: string | null,
+  userId: string,
+  isCustomerMode: boolean,
+): string | null {
+  if (customerUserId) return customerUserId;
+  return isCustomerMode ? userId : null;
+}
