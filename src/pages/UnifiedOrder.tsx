@@ -476,11 +476,15 @@ const UnifiedOrder = () => {
   }, [codigoClienteSelecionado]);
   // A vendedora começou OUTRO carrinho (no cliente errado): o rascunho em disco passa a ser esse, e a
   // pendência em memória (o carrinho antigo) não pode voltar por cima dele numa troca futura.
+  // A oferta EM MEMÓRIA (o rascunho do outro cliente) sai junto: o autosave já grava este carrinho
+  // em disco, e esvaziá-lo reabria o diálogo do outro sobre esta seleção — com "Descartar mesmo
+  // assim" apagando o envelope do envio pendente dele (Codex r2 do #4271). O envelope fica.
   useEffect(() => {
     if (h.cart.length === 0 || !restorePendenteRef.current) return;
     restorePendenteRef.current = null;
     setRestoreEsperandoCliente(false);
-  }, [h.cart.length]);
+    dismissDraft(); // a oferta do outro cliente sai da memória
+  }, [h.cart.length, dismissDraft]);
 
   const handleRestore = () => {
     if (!draft) return;
@@ -534,7 +538,18 @@ const UnifiedOrder = () => {
   // "Trocar e limpar": o hook zera carrinho + envelope; o rascunho em disco vai junto — restaurá-lo
   // depois e reenviar criaria checkout NOVO e duplicaria o PV/OS já enviados.
   const handleClearCustomer = () => {
-    if (h.clearCustomer()) clearDraft(); // barrada com envio em voo → nada é apagado
+    // Restore esperando o cliente do rascunho (cliente ERRADO na tela, carrinho vazio): trocar só
+    // desfaz a seleção — rascunho, envelope e pendência ficam, e o carrinho volta quando o cliente
+    // certo for selecionado. Apagá-los aqui e reaplicar a pendência depois punha o carrinho do envio
+    // pendente na tela SEM o checkoutId (2º PV no reenvio) — Codex r2 do #4271.
+    if (restoreEsperandoCliente && h.cart.length === 0) {
+      h.clearCustomer({ preservarEnvioPendente: true });
+      return;
+    }
+    if (!h.clearCustomer()) return; // barrada com envio em voo → nada é apagado
+    clearDraft();
+    restorePendenteRef.current = null; // o rascunho foi apagado: a pendência dele não pode voltar
+    setRestoreEsperandoCliente(false);
   };
 
   // Orçamento: o rascunho segue o desfecho NA HORA (sem esperar o debounce de 600 ms).
@@ -637,7 +652,10 @@ const UnifiedOrder = () => {
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
               estadoVendedor={h.estadoVendedor}
-              estadoCadastro={h.estadoCadastro} envioPendente={h.envioPendente}
+              estadoCadastro={h.estadoCadastro}
+              // Restore esperando o cliente: "Trocar" PRESERVA o envio pendente (handleClearCustomer),
+              // então não há ligação a desfazer nem confirmação a pedir.
+              envioPendente={h.envioPendente && !(restoreEsperandoCliente && h.cart.length === 0)}
               onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />

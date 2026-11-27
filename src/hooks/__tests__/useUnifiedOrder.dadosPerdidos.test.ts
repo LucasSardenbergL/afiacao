@@ -91,4 +91,16 @@ describe('Novo Pedido — fiação do PR B', () => {
     expect(busca).toContain('seloEstoque(product.estoque)');
     expect(busca).toContain('rotuloPrecoProduto(');
   });
+
+  // Codex r2 do #4271 (P2): o caso 173 → U decide `reuse`, mas a proteção dos envios SEGUINTES depende
+  // de o envelope ser regravado com a fingerprint CANÔNICA (senão um 2º reenvio com a seleção sem o
+  // código 173 já não acharia o alias legado). A decisão é provada no helper; aqui, que o hook grava.
+  it('reuso migra a fingerprint do envelope para a chave canônica devolvida pelo helper', () => {
+    const ini = hook.indexOf('decidirEnvelopeDoCliente(checkoutEnvRef.current');
+    expect(ini, 'chamada do helper não encontrada').toBeGreaterThan(-1);
+    const trecho = hook.slice(ini, ini + 3000);
+    expect(trecho).toContain('const { decision, fingerprint } = decidirEnvelopeDoCliente(');
+    expect(trecho).toContain('checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true }');
+  });
 });
+

@@ -16,7 +16,13 @@ import { toast } from 'sonner';
  * A página roda de VERDADE (useOrderDraft e useUnifiedOrder reais; só supabase/auth mockados).
  */
 
-function resposta(_table: string): unknown {
+// Um produto vendável da Oben: o cenário do carrinho NOVO no cliente errado precisa adicionar um item.
+const PRODUTO = {
+  id: 'p-1', codigo: 'TST-1', descricao: 'Produto Teste Um', unidade: 'UN', valor_unitario: 10, estoque: 5,
+  ativo: true, omie_codigo_produto: 9, account: 'oben', is_tintometric: false, tint_type: null, metadata: null, tipo_produto: null,
+};
+function resposta(table: string): unknown {
+  if (table === 'omie_products') return { data: [PRODUTO], error: null, count: 1 };
   return { data: [], error: null, count: 0 };
 }
 
@@ -126,6 +132,42 @@ describe('UnifiedOrder — restaurar com envio pendente e sem cliente na tela', 
     });
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     expect(screen.queryByText(TITULO), 'o diálogo reabriu sobre o cliente errado').toBeNull();
+    expect(screen.queryByText('Descartar mesmo assim')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
+  });
+
+  // Codex r2 do #4271: "Trocar cliente" (a saída que o toast indica) apagava rascunho + envelope e a
+  // pendência seguia na memória — selecionar o cliente certo punha o carrinho SEM o checkoutId.
+  it('"Trocar cliente" no cliente errado preserva rascunho e envelope (sem pedir confirmação)', async () => {
+    montar();
+    fireEvent.click(await screen.findByRole('button', { name: /Restaurar/ }));
+    fireEvent.click(await screen.findByText('Outra Empresa B', {}, { timeout: 3000 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Trocar cliente' }, { timeout: 3000 }));
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    // Sem cliente na tela de novo (a busca volta) e sem o diálogo de "desfazer a ligação".
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Trocar cliente' })).toBeNull(); });
+    expect(screen.queryByText('Trocar e limpar carrinho')).toBeNull();
+    expect(screen.queryByText(TITULO), 'o diálogo reabriu depois da troca').toBeNull();
+    expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
+    expect(JSON.parse(localStorage.getItem('order_draft:vendedor-1') ?? 'null')?.state?.customerCodigoCliente).toBe(173);
+  });
+
+  // Codex r2 do #4271: carrinho NOVO no cliente errado, esvaziado → o rascunho de A (em memória)
+  // reabria o diálogo sobre B, e "Descartar mesmo assim" apagava o envelope de A.
+  it('esvaziar um carrinho novo do cliente errado NÃO reoferece o rascunho do outro', async () => {
+    montar();
+    fireEvent.click(await screen.findByRole('button', { name: /Restaurar/ }));
+    fireEvent.click(await screen.findByText('Outra Empresa B', {}, { timeout: 3000 }));
+    await screen.findByRole('button', { name: 'Trocar cliente' }, { timeout: 3000 });
+    const adicionar = await screen.findByRole('button', { name: /^Adicionar$/ }, { timeout: 3000 });
+    await waitFor(() => { expect((adicionar as HTMLButtonElement).disabled).toBe(false); }, { timeout: 3000 });
+    fireEvent.click(adicionar);
+    // CONTROLE do cenário: o item entrou no carrinho (senão o teste não esvaziaria nada).
+    fireEvent.click(await screen.findByRole('button', { name: 'Remover Produto Teste Um' }, { timeout: 3000 }));
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Remover Produto Teste Um' })).toBeNull(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    expect(screen.queryByText(TITULO), 'o rascunho do outro cliente reabriu sobre esta seleção').toBeNull();
     expect(screen.queryByText('Descartar mesmo assim')).toBeNull();
     expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
   });

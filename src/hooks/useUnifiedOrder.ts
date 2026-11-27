@@ -430,13 +430,17 @@ export function useUnifiedOrder() {
   // Wrap clearCustomer to also clear cart + ordem de compra
   // Retorna false quando BARRADA: com envio/orçamento em voo, a troca apagaria o envelope antes de
   // `aoConfirmarOsAfiacao` carimbar a OS e a resposta atrasada ressuscitaria o rascunho (Codex P1).
-  const clearCustomer = useCallback((): boolean => {
+  // `preservarEnvioPendente` (Codex r2 do #4271): a página está com o restore ESPERANDO o cliente do
+  // rascunho e a seleção é a errada — o carrinho está vazio, não há nada deste cliente a descartar, e
+  // o envelope é do envio pendente do OUTRO. Só a seleção sai; envelope (e rascunho) ficam.
+  const clearCustomer = useCallback((opcoes?: { preservarEnvioPendente?: boolean }): boolean => {
     if (submittingRef.current) { avisarCarrinhoTravado(); return false; }
     prazoDecisaoRef.current = {};
     clearCustomerInternal();
     setCart([]);
     // B2 (Codex P2): trocar de cliente leva junto os campos DO pedido — antes só a OC era limpa.
     setOrdemCompra(''); setNotes(''); setReadyByDate(''); setSelectedTimeSlot('');
+    if (opcoes?.preservarEnvioPendente) return true;
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
     // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
