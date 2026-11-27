@@ -1,6 +1,6 @@
 # Caça — candidatos re-agregados por linha (Nested Loop sobre estimativa rows=1)
 
-**Migration:** `20261126233000_caca_candidatos_plano_materializado.sql` · **sem edge · sem Publish** (só banco).
+**Migration:** `20261126235000_caca_candidatos_plano_materializado.sql` · **sem edge · sem Publish** (só banco).
 
 ## Sintoma
 A página de candidatos da Caça (`useCaca` → `v_caca_candidatos`, 32 páginas sequenciais de 1.000 via

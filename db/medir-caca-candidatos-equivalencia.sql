@@ -1,4 +1,4 @@
--- db/medir-caca-candidatos-equivalencia.sql — prova de equivalência da 20261126233000 (READ-ONLY).
+-- db/medir-caca-candidatos-equivalencia.sql — prova de equivalência da 20261126235000 (READ-ONLY).
 --   bun run db:aplicar db/medir-caca-candidatos-equivalencia.sql --ensaio   (SEMPRE --ensaio)
 -- Por persona (farmer, master): md5 linha a linha, ordenado, da view ATUAL × o corpo NOVO inline.
 -- Mesmo md5 e mesma contagem = mesma saída. Roda antes do apply (view antiga viva).
