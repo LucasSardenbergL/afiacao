@@ -23,6 +23,8 @@ Não existia classificação operacional/investimento/financiamento em lugar nen
 
 ## Pendências registradas
 
+> Andamento técnico (itens 1–5) em [dre-dfc-pendencias-tecnicas.md](dre-dfc-pendencias-tecnicas.md).
+
 - Parcela de empréstimo sem abertura principal × juros: o total de juros pagos é **parcial** (a tela avisa).
 - Reconciliação saldo inicial + variação = saldo final: o Omie guarda só o saldo atual; snapshots de tesouraria só desde 2026-05. A tela diz "sem base".
 - colacor_sc 1.04.04 "Empréstimos/Financiamentos" (R$ 383k histórico) = captação até o founder confirmar se é mútuo do grupo.
