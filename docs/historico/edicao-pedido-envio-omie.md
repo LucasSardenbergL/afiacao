@@ -87,6 +87,11 @@
     enquanto o PID é nulo; (iii) recusa depois do gate ATP deixa a reserva até o TTL (30 min), como todo
     throw pós-ATP; (iv) dado sujo (`"10,50"`) lança 22P02 genérico; (v) salvar NÃO commitado × envio com
     os itens novos recusa sem esperar o lock (sem caminho real).
+  - **No ar (2026-11-27, PR #4250):** migration 20261126190127 aplicada pela sessão e validada por fora
+    (`t | t | f`; anon `f`, service_role `t`); `pedido-programado-enviar` v1.1 (onda 1, sonda CONFERE) e
+    depois `omie-vendas-sync` v1.54 — a v1.53 com a leva 1 do #4258 por cima (onda 2, relé CONFERE). Sensor
+    de edição: onda 2 `SEM_EDICAO`; onda 1 acusou o commit do bot que regravou `types.ts` (as 2 funções
+    novas) e o `.env` com a chave `sb_publishable` que o bundle publicado JÁ servia — falso positivo.
   - Fora, pré-existente e de outro caminho: a reconciliação por duplicata (`PV_<id>`) compara só SKU e
     quantidade, então confirma um PV com preço antigo (Codex, achado 5).
 - Fora: concorrência entre dois editores / alteração no Omie entre abrir e salvar; vencimentos reais de
