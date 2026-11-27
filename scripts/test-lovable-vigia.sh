@@ -318,7 +318,10 @@ LVT_ANDA_POS_CLONE=1 roda ok
 git -C "$TMP/origin" reset -q --hard "$BASE0"; echo "$BASE0" > "$TMP/head"
 r_limpo() { LVT_SUJA=1 roda ok; tem "PUBLICADO" && ! grep -q ADULTERADO "$TMP/wt/scripts/lovable-publish.sh" && [ -z "$(git -C "$TMP/wt" status --porcelain --untracked-files=no)" ]; }
 r_limpo && ok "decisor adulterado no clone (HEAD = main) → checkout -f roda o da main" || nok "limpo: $(tail -2 "$LOGV")"
-[ "$(stat -f %Lp "$TMP/est-ok" 2>/dev/null || stat -c %a "$TMP/est-ok")" = 700 ] && ok "estado do vigia com chmod 700" || nok "modo do estado: $(stat -f %Lp "$TMP/est-ok" 2>&1)"
+# modo por `ls -ld` (portável): no Linux `stat -f` é stat de FILESYSTEM — imprime lixo + exit 1 e o `||` concatena
+# shellcheck disable=SC2012  # caminho fixo do teste; ls -ld é o modo portável macOS/Linux
+MODO_EST=$(ls -ld "$TMP/est-ok" | cut -c1-10)
+[ "$MODO_EST" = drwx------ ] && ok "estado do vigia com chmod 700" || nok "modo do estado: $MODO_EST"
 
 # instalador --verificar: o claude roda com o ambiente do launchd (env -i) e a prova é o tool_result
 mkdir -p "$TMP/home/.local/share/afiacao/vigia-claude"; touch "$TMP/home/.local/share/afiacao/vigia-claude/.vigia-pronto"
