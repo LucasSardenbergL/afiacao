@@ -1036,6 +1036,17 @@ Deno.serve(async (req) => {
           );
         }
 
+        // Onda D 4b-2: titular da OS = o cliente do pedido. O chamador é sempre staff (ou cron), então o
+        // antigo `|| userId` gravava a OS no nome do VENDEDOR. Sem cliente vinculado → recusa ANTES de
+        // qualquer efeito na Omie (o front novo já não envia assim).
+        const orderUserId: string | null = staffContext?.customerUserId || null;
+        if (!orderUserId) {
+          return new Response(
+            JSON.stringify({ versao: VERSAO, error: "Cliente sem cadastro vinculado: selecione o cliente de novo antes de enviar a OS." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
         let clienteResult: ClienteOmieResult;
 
         // If staff is creating an order for a customer, use the customer's Omie code directly
@@ -1094,9 +1105,6 @@ Deno.serve(async (req) => {
             addressData
           );
         }
-
-        // Determine the effective user_id for the orders table
-        const orderUserId = staffContext?.customerUserId || userId;
 
         // 2. Criar Ordem de Serviço (com vendedor se existir) — idempotente pelo orderId (= checkoutId
         //    do front): o reenvio do MESMO checkout devolve a OS que já existe em vez de criar outra.

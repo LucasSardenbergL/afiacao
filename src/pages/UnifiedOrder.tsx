@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { useUnifiedOrder, type Product } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
+import { useSensorFunilPedido } from '@/hooks/unifiedOrder/sensor-funil';
 import { decidirParcelaDoRascunho, lerParcelasDoRascunho, type ParcelasDoRascunho } from '@/hooks/unifiedOrder/parcela-manual';
 import { codigoClienteIdentifica, decidirRestore, resolverRestorePendente } from '@/hooks/unifiedOrder/restore-rascunho';
 import { useAuth } from '@/contexts/AuthContext';
@@ -264,6 +265,12 @@ const UnifiedOrder = () => {
         toast.error('O pedido a repetir é de outro cliente.');
         return;
       }
+      // #4 (revisão /sales): conta fora de oben|colacor não vira Oben — repetir com o catálogo de outra
+      // empresa casaria SKUs por engano.
+      if (pedido.account !== 'colacor' && pedido.account !== 'oben') {
+        toast.error(`Não sei repetir pedido da empresa "${pedido.account ?? 'sem empresa'}" por aqui.`);
+        return;
+      }
       const catalogo = pedido.account === 'colacor' ? h.colacorProducts : h.obenProducts;
       const plano = montarPlanoReplicacao(pedido.items, catalogo);
       for (const d of plano.diretos) h.addProductToCart(d.product, d.quantidade);
@@ -362,9 +369,21 @@ const UnifiedOrder = () => {
     }
   }, [draft, h.cart.length, restoreOpen]);
 
-  // Telemetria: pedido enviado com sucesso (dispara uma vez ao abrir o success dialog)
+  // Sensor do funil no LEDGER (PR 9.1): jornada por pedido em montagem; o envio avisa pela ref.
+  const sensorFunil = useSensorFunilPedido({
+    modo: isCustomerMode ? 'customer' : 'staff',
+    clienteEscolhido: h.selectedCustomer != null,
+    temItem: h.cart.length > 0,
+  });
   useEffect(() => {
-    if (h.orderSuccessOpen && h.lastOrderData) {
+    h.sensorEnvioRef.current = sensorFunil;
+  }, [h.sensorEnvioRef, sensorFunil]);
+
+  // Telemetria: pedido CRIADO de verdade — o resumo abre também no envio parcial, no bloqueio de
+  // crédito e depois do painel do ATP, e ali o PV de alguma conta NÃO existe (contava pedido que
+  // não foi criado). Só o envio confirmado em TODAS as contas é "criado".
+  useEffect(() => {
+    if (h.orderSuccessOpen && h.lastOrderData && h.ultimoEnvioConfirmado) {
       // Sensor de Clientes (onda C): o "Novo pedido" da lista/360/cadastro só é sucesso no pedido ENVIADO.
       registrarSucessoNoDestino(estadoDaNavegacaoAtual(), 'novo_pedido');
       track('pedido.criado', {
@@ -374,7 +393,7 @@ const UnifiedOrder = () => {
         num_pedidos: h.lastOrderData.orderNumbers?.length ?? 0,
       });
     }
-  }, [h.orderSuccessOpen, h.lastOrderData, isCustomerMode]);
+  }, [h.orderSuccessOpen, h.lastOrderData, h.ultimoEnvioConfirmado, isCustomerMode]);
 
   // Restore PENDENTE (follow-up Codex P1 do #4068): rascunho de A restaurado sem cliente na tela
   // punha o carrinho de A na tela e, se a vendedora selecionasse B, os itens (com preço negociado
@@ -473,6 +492,9 @@ const UnifiedOrder = () => {
     } else {
       aplicarDadosDoRascunho(dados, codigoClienteIdentifica(codigoRascunho));
     }
+    sensorFunil.registrar('novo_pedido.rascunho_restaurado', {
+      itens: state.cart.length, espera_cliente: decisao === 'esperarCliente',
+    });
     setRestoreOpen(false);
     // Não limpa o draft — ele será reescrito naturalmente conforme o vendedor edita.
   };
@@ -481,6 +503,7 @@ const UnifiedOrder = () => {
   // quando havia envio pendente; descartar zera os DOIS — senão o próximo pedido idêntico sai
   // como "já enviado" e não é criado.
   const handleDiscardDraft = () => {
+    sensorFunil.registrar('novo_pedido.rascunho_descartado', { itens: draft?.state.cart.length ?? null });
     restorePendenteRef.current = null;
     clearDraft();
     h.descartarEnvelope();
@@ -626,6 +649,7 @@ const UnifiedOrder = () => {
               precoNascimentoPorId={h.precoNascimentoPorId}
               // A5 (rodada 2): com envio em voo o "Adicionar" da sugestão desabilita (o hook também barra).
               precoLoading={h.precoPartidaLoading || h.submitting}
+              aoSensor={sensorFunil.registrar}
             />
           )}
 

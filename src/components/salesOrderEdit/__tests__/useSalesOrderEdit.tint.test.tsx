@@ -15,6 +15,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import { useSalesOrderEdit } from '../useSalesOrderEdit';
+import { comQueryClient } from '@/test/query-client';
 import type { OmieProduct } from '../types';
 
 const baseTint: OmieProduct = {
@@ -33,7 +34,7 @@ const baseTint: OmieProduct = {
 
 describe('useSalesOrderEdit.handleTintConfirm', () => {
   it('grava tint_formula_id (além de cor/nome) no item de tinta', () => {
-    const { result } = renderHook(() => useSalesOrderEdit());
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
 
     // Selecionar a base tintométrica abre o diálogo de cor (seta tintPendingProduct).
     act(() => {

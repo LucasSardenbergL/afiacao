@@ -106,7 +106,7 @@ function BlocoExposicao({ p }: { p: PainelCredito }) {
                   return (
                     <TableRow key={g.grupoUserId}>
                       <TableCell>
-                        <div className="font-medium">{g.nome ?? 'Sem nome no título'}</div>
+                        <div className="font-medium">{g.nome ?? 'Sem nome no cadastro'}</div>
                         <div className="flex flex-wrap gap-1 text-xs text-muted-foreground">
                           {g.empresas.map((e) => NOME_EMPRESA[e] ?? e).join(' + ')}
                           {g.parcialColacorSc && (
@@ -209,16 +209,87 @@ function BlocoBloqueios({ p }: { p: PainelCredito }) {
   );
 }
 
+const pct = (v: number | null) => (v === null ? '—' : `${v.toLocaleString('pt-BR')}%`);
+const RISCO_LABEL: Record<string, string> = { baixo: 'baixo', medio: 'médio', alto: 'alto', sem_evidencia: 'sem evidência' };
+const decisaoIA = (r: boolean | null) => (r === null ? '—' : r ? 'IA restringe' : 'IA libera');
+const PISO_LABEL: Record<string, string> = { comprovado: 'piso bloqueia', livre: 'piso libera' };
+
+function ConcordanciaIA({ c }: { c: Exclude<PainelCredito['concordancia']['concordancia'], Indisponivel> }) {
+  const cp = c.concordanciaPiso;
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi rotulo="Grupos com proposta da IA" valor={int(c.gruposComProposta)}
+             detalhe={`${int(c.gruposComDesfecho)} com safra vencida`} />
+        <Kpi rotulo="IA concorda com o piso" valor={pct(cp.pct)}
+             detalhe={`${int(cp.concordam)} de ${int(cp.comparaveis)} grupos · ${int(cp.fora)} sem piso na ficha`} />
+        <Kpi rotulo="Títulos sem desfecho" valor={int(c.titulosSemDesfecho)} detalhe="fora da conta, nunca 'em dia'" />
+        <Kpi rotulo="Prospectivo (pós-proposta)" valor={int(c.prospectivo.titulosMaduros)}
+             detalhe={c.prospectivo.titulosMaduros === 0 ? 'ainda amadurecendo' : 'títulos com desfecho'} />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Safra: vencimento de {c.janela.de ?? '—'} a {c.janela.ate ?? '—'}, em dia = baixa até {int(c.janela.toleranciaDias)} d
+        após o vencimento. {c.aviso}
+      </p>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <div className="font-medium">Atraso por R$ × risco da IA</div>
+          {c.porRisco.length === 0 ? <p className="text-muted-foreground">Nenhum grupo com proposta tem safra vencida no período.</p> : (
+            <Table>
+              <TableHeader><TableRow><TableHead>Risco</TableHead><TableHead className="text-right">Grupos</TableHead><TableHead className="text-right">Atraso</TableHead><TableHead className="text-right">&gt; 15 d</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {c.porRisco.map((r) => (
+                  <TableRow key={r.risco}>
+                    <TableCell>{RISCO_LABEL[r.risco] ?? r.risco}</TableCell>
+                    <TableCell className="text-right tabular-nums">{int(r.grupos)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{pct(r.atrasoPct)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{pct(r.atrasoGravePct)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+        <div>
+          <div className="font-medium">IA × piso de hoje</div>
+          {c.iaXPiso.length === 0 ? <p className="text-muted-foreground">Sem grupo para comparar ainda.</p> : (
+            <Table>
+              <TableHeader><TableRow><TableHead>Decisão</TableHead><TableHead className="text-right">Grupos</TableHead><TableHead className="text-right">Atraso</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {c.iaXPiso.map((r) => (
+                  <TableRow key={`${String(r.iaRestringe)}-${r.pisoHoje ?? 'nulo'}`}>
+                    <TableCell>{decisaoIA(r.iaRestringe)} · {r.pisoHoje ? (PISO_LABEL[r.pisoHoje] ?? r.pisoHoje) : 'piso sem informação'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{int(r.grupos)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{pct(r.atrasoPct)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </div>
+      {c.prospectivo.porIa.length > 0 && (
+        <div>
+          <div className="font-medium">Prospectivo — títulos emitidos depois da 1ª proposta</div>
+          {c.prospectivo.porIa.map((r) => (
+            <div key={String(r.iaRestringe)}>{decisaoIA(r.iaRestringe)}: {int(r.titulos)} títulos · atraso {pct(r.atrasoPct)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BlocoConcordancia({ p }: { p: PainelCredito }) {
   const c = p.concordancia;
   return (
     <Card>
       <CardHeader>
         <CardTitle>Concordância IA × regra</CardTitle>
-        <CardDescription>A IA ainda não decide pedido (backtest IA × regra é a fatia 5b). Hoje: gate v2 em sombra (PR 5) — faixas e concordância com o piso atual.</CardDescription>
+        <CardDescription>Limite proposto pela IA (PR 4) × piso de hoje, com o desfecho das safras já vencidas (backtest da fatia 5b, ao vivo). Abaixo: gate v2 em sombra (PR 5).</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {ind(c.concordancia) && <SemDado motivo={c.concordancia.motivo} />}
+        {ind(c.concordancia) ? <SemDado motivo={c.concordancia.motivo} /> : <ConcordanciaIA c={c.concordancia} />}
         {ind(c.sombra) ? <SemDado motivo={c.sombra.motivo} /> : (
           <div className="text-sm">
             <div className="font-medium">Faixas em sombra (estado atual por pedido)</div>

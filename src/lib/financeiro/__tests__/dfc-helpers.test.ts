@@ -44,6 +44,16 @@ describe('montarDFC', () => {
     expect(d.blocos.find((b) => b.atividade === 'operacional')!.porMes['2026-10-01']).toBe(500);
   });
 
+  it('pendente_conciliacao é balde PRÓPRIO, fora das atividades — não vira "Não classificado"', () => {
+    const r = montarDFC([
+      L('2026-09-01', 'op_recebimento_clientes', 'operacional', 1000, 0),
+      L('2026-09-01', 'pendente_conciliacao', 'pendente_conciliacao', 1195.75, 0),
+    ], MESES);
+    expect(r.fora.map((f) => f.linha)).toEqual(['pendente_conciliacao']);
+    expect(r.fora[0]).toMatchObject({ total: 1195.75, rotulo: 'Pendente de conciliação com o título' });
+    expect(r.blocos.find((b) => b.atividade === 'operacional')!.total).toBe(1000);
+  });
+
   it('mês sem movimento fica AUSENTE (a tela mostra "—"), não vira 0', () => {
     const inv = d.blocos.find((b) => b.atividade === 'investimento')!;
     expect('2026-10-01' in inv.porMes).toBe(false);

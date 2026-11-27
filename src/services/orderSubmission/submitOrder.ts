@@ -148,7 +148,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   // `customer_user_id = user.id` — o pedido nascia no nome do VENDEDOR e o telefone dele sobrescrevia o
   // do Omie. Autoatendimento: o cliente é o próprio usuário. Staff sem cadastro confirmado: aborta antes
   // de qualquer insert ou chamada ao ERP (a tela manda "Trocar" e selecionar de novo).
-  const clienteDoPedidoId = customerUserId ?? (isCustomerMode ? user.id : null);
+  // Mesmo helper do orçamento (onda D 4b-2, #4251): staff sem vínculo → null → recusa antes de gravar.
+  const clienteDoPedidoId = titularDoPedido(customerUserId, user.id, isCustomerMode);
   if (!clienteDoPedidoId) {
     return {
       success: false,

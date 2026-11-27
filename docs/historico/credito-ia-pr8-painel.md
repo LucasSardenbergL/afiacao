@@ -42,6 +42,30 @@ Fecha o programa crédito-IA (plano `docs/superpowers/plans/2026-11-20-credito-i
 
 ## Pendências
 - **Sombra (PR 5, #4192):** a sombra NÃO grava em `credito_decisao_pedido` (P0 do Codex: não tocar o gate efetivo); o estado atual por PV fica em `public.credito_sombra_pv_atual` (faixa, motivo, …). O bloco já está **plugado por SQL dinâmico**: sem a view → "PR 5 não aplicado"; com ela → distribuição faixa × motivo; forma diferente (coluna/permissão) → só o bloco degrada para "sem dado" + motivo, o painel segue. Quando o PR 5 for aplicado, o bloco acende sozinho — sem follow-up. Distribuição só de `NOT carga_inicial` (orientação do dono do PR 5) + **concordância gate v2 × piso atual** (`faixa` × `(piso->>'bloqueado')::boolean`; piso sem a chave = NULL, não "liberou").
-- **Concordância IA × regra:** não existe ainda — a IA não decide pedido; o backtest IA × regra é a fatia 5b (depois do PR 4). O bloco diz isso, e mostra a v2 × piso no lugar.
+- ~~**Concordância IA × regra**~~ → **feito em 2026-11-26** (seção abaixo).
+- **Sombra em prod (2026-11-26):** a view existe; 100 decisões, todas `carga_inicial` → o bloco mostra 0 PVs (zero medido) até chegarem pedidos.
 
 Prova: `db/test-credito-painel-leitura.sh` roda em PG17 com as migrations reais do PR 1/2, nos dois locales. Tem 9 sabotagens, controle verde e restauração verde na mesma invocação.
+
+## Concordância IA × regra ao vivo (2026-11-26, migration `20261126180000`)
+
+A 5b (#4214) entregou o backtest como SQL re-rodável (`db/backtest-credito-ia-regra.sql`) e o PR 4 gravou propostas da IA em prod (501 `pendente`). A migration leva para a RPC as seções **risco da IA**, **IA × piso de hoje** e **prospectivo**; o resto do corpo é byte a byte o de `20261125120000`.
+
+- **IA** = proposta mais recente do grupo, fora a redução automática (`aplicada_auto_reducao`). `ia_restringe` = limite 0 ou risco alto/sem evidência. Prospectivo = 1ª proposta (coorte fixa).
+- **Safra** = CR de venda (1.01.*) com vencimento em (hoje − período, hoje − 15]. Em dia = baixa ≤ venc + 5; "> 15 d" = ainda aberto ou baixa > venc + 15. Sem desfecho sai da conta e é contado.
+- **Concordância com o piso** = grupos em que a IA restringe e o piso de hoje (`ficha.piso_estado`) bloqueia, ou ambos liberam. Ficha sem piso = fora da comparação, contada; sem comparável, % = null.
+- **In-sample:** a ficha já viu essas baixas — é coerência, não predição. O out-of-time é o prospectivo, que começa vazio.
+- Diferença do arquivo da 5b: o grupo vem da função canônica `credito_grupo_raiz` (não da réplica do psql-ro) e o piso é o de **hoje** da ficha (a reconstrução em T fica só no arquivo).
+- **Guarda de drift:** a migration aborta se o corpo em prod não for o de `20261125120000` (md5 `afae4546…`) nem já o novo.
+
+Prova: o mesmo harness, agora aplicando a cadeia base + nova. 64 asserts no controle e 21 sabotagens vermelhas, nos dois locales. A sabotagem do REVOKE da migration nova ficava **verde**: o `CREATE OR REPLACE` preserva o ACL da base, então o REVOKE é redundante por desenho. Ela foi trocada por um GRANT a mais, que a postcondição recusa.
+
+**Aplicado em prod (2026-11-26):** `db:aplicar` a partir da main (`799104c8f`, #4233), tentativa **#1488** `aplicada`, com o mesmo sha256 do ensaio (`3ef7439b…`). A guarda de drift passou. 2ª testemunha pelo psql-ro: md5 do corpo em prod = md5 do repo (`1df6581f…`), marca `painel-concordancia-ia-v2` presente, SECURITY DEFINER, STABLE, `search_path=public`, ACL `{postgres, authenticated}` (anon ✗, service_role ✗). Falta o Publish para a tela nova aparecer.
+
+## Nome do grupo pela fonte certa (2026-11-26, migration `20261127100000`)
+
+Conferindo a tela em prod depois do Publish, a exposição mostrava os grupos **sem nome**. O PR 8 lia `fin_contas_receber.nome_cliente`, que vem **vazio do sync em 1.208/1.208 títulos abertos** (psql-ro). A fonte nova é `profiles` da **raiz** do grupo (`razao_social`, senão `name`), o mesmo COALESCE das RPCs de crédito; os 16.107 donos do mapa têm nome. Nos bloqueios recentes, o nome é o do dono do par, e par com 2 donos fica `null` (não adivinha).
+
+**Lição:** coluna de texto "nome" em espelho do Omie pode existir e vir sempre `''`. `count(col)` conta string vazia; meça `count(*) FILTER (WHERE col <> '')` antes de escolher a fonte.
+
+**Aplicado em prod (2026-11-26):** `db:aplicar` a partir da main (`64e9f65e0`, que contém o #4249), tentativa **#1514** `aplicada`, sha256 `f0238527…`. 2ª testemunha pelo psql-ro: md5 do corpo em prod = md5 do repo (`c16e8f1b…`), marca `painel-nome-grupo-v3` presente, SECURITY DEFINER, `search_path=public`, ACL `{postgres, authenticated}` (anon ✗, service_role ✗). O nome chega pela RPC com o front atual; o Publish só troca o texto do fallback.

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Save, Plus, AlertCircle, X } from 'lucide-react';
+import { Loader2, Save, Plus, AlertCircle, X, RefreshCw } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useSalesOrderEdit } from '@/components/salesOrderEdit/useSalesOrderEdit';
 import { formatPrecoOuAusente } from '@/lib/format';
@@ -11,8 +11,9 @@ import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentCombobox
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
 import { OrderItemCard } from '@/components/salesOrderEdit/OrderItemCard';
+import { useParams } from 'react-router-dom';
 
-const SalesOrderEdit = () => {
+const EditorDoPedido = () => {
   const {
     order,
     customerName,
@@ -49,6 +50,11 @@ const SalesOrderEdit = () => {
     isBlocked,
     motivoBloqueio,
     invalidQuantityItemIndices,
+    formularioTravado,
+    precisaRecarregar,
+    recarregar,
+    temAlteracaoPendente,
+    envioDeOutraTela,
   } = useSalesOrderEdit();
 
   if (loading) {
@@ -100,12 +106,40 @@ const SalesOrderEdit = () => {
           </Card>
         )}
 
+        {envioDeOutraTela && !precisaRecarregar && (
+          <Card className="border-status-info" role="status">
+            <CardContent className="p-4 flex items-center gap-2 text-status-info">
+              <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+              <p className="text-sm font-medium">
+                Um salvamento deste pedido ainda está em andamento. Aguarde terminar para editar.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {precisaRecarregar && (
+          <Card className="border-status-warning" role="alert">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-start gap-2 text-status-warning">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <p className="text-sm font-medium">{precisaRecarregar.mensagem}</p>
+              </div>
+              {precisaRecarregar.tipo === 'concorrente' && (
+                <Button variant="outline" className="w-full gap-2" onClick={() => { void recarregar(); }}>
+                  <RefreshCw className="w-4 h-4" />
+                  Recarregar pedido
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Items */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center justify-between">
               <span>Itens do Pedido</span>
-              {!isBlocked && (
+              {!formularioTravado && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -120,7 +154,7 @@ const SalesOrderEdit = () => {
           </CardHeader>
           <CardContent className="space-y-3">
             {/* Add product search */}
-            {showAddProduct && !isBlocked && (
+            {showAddProduct && !formularioTravado && (
               <AddProductSearch
                 productSearch={productSearch}
                 setProductSearch={setProductSearch}
@@ -137,7 +171,7 @@ const SalesOrderEdit = () => {
                 key={`${item.omie_codigo_produto}-${item.tint_cor_id ?? ''}-${item.codigo ?? ''}`}
                 item={item}
                 index={index}
-                isBlocked={isBlocked}
+                isBlocked={formularioTravado}
                 isPriceInvalid={invalidPriceItemIndices.includes(index)}
                 isQuantityInvalid={invalidQuantityItemIndices.includes(index)}
                 onUpdate={updateItem}
@@ -161,7 +195,7 @@ const SalesOrderEdit = () => {
                   formas={formas}
                   selected={selectedParcela}
                   onSelect={setSelectedParcela}
-                  disabled={isBlocked || parcelaTravada}
+                  disabled={formularioTravado || parcelaTravada}
                 />
               )}
               <AvisoFormasPagamento
@@ -189,7 +223,7 @@ const SalesOrderEdit = () => {
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              disabled={isBlocked}
+              disabled={formularioTravado}
               rows={3}
               placeholder="Observações do pedido..."
             />
@@ -209,10 +243,15 @@ const SalesOrderEdit = () => {
         </Card>
 
         {/* Save Button */}
+        {!isBlocked && temAlteracaoPendente && !saving && !precisaRecarregar && (
+          <p className="text-xs text-muted-foreground text-center" aria-live="polite">
+            Alterações ainda não salvas.
+          </p>
+        )}
         {!isBlocked && (
           <Button
             onClick={handleSave}
-            disabled={saving || items.length === 0 || invalidPriceItemIndices.length > 0 || invalidQuantityItemIndices.length > 0 || subtotal === null}
+            disabled={formularioTravado || items.length === 0 || invalidPriceItemIndices.length > 0 || invalidQuantityItemIndices.length > 0 || subtotal === null}
             className="w-full gap-2"
             size="lg"
           >
@@ -235,6 +274,16 @@ const SalesOrderEdit = () => {
       )}
     </div>
   );
+};
+
+/**
+ * Uma instância por pedido (`key={id}`): trocar de `:id` na mesma rota remonta o editor, e a resposta atrasada
+ * do salvar do pedido anterior não tem como escrever no estado, no toast ou na navegação do pedido aberto
+ * agora (revisão /sales #15/#30, Codex 2026-11-26).
+ */
+const SalesOrderEdit = () => {
+  const { id } = useParams<{ id: string }>();
+  return <EditorDoPedido key={id ?? ''} />;
 };
 
 export default SalesOrderEdit;

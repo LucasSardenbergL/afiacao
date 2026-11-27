@@ -120,7 +120,23 @@ export type EventoLedger =
   | 'clientes.busca_usada'
   | 'clientes.cliente_aberto'
   | 'clientes.pagina_carregada'
-  | 'clientes.ficha_acao';
+  | 'clientes.ficha_acao'
+  /**
+   * Funil do Novo Pedido (/sales/new), rodada 3 onda 2. Chave = jornada (uuid aleatório por pedido em
+   * montagem) e, nos de envio, a tentativa (o checkout_id vai nas props). Props só enums e contagens.
+   * Emissor: src/hooks/unifiedOrder/sensor-funil.ts. Leitura: db/sensor-novo-pedido-funil.sql.
+   */
+  | 'novo_pedido.iniciado'
+  | 'novo_pedido.cliente_escolhido'
+  | 'novo_pedido.primeiro_item'
+  | 'novo_pedido.envio_tentado'
+  | 'novo_pedido.envio_falhou'
+  | 'novo_pedido.envio_confirmado'
+  | 'novo_pedido.ia_analise_pedida'
+  | 'novo_pedido.ia_itens_adicionados'
+  | 'novo_pedido.ia_itens_descartados'
+  | 'novo_pedido.rascunho_restaurado'
+  | 'novo_pedido.rascunho_descartado';
 
 /**
  * Registra um evento decisório no ledger server-side.

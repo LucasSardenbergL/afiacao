@@ -3585,6 +3585,33 @@ export type Database = {
         }
         Relationships: []
       }
+      db_migracoes_adiadas: {
+        Row: {
+          adiada_em: string
+          arquivo: string
+          ator: string
+          motivo: string
+          revogada_em: string | null
+          sha256: string
+        }
+        Insert: {
+          adiada_em?: string
+          arquivo: string
+          ator?: string
+          motivo: string
+          revogada_em?: string | null
+          sha256: string
+        }
+        Update: {
+          adiada_em?: string
+          arquivo?: string
+          ator?: string
+          motivo?: string
+          revogada_em?: string | null
+          sha256?: string
+        }
+        Relationships: []
+      }
       default_prices: {
         Row: {
           created_at: string
@@ -27910,6 +27937,10 @@ export type Database = {
         Args: { p_empresa: string; p_sku_antigo: string; p_sku_novo: string }
         Returns: undefined
       }
+      contato_cliente_definir_principal: {
+        Args: { p_contato_id: string }
+        Returns: string
+      }
       contato_cliente_operacional: {
         Args: {
           p_motivo: string
@@ -30882,9 +30913,17 @@ export type Database = {
         Args: { p_sales_order_id: string; p_somente_orcamento?: boolean }
         Returns: string
       }
+      sales_order_itens_projecao_envio: {
+        Args: { p_itens: Json }
+        Returns: Json
+      }
       sales_order_reivindicar_envio: {
         Args: { p_sales_order_id: string }
         Returns: boolean
+      }
+      sales_order_reivindicar_envio_conferido: {
+        Args: { p_itens: Json; p_sales_order_id: string; p_versao: string }
+        Returns: string
       }
       sales_orders_instante_envio: { Args: never; Returns: string }
       sales_orders_registrar_vendedor_omie: {

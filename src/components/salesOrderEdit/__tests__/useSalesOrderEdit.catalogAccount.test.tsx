@@ -21,6 +21,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 
 import { supabase } from '@/integrations/supabase/client';
 import { useSalesOrderEdit } from '../useSalesOrderEdit';
+import { comQueryClient } from '@/test/query-client';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
@@ -88,7 +89,7 @@ beforeEach(() => {
 describe('useSalesOrderEdit — catálogo "Adicionar produto" (conta + paginação)', () => {
   it('PV colacor → filtra omie_products por account="colacor" (não "colacor_vendas")', async () => {
     installMocks('colacor');
-    const { result } = renderHook(() => useSalesOrderEdit());
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(productsAccountEq).toHaveBeenCalledWith('colacor');
@@ -97,7 +98,7 @@ describe('useSalesOrderEdit — catálogo "Adicionar produto" (conta + paginaç�
 
   it('PV oben → filtra omie_products por account="oben"', async () => {
     installMocks('oben');
-    const { result } = renderHook(() => useSalesOrderEdit());
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(productsAccountEq).toHaveBeenCalledWith('oben');
@@ -122,7 +123,7 @@ describe('useSalesOrderEdit — catálogo "Adicionar produto" (conta + paginaç�
         : PAGE2;
 
     installMocks('colacor', pageFor);
-    const { result } = renderHook(() => useSalesOrderEdit());
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => { result.current.setProductSearch('PAGE2-MARKER'); });

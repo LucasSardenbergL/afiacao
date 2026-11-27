@@ -1,0 +1,5 @@
+# Allowlist do ledger ganha o funil do Novo Pedido (20261127100100, rodada 3 onda 2, PR 9.1): os 11 novo_pedido.*
+# gravam, dedup por jornada, fora da lista 22023, ACL nas duas pontas; PRE/PÓS por md5 + por evento (5 sabotagens
+# inline com controle). A query db/sensor-novo-pedido-funil.sql roda sem dado (pct NULL) e semeada (funil, p50,
+# ponte com sales_orders) — falsificada à mão com 4 sabotagens da query (FUNIL_TESTE), C e pt_BR.UTF-8.
+db/test-analytics-ledger-novo-pedido.sh 38

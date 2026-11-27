@@ -836,11 +836,12 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
     // omie_pedido_id + hash_payload entraram no guard de reenvio (Codex 2026-08-29) — sem
     // eles o guard classifica linha ENVIADA como virgem e volta a duplicar no Omie.
     // O pin segue EXATO na forma nova — perder qualquer campo fica vermelho.
+    // items + updated_at (v1.53): a versão lida ANTES do gate ATP e os itens da pré-checagem do claim conferido.
     expect(
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
     ).toMatch(
-      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload(, deleted_at)?(, ready_by_date)?"\)/,
+      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at, ready_by_date, items, updated_at"\)/,
     );
   });
 });
@@ -2840,8 +2841,8 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
   it('os 3 LEITORES vêm da view fresca e os 3 WRITERS migraram para a RPC (Fatia 4)', () => {
     expect(
       count(src, '.from("omie_customer_account_map_fresco")'),
-      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
-    ).toBe(3);
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 5: criar_perfil_local, sync_all_clients, sync_addresses + os 2 gates de PII da onda D 4b-2 — codigosComContatoVisivel e usuariosDoCodigoFresco)',
+    ).toBe(5);
     // [Fatia 4] Os 3 writers INSERT viraram 3 chamadas da RPC. Este edge não toca mais o espelho.
     expect(
       count(src, '.from("omie_clientes")'),
@@ -4388,13 +4389,31 @@ describe('guardrail money-path: o write-back da EDIÇÃO grava as DUAS metades d
     return src.slice(i, f);
   })();
 
+  // Única exceção (revisão /sales leva 1, #6/#7): a RESERVA pela versão — UPDATE só de `updated_at`, que
+  // não grava dado do pedido e tem de acontecer ANTES da 1ª mutação no Omie.
+  const RESERVA = '.update({ updated_at: new Date().toISOString() })';
+
   it('a edição NÃO volta a gravar o pedido por .update() do PostgREST', () => {
     expect(
-      bloco,
+      bloco.split(RESERVA).join(''),
       'alterar_pedido voltou a escrever sales_orders por PostgREST — o cabeçalho iria sem as linhas',
     ).not.toContain('.update(');
     expect(bloco, 'alterar_pedido escrevendo order_items solto: fora da transação do cabeçalho')
       .not.toContain('from("order_items")');
+  });
+
+  it('a reserva pela versão vem UMA vez, antes da 1ª mutação no Omie, e exige 1 linha', () => {
+    const iReserva = bloco.indexOf(RESERVA);
+    expect(bloco.split(RESERVA).length - 1, 'reserva ausente ou duplicada').toBe(1);
+    for (const mutacao of ['"AlterarPedidoVenda"', '"ExcluirItemPedido"', '"IncluirItemPedido"']) {
+      const iMut = bloco.indexOf(mutacao);
+      expect(iMut, `${mutacao} sumiu do bloco`).toBeGreaterThan(-1);
+      expect(iReserva, `a reserva tem de vir antes de ${mutacao}`).toBeLessThan(iMut);
+    }
+    const trecho = bloco.slice(iReserva, bloco.indexOf('"AlterarPedidoVenda"'));
+    for (const filtro of ['.eq("updated_at", versaoEdit.valor)', '.is("updated_at", null)', '.is("deleted_at", null)', '.is("hash_payload", null)', '.eq("hash_payload", hashLidoEdit)', '.eq("omie_pedido_id"', '.eq("account"', '.eq("status"', '.length !== 1', 'edicaoReservada = true']) {
+      expect(trecho, `a reserva perdeu ${filtro}`).toContain(filtro);
+    }
   });
 
   it('e chama a RPC atômica com as OITO chaves do contrato', () => {
@@ -5233,13 +5252,63 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(rpcDel, 'a intenção de orçamento chega à RPC').toMatch(/p_somente_orcamento: somenteOrcamento/);
     expect(rpcDel, 'linha que deixou de ser orçamento RECUSA').toMatch(/"nao_e_orcamento"[\s\S]{0,40}throw new Error\(/);
     const criar = removerComentarios(src.slice(src.indexOf('case "criar_pedido": {'), src.indexOf('case "excluir_pedido": {')));
-    const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio"');
+    // v1.53: o claim é o CONFERIDO pelos itens (migration 20261126190127); o antigo fica só para a v1.51.
+    const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio_conferido"');
     const envio = criar.indexOf('await criarPedidoVenda(');
     expect(claim, 'REGRESSÃO: criar_pedido sem claim do envio').toBeGreaterThan(-1);
     expect(claim, 'o claim precede o envio ao Omie').toBeLessThan(envio);
     const entre = criar.slice(claim, envio);
     expect(entre, 'falha da RPC de claim RECUSA').toMatch(/if \(claimErr\) \{\s*throw new Error\(/);
-    expect(entre, 'claim negado RECUSA').toMatch(/if \(reivindicou !== true\) \{\s*throw new Error\(/);
+    expect(entre, 'o claim confere os itens QUE VÃO ao Omie (itensEnvio), não os do body cru').toMatch(/p_itens: itensEnvio\.map\(/);
+    expect(entre, 'pedido alterado LANÇA (caller antigo lê blocked desconhecido como sucesso)').toMatch(
+      /if \(claimVeredito === "pedido_alterado"\) \{\s*throw new Error\(mensagemPedidoAlterado\(sales_order_id\)\);\s*\}/,
+    );
+    expect(entre, 'o claim exige a versão lida ANTES do gate ATP').toMatch(/p_versao: versaoLida,/);
+    expect(entre, 'a cor da tinta entra na conferência').toMatch(/tint_cor_id: \(it as \{ tint_cor_id\?: unknown \}\)\.tint_cor_id \?\? null,/);
+    // A versão e a pré-checagem vêm ANTES do gate ATP (que reserva sobre a linha) — Codex, achado 1.
+    const versao = criar.indexOf('const versaoLida = ');
+    const preCheca = criar.indexOf('if (!mesmosItensDeEnvio(');
+    const atp = criar.indexOf('"atp_gate_pedido"');
+    expect(versao, 'a versão é lida no criar_pedido').toBeGreaterThan(-1);
+    expect(atp, 'sentinela: achei o gate ATP').toBeGreaterThan(-1);
+    expect(versao, 'a versão é lida ANTES do gate ATP').toBeLessThan(atp);
+    expect(preCheca, 'a pré-checagem recusa ANTES de reservar estoque').toBeGreaterThan(versao);
+    expect(preCheca, 'a pré-checagem recusa ANTES de reservar estoque').toBeLessThan(atp);
+    expect(criar.slice(preCheca, preCheca + 160), 'pré-checagem divergente LANÇA').toMatch(/throw new Error\(mensagemPedidoAlterado\(sales_order_id\)\)/);
+    expect(entre, 'qualquer outro veredito que não "reivindicado" RECUSA').toMatch(/if \(claimVeredito !== "reivindicado"\) \{\s*throw new Error\(/);
+    expect(criar, 'REGRESSÃO: a v1.53 voltou ao claim sem conferência').not.toMatch(/\.rpc\("sales_order_reivindicar_envio",/);
+  });
+
+  // Claim conferido (v1.53), Codex r2 #2: a recusa `[pedido_alterado]` é ANTES do IncluirPedido — o
+  // pedido programado não pode marcá-la como [OMIE-INCERTO] (travaria o "Cancelar"), mas também não
+  // pode apagar a incerteza HERDADA de uma tentativa anterior.
+  it('pedido programado: recusa [pedido_alterado] não marca incerteza nova e preserva a herdada', () => {
+    const pp = readFileSync(resolve(__dirname, '../../supabase/functions/pedido-programado-enviar/index.ts'), 'utf-8');
+    const claimTs = readFileSync(resolve(__dirname, '../../supabase/functions/omie-vendas-sync/claim-conferido.ts'), 'utf-8');
+    const marcaPp = pp.match(/export const PEDIDO_ALTERADO_MARK = '([^']+)';/)?.[1];
+    const marcaVendas = claimTs.match(/export const MARCA_PEDIDO_ALTERADO = "([^"]+)";/)?.[1];
+    expect(marcaPp, 'PARIDADE: a marca do programado é a mesma que a omie-vendas-sync lança').toBe(marcaVendas);
+    expect(marcaPp).toBe('[pedido_alterado]');
+    const codigo = removerComentarios(pp);
+    // Codex r3: a incerteza herdada é lida NO claim (a listagem pode estar velha) e toda saída de
+    // erro pós-claim a preserva.
+    expect(codigo, 'o claim devolve o erro_motivo fresco').toMatch(/\.in\("status", \["agendado", "erro"\]\)\s*\.select\("sales_orders_map, erro_motivo"\)/);
+    expect(codigo, 'a incerteza herdada vem do claim').toMatch(
+      /const incertoHerdado = \(envioFresco\.erro_motivo \?\? ""\)\.includes\(OMIE_INCERTO_MARK\);/,
+    );
+    expect(codigo).toMatch(/let tentouOmie = incertoHerdado;/);
+    expect(codigo, 'nenhuma leitura da listagem decide a incerteza').not.toMatch(/envio\.erro_motivo/);
+    const inicioClaim = codigo.indexOf('const incertoHerdado');
+    const inicioLaco = codigo.indexOf('for (const [account, itensGrupo]');
+    expect(inicioClaim).toBeGreaterThan(-1);
+    expect(inicioLaco).toBeGreaterThan(inicioClaim);
+    expect(codigo.slice(inicioClaim, inicioLaco), 'toda saída de erro pós-claim passa pelo falha() que preserva a marca').not.toMatch(/return \{ ok: false/);
+    expect(codigo.slice(inicioClaim, inicioLaco).match(/return falha\(/g)?.length, 'as 5 saídas pós-claim').toBe(5);
+    const ramo = codigo.indexOf('String(body?.error ?? "").includes(PEDIDO_ALTERADO_MARK)');
+    const generico = codigo.indexOf('if (!resp.ok || body?.error) throw new Error(`criar_pedido ${account} falhou');
+    expect(ramo, 'o ramo da recusa conferida existe').toBeGreaterThan(-1);
+    expect(ramo, 'o ramo vem ANTES do throw genérico').toBeLessThan(generico);
+    expect(codigo.slice(ramo, generico), 'a recusa restaura a incerteza de ANTES desta chamada').toMatch(/tentouOmie = tentouAntes;\s*throw new Error\(/);
   });
 
   // Codex 2026-11-20 (P1): sem rastro ATP a consulta indeterminada SEGUIA para o DELETE físico.
@@ -5384,7 +5453,7 @@ describe('omie-vendas-sync — gate v2 efetivo (6b)', () => {
     // passava verde): a recusa tem de sair antes do claim e do IncluirPedido.
     const parada = criar.indexOf('if (!creditoV2.segue) throw new Error(creditoV2.mensagem);');
     expect(parada, 'a parada do v2 sumiu do criar_pedido').toBeGreaterThan(v2);
-    for (const depois of ['"sales_order_reivindicar_envio"', 'await criarPedidoVenda(']) {
+    for (const depois of ['"sales_order_reivindicar_envio_conferido"', 'await criarPedidoVenda(']) {
       const i = criar.indexOf(depois);
       expect(i, `${depois} sumiu do criar_pedido`).toBeGreaterThan(-1);
       expect(parada, `a parada do v2 vem depois de ${depois} — chegaria tarde`).toBeLessThan(i);

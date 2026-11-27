@@ -13,6 +13,10 @@ import {
   vereditoGemeoEdicao,
   vereditoParcelaEdicao,
   vereditoPedidoLocalEdicao,
+  corpoDoErro,
+  notasDaEdicao,
+  observacaoParaOmie,
+  versaoDaEdicao,
 } from "./edicao-omie.ts";
 
 function igual(veio: unknown, esperado: unknown, ctx: string) {
@@ -132,12 +136,12 @@ Deno.test("lê etapa/previsão/frete/marcas/classificação aninhados e no topo 
   });
   igual(aninhado, {
     etapa: "20", dataPrevisao: "28/11/2026", cancelado: "N", faturado: "N", frete: FRETE_OMIE,
-    categoria: "1.01.03", contaCorrente: 123, codVend: 456,
+    categoria: "1.01.03", contaCorrente: 123, codVend: 456, observacaoViva: null,
   }, "aninhado");
   const topo = lerCabecalhoParaEdicao({ cabecalho: { etapa: 10, data_previsao: "01/12/2026" }, frete: FRETE_OMIE });
   igual(topo, {
     etapa: "10", dataPrevisao: "01/12/2026", cancelado: null, faturado: null, frete: FRETE_OMIE,
-    categoria: null, contaCorrente: null, codVend: null,
+    categoria: null, contaCorrente: null, codVend: null, observacaoViva: null,
   }, "topo");
 });
 
@@ -216,4 +220,52 @@ Deno.test("cabecalho/frete sem leitura aprovada: lança com a marca do ramo", ()
   msg = "";
   try { freteDaEdicao({ lido: vazio }); } catch (e) { msg = (e as Error).message; }
   if (!msg.includes("freteDaEdicao: leitura sem frete")) throw new Error(`frete não lançou o ramo certo: ${msg}`);
+});
+
+// ── leva 1 da revisão /sales: #6 exclusão, #7 versão, #17 observação, #30 corpo do erro ──
+
+Deno.test("pedido excluído do app: recusa antes de qualquer leitura do Omie (#6)", () => {
+  recusa(
+    vereditoPedidoLocalEdicao({ account: "oben", hashPayload: null, status: "enviado", excluido: true }),
+    "pedido_excluido", "excluído", "excluído",
+  );
+  igual(vereditoPedidoLocalEdicao({ account: "oben", hashPayload: null, status: "enviado", excluido: false }), { permitido: true }, "vivo");
+});
+
+Deno.test("versão da edição: a da TELA, ausente recusa, ilegível recusa (#7)", () => {
+  igual(versaoDaEdicao({ presente: true, informada: "2026-10-05T12:00:00.1+00:00" }), { ok: true, valor: "2026-10-05T12:00:00.1+00:00" }, "vista");
+  igual(versaoDaEdicao({ presente: true, informada: null }), { ok: true, valor: null }, "null explícito");
+  const ausente = versaoDaEdicao({ presente: false, informada: undefined });
+  if (ausente.ok || !ausente.motivo.includes("Atualize o app")) throw new Error("versão ausente não recusou com a instrução");
+  for (const ruim of [123, "", "  ", {}, true]) {
+    const v = versaoDaEdicao({ presente: true, informada: ruim });
+    if (v.ok || !v.motivo.includes("versão do pedido enviada pela tela")) throw new Error(`aceitou versão ${JSON.stringify(ruim)}`);
+  }
+});
+
+Deno.test("observação: vazio limpa, ausente mantém (#17)", () => {
+  igual(notasDaEdicao({ presente: true, informada: "", atuais: "antiga" }), null, "vazio limpa");
+  igual(notasDaEdicao({ presente: true, informada: "   ", atuais: "antiga" }), null, "só espaço limpa");
+  igual(notasDaEdicao({ presente: true, informada: "nova", atuais: "antiga" }), "nova", "texto novo");
+  igual(notasDaEdicao({ presente: false, informada: undefined, atuais: "antiga" }), "antiga", "ausente mantém");
+  igual(notasDaEdicao({ presente: true, informada: 5, atuais: "antiga" }), "antiga", "tipo errado mantém");
+});
+
+Deno.test("corpo do 500: precisa_recarregar só depois da reserva (#30)", () => {
+  igual(corpoDoErro({ mensagem: "m", edicao: "depois" }), { error: "m", precisa_recarregar: true }, "após reserva");
+  igual(corpoDoErro({ mensagem: "m", edicao: "antes" }), { error: "m", precisa_recarregar: false }, "antes: false explícito");
+  igual(corpoDoErro({ mensagem: "m", edicao: "fora" }), { error: "m" }, "outra action: sem a chave");
+});
+
+Deno.test("obs_venda ao Omie: limpar volta o padrão, omitir preserva a viva (#17)", () => {
+  const base = { padraoDaConta: "PADRAO", viva: "viva do PV", notaLocal: null };
+  igual(observacaoParaOmie({ ...base, presente: true, informada: "nova" }), "nova", "texto");
+  igual(observacaoParaOmie({ ...base, presente: true, informada: "" }), "PADRAO", "vazio → padrão");
+  igual(observacaoParaOmie({ ...base, presente: true, informada: "   " }), "PADRAO", "espaços → padrão, nunca espaços");
+  igual(observacaoParaOmie({ ...base, presente: false, informada: undefined }), "viva do PV", "omitida → viva");
+  igual(observacaoParaOmie({ ...base, viva: null, presente: false, informada: undefined }), "PADRAO", "omitida sem viva nem local → padrão");
+  igual(observacaoParaOmie({ ...base, viva: null, notaLocal: "sinal R$ 500", presente: false, informada: undefined }), "sinal R$ 500", "leitura sem obs → a nota local, nunca o padrão");
+  igual(observacaoParaOmie({ ...base, viva: "viva", notaLocal: "local", presente: false, informada: undefined }), "viva", "viva vence a local");
+  igual(lerCabecalhoParaEdicao({ pedido_venda_produto: { observacoes: { obs_venda: "x" } } }).observacaoViva, "x", "lê a viva");
+  igual(lerCabecalhoParaEdicao({ pedido_venda_produto: { observacoes: { obs_venda: "  " } } }).observacaoViva, null, "viva em branco = ausente");
 });

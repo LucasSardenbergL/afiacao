@@ -12,7 +12,9 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("pedido-programado-enviar");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+// v1.1 (2026-11-26): recusa `[pedido_alterado]` do claim conferido (omie-vendas-sync v1.53) não marca [OMIE-INCERTO];
+// a incerteza herdada da tentativa anterior (erro_motivo) é preservada.
+export const VERSAO = "v1.1-recusa-pedido-alterado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

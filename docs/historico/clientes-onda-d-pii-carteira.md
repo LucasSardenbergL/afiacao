@@ -205,3 +205,99 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 - Troca de contato principal em 2 requisições, não atômica (Codex P1, pré-existente; 0 linhas hoje).
 - `customer_contacts`: `anon` ainda tem INSERT/DELETE de tabela (ACL `arwdDxtm` herdada; medido 2026-11-26).
   Hoje só a RLS de escrita (exige staff) segura isso → revogar de `anon`.
+
+## Fatia 4b-1 — servidor (migration `20261126230000`)
+- **L6 fechada:** `contato_cliente_operacional` perdeu o ramo "próprio" (`a.cid = v_uid`). Como o chamador é sempre
+  staff, ele só valia para pedido com o vendedor como titular (fallback do front, 19 pedidos). **Codex P1:** titular
+  staff (papel ou flag) também deixa de contar como carteira para quem não é gestão, porque o snapshot é do comprador.
+  Medido em prod: 1 staff dentro de uma carteira, 12 pedidos que a dona dela lia sem registro. Agora vão para o ledger.
+- **anon fora** (REVOKE ALL) de `addresses`, `customer_contacts`, `cliente_grupos`, `cliente_grupo_membros` e
+  `v_grupo_contas_receber_por_doc`. O ACL vinha herdado; até aqui só a RLS segurava.
+- **`v_grupo_contatos`** lê o endereço da `v_endereco_contato`: a rua sai NULL fora da carteira, e cidade/UF seguem.
+  Continua `security_invoker=true`. Latente (Codex P2): quem chama como `service_role` sem `sub` passa a ver cidade/UF
+  NULL. Não há consumidor desse tipo e os grupos estão vazios em prod.
+- **`v_perfil_equipe` por papel:** sai a flag `is_employee`. O ex-funcionário com papel removido sai do diretório.
+  Prod: 0 perfis com a flag sem papel, md5 igual antes/depois e 430 → 9 ms (ensaio como farmer, rollback).
+  Lacuna de produto, não de servidor: não há fluxo de desligamento. Tirar o papel não tira a flag, `commercial_roles`
+  nem a carteira; hoje se faz à mão no banco.
+- **Decisões registradas:**
+  - documento do membro do grupo no CR: quem tem acesso financeiro vê (founder, 2026-11-26);
+  - `cobranca_regua_hoje`: "dona" (`carteira_assignments` eligible) ⊆ carteira e já filtra `gestão OR dona`, então basta;
+  - `resolver_cliente_por_telefone` (telefonia) e `cliente_por_documento` (Omie→perfil, só uuid): exceções no `COMMENT`
+    e em `telefonia.md`.
+- **Prova:** `db/test-clientes-pii-fatia4b1-servidor.sh`, 113 ok em C e pt_BR.UTF-8, com 22 sabotagens, cada uma com o
+  vermelho exato. Ensaio de desempenho em `db/diagnostico/ensaio-clientes-pii-fatia4b1-perf.sql`.
+
+- **No ar (2026-11-27):** #4239 mergeado. Pré-flight sem deriva: os corpos de prod de `contato_cliente_operacional`,
+  `v_grupo_contatos` e `v_perfil_equipe` são iguais aos da captura. Ensaio ok; apply com recibo `db:aplicar` **#1503**,
+  postcondição `fatia 4b-1 ok`.
+  Validação por fora (psql-ro):
+  - L6 fora, `titular_staff` presente;
+  - RPC: anon=f, authenticated=t;
+  - anon sem SELECT nas 6 relações e sem DELETE em `customer_contacts`;
+  - `authenticated` lê e grava `addresses`;
+  - `v_grupo_contatos` invoker=true lendo `v_endereco_contato`;
+  - `v_perfil_equipe` invoker=off + barrier.
+  `audit:migrations` rc=0. `deriva:corpo:prod` rc=0, depois de conciliar o GRANT da RPC como `SO_CITA` na baseline.
+  Prova logada em prod pelo founder (2026-11-27), nas palavras dele: "Fiz o teste logado, deu tudo ok". Cobriu os dois testes:
+  a rua some no grupo fora da carteira, e o pedido com titular vendedor vai para o ledger.
+
+## Fatia 4b-2 — front, edges e corte de `addresses` (4b-2a · 4b-2b)
+- **4b-2a (este PR):**
+  - **`omie-cliente` v1.13:** `pesquisar_clientes`/`consultar_cliente` devolvem documento, e-mail, telefone,
+    endereço e IE só do cliente na carteira/cobertura do chamador, ou para a gestão. Fora dela, `null` com
+    `contato_visivel: false` (`pii-carteira.ts`).
+    - Quem decide é o banco: `pode_ver_carteira_completa` (service_role) e `v_perfil_contato.contato_visivel`
+      lida com o JWT do chamador, mapeando código Omie → `user_id` por `omie_customer_account_map` (colacor_sc).
+    - Qualquer erro de leitura mascara tudo.
+    - `pesquisar_clientes` não tem chamador no front hoje.
+  - **Impressão do pedido** (`SalesPrintDashboard`, o único chamador de `consultar_cliente`): o endereço Omie de
+    cliente sem endereço local abre por `operacional: {pedido, impressao_pedido}`.
+    - A edge chama a `contato_cliente_operacional` (ledger) e só abre se o documento devolvido casar com o
+      `cnpj_cpf` da Omie.
+    - O fallback por `buscar_por_documento` saiu: a ação só devolve `{existe, razao_social}`, então era caminho
+      morto que mandava o documento.
+  - **`analyze-unified-order` v1.14:** a busca por nome deixa de ler `email, phone`.
+  - **Titular:** `submitQuote` recusa staff sem cliente vinculado (`titularDoPedido`, `validate_titular`).
+    `omie-sync` v1.19 recusa `sync_order` sem `staffContext.customerUserId` antes de tocar a Omie: o chamador é
+    sempre staff/cron, e o `|| userId` gravava a OS no vendedor.
+    - O `submitOrder` é do PR LucasSardenbergL/afiacao#4236 (8.2, mesma regra, `validate_cliente`); este PR não
+      toca o arquivo.
+  - **Contato principal:** RPC `contato_cliente_definir_principal` (migration `20261127000000`).
+    - Lê o dono DA LINHA, trava os contatos dele por id, desliga o anterior e liga este, numa transação.
+    - O front salva sem mexer no principal e chama a RPC; se ela falhar, o erro diz que o contato foi salvo.
+    - Prova: `db/test-clientes-pii-fatia4b2-contato-principal.sh`, 29 OK nos 2 locales, 5 sabotagens com vermelho
+      exato e controle verde.
+  - **Perfil:** o 23505 do documento ganha mensagem própria e neutra, sem eco. O log leva só o código.
+  - **Leitores de `addresses` preparados para o corte:**
+    - `Addresses.tsx` e `RecurringSchedules.tsx` leem a `v_endereco_contato` (o dono vê tudo);
+    - `useProfile` conta por `id`;
+    - `useCustomerDashboard` filtra pelo `effectiveUserId`. Sem o filtro, o staff contava a tabela inteira e
+      o aviso de endereço nunca aparecia.
+- **4b-2b (próximo PR, só depois do Publish da 4b-2a servido E da 4b-1 aplicada):** REVOKE SELECT de tabela em
+  `addresses` + GRANT SELECT `(id, user_id, city, state, is_default, is_from_omie, created_at)` para
+  `authenticated`.
+  - Conferido em prod: `v_caca_candidatos`/`v_caca_compradores` usam só essas colunas;
+    `carteira_por_municipio`, `radar_territorio_do_vendedor` e os pontos de entrada do `radar_vinculos_base` (CEP
+    e rua) são SECDEF; `contato_cliente_operacional` e `v_endereco_contato` rodam como dono.
+  - A `v_grupo_contatos` ainda lê `addresses` crua até a 4b-1 ser aplicada, e quebraria.
+  - Escritores (`Auth.tsx`, `Addresses.tsx`) usam WHERE só em `id`/`user_id`, que continuam com SELECT.
+- **Codex** (`gpt-6.2-astra`, high, 165 s, 132 k tokens): "bloquearia como FECHAMENTO da onda D", sem P0.
+  - Integrados nesta fatia:
+    - a carteira lê o mapa FRESCO (vínculo vencido não autoriza o contato atual);
+    - a exceção da impressão exige que o titular do pedido esteja vinculado a ESTE código e que o documento
+      case em forma estrita;
+    - a exceção abre só o endereço, sem e-mail, telefone ou IE;
+    - a folha não imprime cidade/UF como se fosse o endereço.
+    - Falsificado: tirar a checagem do vínculo deixa `pii-carteira_test` vermelho.
+  - **Abertos (vias PREEXISTENTES fora desta fatia, para a 4b-3):**
+    - `omie-vendas-sync` `listar_clientes`, a busca do Novo Pedido (`useCustomerSelection.ts:252`), devolve
+      CPF/CNPJ, telefone e endereço de qualquer cliente antes da seleção. É a maior via aberta.
+    - `analyze-unified-order` manda ao LLM o documento dos candidatos fora da carteira.
+    - `SalesPrintDashboard` lê `orders.select('*')`, e o `orders.address` vem antes do ledger.
+    - `omie-sync` aceita `customerUserId` de A com código Omie de B.
+    - P2: reenvio após falha da RPC de principal duplica o contato; o 23505 do perfil ainda é um oráculo
+      (inerente ao UNIQUE).
+  - **Dependência:** o `submitOrder` só fecha com o LucasSardenbergL/afiacao#4236.
+- **Fica de fora, registrado:** `process-recurring-orders:96` faz `select('*')` com service_role. O corte não
+  o afeta, e trocar exigiria um deploy de edge sem ganho.

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useGamificationScore, getLevelInfo } from '@/hooks/useGamificationScore';
 import { differenceInDays } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { computePriority } from './priority';
 import { ehCnpjDocumento } from '@/lib/omie/documento-cliente';
 import type { Profile, Order, UserTool } from './types';
@@ -20,16 +21,21 @@ export function useCustomerDashboard(profile: Profile | null, pendingOrders: Ord
   const { data: gamScore } = useGamificationScore();
 
   const [hasAddresses, setHasAddresses] = useState(true); // optimistic default
+  // Leitura sob a lente "Ver como": conta os endereços de QUEM está sendo visto (sem o filtro, o staff
+  // contava a tabela inteira e o aviso "cadastre um endereço" nunca aparecia).
+  const { effectiveUserId } = useImpersonation();
 
   // Lightweight address check
   useEffect(() => {
+    if (!effectiveUserId) return;
     (async () => {
       const { count } = await supabase
         .from('addresses')
-        .select('id', { count: 'exact', head: true });
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', effectiveUserId);
       setHasAddresses((count ?? 0) > 0);
     })();
-  }, []);
+  }, [effectiveUserId]);
 
   const displayName = nomeExibicaoCliente(profile);
 

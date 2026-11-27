@@ -274,35 +274,41 @@ const SalesPrintDashboard = () => {
     return m;
   }, [omieClientes, allOrdersRaw]);
 
+  // Um pedido (sales_order) impresso por cliente: o objeto da exceção operacional no endereço Omie.
+  const pedidoPorCliente = useMemo(() => {
+    const m = new Map<string, string>();
+    salesOrders.forEach((o) => {
+      const cid = o.customer_user_id || o.user_id;
+      if (cid && !m.has(cid)) m.set(cid, o.id);
+    });
+    return m;
+  }, [salesOrders]);
+
   // Fetch addresses from Omie for ALL customers missing local address
   const { data: omieAddresses = {} } = useQuery({
-    queryKey: ['sales-print-omie-addresses', customersMissingAddress, Array.from(omieClienteMap.entries())],
+    queryKey: ['sales-print-omie-addresses', customersMissingAddress, Array.from(omieClienteMap.entries()), Array.from(pedidoPorCliente.entries())],
     queryFn: async () => {
       const result: Record<string, string> = {};
       for (const userId of customersMissingAddress) {
-        let codigoCliente = omieClienteMap.get(userId);
+        const codigoCliente = omieClienteMap.get(userId);
 
-        // If no codigo_cliente, try searching by document (CNPJ/CPF)
-        if (!codigoCliente) {
-          const profile = profileMap.get(userId);
-          const doc = profile?.document;
-          if (doc) {
-            try {
-              const { data } = await supabase.functions.invoke('omie-cliente', {
-                body: { action: 'buscar_por_documento', documento: doc },
-              });
-              const cc = data?.cliente?.codigo_cliente_omie;
-              if (cc) codigoCliente = cc;
-            } catch (_) { /* ignore */ }
-          }
-        }
-
+        // (O fallback por documento via `buscar_por_documento` saiu na onda D 4b-2: a ação pública só
+        // devolve `{existe, razao_social}`, nunca o código — era caminho morto que expunha o documento.)
         if (!codigoCliente) continue;
+        // Fora da carteira, a edge mascara o endereço Omie; o pedido impresso abre pela exceção operacional
+        // (`contato_cliente_operacional`, ledger), e só se o documento do pedido casar com o da Omie.
+        const pedidoId = pedidoPorCliente.get(userId);
         try {
           const { data } = await supabase.functions.invoke('omie-cliente', {
-            body: { action: 'consultar_cliente', codigo_cliente: codigoCliente },
+            body: {
+              action: 'consultar_cliente',
+              codigo_cliente: codigoCliente,
+              ...(pedidoId ? { operacional: { objeto_tipo: 'pedido', objeto_id: pedidoId, motivo: 'impressao_pedido' } } : {}),
+            },
           });
-          if (data?.cliente) {
+          // Resposta mascarada (fora da carteira, sem exceção) não tem rua: não imprime só cidade/UF como
+          // se fosse o endereço de entrega (Codex P2) — a folha fica "sem endereço", como antes da Omie.
+          if (data?.cliente?.endereco) {
             const c = data.cliente;
             const parts = [
               c.endereco,

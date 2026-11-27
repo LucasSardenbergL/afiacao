@@ -26,6 +26,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import { useSalesOrderEdit } from '../useSalesOrderEdit';
+import { comQueryClient } from '@/test/query-client';
+import { limparRegistroParaTeste } from '../registroEnvios';
+import { QueryClient } from '@tanstack/react-query';
 import type { OmieProduct } from '../types';
 
 const mockedFrom = vi.mocked(supabase.from);
@@ -73,6 +76,7 @@ function chainFor(table: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  limparRegistroParaTeste();
   rota.id = 'ord-1';
   condicoes.length = 0;
   linhasGravadas = [{ id: 'ord-1' }];
@@ -92,7 +96,7 @@ beforeEach(() => {
 });
 
 async function renderLoaded() {
-  const hook = renderHook(() => useSalesOrderEdit());
+  const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
   await waitFor(() => expect(hook.result.current.loading).toBe(false));
   await waitFor(() => expect(hook.result.current.order).toBeTruthy());
   return hook;
@@ -119,6 +123,33 @@ describe('recusa da edge com motivo', () => {
 describe('pedido sem PV (caminho local)', () => {
   beforeEach(() => {
     salesOrderRow = { ...salesOrderRow, omie_pedido_id: null, status: 'orcamento', subtotal: 20, total: 15 };
+  });
+
+  it('caminho local também invalida o cache do pedido (#16)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient(client) });
+    await waitFor(() => expect(hook.result.current.order).toBeTruthy());
+    act(() => { hook.result.current.setNotes('nova'); });
+    await act(async () => { await hook.result.current.handleSave(); });
+    await waitFor(() => expect(spy.mock.calls.map(([f]) => JSON.stringify((f as { queryKey: unknown }).queryKey))).toContain('["order-detail"]'));
+  });
+
+  it('caminho local não usa o registro de envio (reabrir lê normalmente) — a trava de versão protege', async () => {
+    const { estadoDoPedido } = await import('../registroEnvios');
+    const { result } = await renderLoaded();
+    let confirmar: (v: unknown) => void = () => {};
+    const pendurado = updateBuilder();
+    pendurado.select = () => new Promise((r) => { confirmar = r; });
+    mockedFrom.mockImplementation(((t: string) => t === 'sales_orders'
+      ? { ...chainFor(t), update: (payload: unknown) => { updateSpy(payload); return pendurado; } }
+      : chainFor(t)) as never);
+    act(() => { result.current.setNotes('nova'); });
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = result.current.handleSave(); });
+    expect(estadoDoPedido('ord-1').emVoo).toBe(false);
+    expect(condicoes).toContainEqual(['eq', 'updated_at', '2026-11-26T10:00:00+00']);
+    await act(async () => { confirmar({ data: [{ id: 'ord-1' }], error: null }); await envio; });
   });
 
   it('salvar só a observação: UPDATE sem items/subtotal/total (o líquido de R$ 15 fica)', async () => {
@@ -219,7 +250,7 @@ describe('preço do cliente — corrida entre pedidos', () => {
       return Promise.resolve({ data: [{ id: rota.id, omie_payload: null, omie_response: null }], error: null });
     }) as never);
     salesOrderRow = { ...salesOrderRow, customer_user_id: 'cust-A' };
-    const hook = renderHook(() => useSalesOrderEdit());
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
     await waitFor(() => expect(hook.result.current.order?.customer_user_id).toBe('cust-A'));
     // abre o pedido B na MESMA instância
     salesOrderRow = { ...salesOrderRow, id: 'ord-2', customer_user_id: 'cust-B' };
@@ -269,7 +300,7 @@ describe('preço do cliente — corrida pela leitura de profiles (Codex r3)', ()
       return chainFor(table);
     }) as never);
     salesOrderRow = { ...salesOrderRow, customer_user_id: 'cust-A' };
-    const hook = renderHook(() => useSalesOrderEdit());
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
     await waitFor(() => expect(hook.result.current.order?.customer_user_id).toBe('cust-A'));
     salesOrderRow = { ...salesOrderRow, id: 'ord-2', customer_user_id: 'cust-B' };
     rota.id = 'ord-2';
@@ -294,7 +325,7 @@ describe('parcela no alterar_pedido (Codex r3)', () => {
   const corpoAlterar = () => {
     const chamada = mockedInvoke.mock.calls.find(([, o]) => {
       const corpo = (o as { body?: Record<string, unknown> })?.body;
-      return corpo !== undefined && 'observacao' in corpo;
+      return corpo?.action === 'alterar_pedido';
     });
     return (chamada?.[1] as { body: Record<string, unknown> }).body;
   };
@@ -320,5 +351,389 @@ describe('parcela no alterar_pedido (Codex r3)', () => {
     act(() => { result.current.setSelectedParcela('042'); });
     await act(async () => { await result.current.handleSave(); });
     expect(corpoAlterar().codigo_parcela).toBe('042');
+  });
+});
+
+// ── Revisão /sales, leva 1 (#4 #7 #10 #15 #16 #30 #48) ─────────────────────────────────────────────────
+
+/** Erro do `functions.invoke` como o supabase-js entrega: o corpo do 500 fica em `context`. */
+function erroDaEdge(corpo: Record<string, unknown>) {
+  return { message: 'Edge Function returned a non-2xx status code', context: new Response(JSON.stringify(corpo), { status: 500 }) };
+}
+
+function bodyDoAlterar() {
+  const chamada = mockedInvoke.mock.calls.find(([, o]) => (o as { body?: { action?: string } })?.body?.action === 'alterar_pedido');
+  return (chamada?.[1] as { body: Record<string, unknown> } | undefined)?.body;
+}
+
+describe('leva 1 — versão e falha que exige recarregar (#7, #30)', () => {
+  it('envia a versão (updated_at) que a tela viu', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(bodyDoAlterar()?.versao).toBe('2026-11-26T10:00:00+00');
+  });
+
+  it('blocked edicao_concorrente: trava o formulário e não deixa reenviar o mesmo retrato', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: false, blocked: 'edicao_concorrente', motivo: 'mudou' }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar).not.toBeNull();
+    expect(result.current.formularioTravado).toBe(true);
+    expect(navigateSpy).not.toHaveBeenCalled();
+    mockedInvoke.mockClear();
+    await act(async () => { await result.current.handleSave(); });
+    expect(bodyDoAlterar()).toBeUndefined(); // o 2º clique não chega à edge
+  });
+
+  it('edicao_concorrente: recarregar destrava (nada nosso mexeu no Omie)', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: false, blocked: 'edicao_concorrente', motivo: 'mudou' }, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('concorrente');
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    await act(async () => { await result.current.recarregar(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.precisaRecarregar).toBeNull();
+    expect(result.current.formularioTravado).toBe(false);
+  });
+
+  it('500 com precisa_recarregar: divergente — recarregar NÃO destrava (relê o app, não o Omie)', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: erroDaEdge({ error: 'Omie ATUALIZADO mas o registro local falhou', precisa_recarregar: true }) } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    await act(async () => { await result.current.recarregar(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(result.current.formularioTravado).toBe(true);
+    mockedInvoke.mockClear();
+    await act(async () => { await result.current.handleSave(); });
+    expect(bodyDoAlterar()).toBeUndefined();
+  });
+
+  it('edge anterior (500 sem a chave): desfecho desconhecido congela', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: erroDaEdge({ error: 'Omie não confirmou a substituição completa dos itens do pedido' }) } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+  });
+
+  it('resposta perdida (sem corpo): congela', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+  });
+
+  it('falha ANTES da reserva (precisa_recarregar: false): não trava — tentar de novo é seguro', async () => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: erroDaEdge({ error: 'Edição não aplicada: nada foi alterado — tente novamente.', precisa_recarregar: false }) } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar).toBeNull();
+    expect(result.current.formularioTravado).toBe(false);
+  });
+});
+
+describe('leva 1 — cache depois de salvar (#16)', () => {
+  it('sucesso invalida lista, soma, detalhe e descontos', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient(client) });
+    await waitFor(() => expect(hook.result.current.order).toBeTruthy());
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
+    await act(async () => { await hook.result.current.handleSave(); });
+    const chaves = spy.mock.calls.map(([f]) => JSON.stringify((f as { queryKey: unknown }).queryKey));
+    for (const k of ['["order-feed"]', '["order-feed-total"]', '["order-detail"]', '["order-descontos-itens"]']) {
+      expect(chaves).toContain(k);
+    }
+    expect(navigateSpy).toHaveBeenCalledWith('/sales');
+  });
+
+  it('recusa da edge também invalida (desfecho pós-despacho) mas não navega', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient(client) });
+    await waitFor(() => expect(hook.result.current.order).toBeTruthy());
+    mockedInvoke.mockResolvedValue({ data: { success: false, blocked: 'gemeo_omie', motivo: 'x' }, error: null } as never);
+    await act(async () => { await hook.result.current.handleSave(); });
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('leva 1 — formulário congelado durante o envio (#48)', () => {
+  it('editar item enquanto o envio voa é ignorado; 2º clique não dispara 2ª chamada', async () => {
+    const { result } = await renderLoaded();
+    let soltar: (v: unknown) => void = () => {};
+    mockedInvoke.mockImplementation((() => new Promise((r) => { soltar = r; })) as never);
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = result.current.handleSave(); });
+    await waitFor(() => expect(result.current.saving).toBe(true));
+    expect(result.current.formularioTravado).toBe(true);
+    act(() => { result.current.updateItem(0, 'quantidade', 99); });
+    act(() => { void result.current.handleSave(); });
+    expect(result.current.items[0].quantidade).toBe(2);
+    expect(mockedInvoke.mock.calls.filter(([, o]) => (o as { body?: { action?: string } })?.body?.action === 'alterar_pedido')).toHaveLength(1);
+    await act(async () => { soltar({ data: { success: false, blocked: 'gemeo_omie', motivo: 'x' }, error: null }); await envio; });
+    expect(result.current.saving).toBe(false);
+    expect(result.current.formularioTravado).toBe(false);
+  });
+
+  it('temAlteracaoPendente: falso ao abrir, verdadeiro ao mexer na observação', async () => {
+    const { result } = await renderLoaded();
+    expect(result.current.temAlteracaoPendente).toBe(false);
+    act(() => { result.current.setNotes('nova'); });
+    expect(result.current.temAlteracaoPendente).toBe(true);
+  });
+});
+
+describe('leva 1 — troca de pedido na mesma rota (#15)', () => {
+  it('B sem parcela não herda a parcela de A', async () => {
+    mockedRpc.mockImplementation(((nome: string, args: { p_order_ids?: string[] }) => {
+      if (nome === 'staff_get_sales_order_payload') {
+        const id = args?.p_order_ids?.[0];
+        return Promise.resolve({ data: [{ id, omie_payload: id === 'ord-1' ? { cabecalho: { codigo_parcela: 'A01' } } : null }], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    }) as never);
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+    await waitFor(() => expect(hook.result.current.selectedParcela).toBe('A01'));
+    rota.id = 'ord-2';
+    salesOrderRow = { ...salesOrderRow, id: 'ord-2' };
+    hook.rerender();
+    await waitFor(() => expect(hook.result.current.order?.id).toBe('ord-2'));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    expect(hook.result.current.selectedParcela).toBe('');
+  });
+});
+
+describe('leva 1 — conta do pedido (#4)', () => {
+  it('conta fora de oben|colacor: abre travado e não carrega catálogo/condições de outra empresa', async () => {
+    salesOrderRow = { ...salesOrderRow, account: 'colacor_sc' };
+    const { result } = await renderLoaded();
+    expect(result.current.isBlocked).toBe(true);
+    expect(result.current.motivoBloqueio).toContain('colacor_sc');
+    expect(mockedInvoke.mock.calls.some(([, o]) => (o as { body?: { action?: string } })?.body?.action === 'listar_formas_pagamento')).toBe(false);
+    await act(async () => { await result.current.handleSave(); });
+    expect(bodyDoAlterar()).toBeUndefined();
+  });
+});
+
+describe('leva 1 — base alternativa de tinta (#10)', () => {
+  it('base alternativa fora do catálogo: recusa em vez de gravar o SKU da base original', async () => {
+    const { result } = await renderLoaded();
+    const base = { id: 'base-1', omie_codigo_produto: 10, codigo: 'B1', descricao: 'Base A', unidade: 'GL', valor_unitario: 100, estoque: 5, ativo: true, account: 'oben', is_tintometric: true, tint_type: 'base' } as OmieProduct;
+    act(() => { result.current.setTintPendingProduct(base); });
+    const antes = result.current.items.length;
+    act(() => {
+      result.current.handleTintConfirm('f1', 'COR1', 'Azul', 150, 0, undefined, { id: 'base-alt-fora', codigo: 'B2', descricao: 'Base B' } as never);
+    });
+    expect(result.current.items).toHaveLength(antes);
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('não está no catálogo'), expect.anything());
+  });
+});
+
+describe('leva 1 — Codex no diff (2026-11-26)', () => {
+  it.each([
+    ['HTML de proxy', '<html>502</html>'],
+    ['success como texto', { success: 'false' }],
+    ['corpo vazio', {}],
+    ['blocked desconhecido', { success: false, blocked: 'algo_novo' }],
+  ])('200 ambíguo (%s): divergente, sem sucesso falso nem navegação', async (_nome, data) => {
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data, error: null } as never);
+    await act(async () => { await result.current.handleSave(); });
+    const envios = mockedInvoke.mock.calls.filter(([, o]) => (o as { body?: { action?: string } })?.body?.action === 'alterar_pedido');
+    expect(envios).toHaveLength(1); // ESTE caso despachou — não herdou trava do anterior
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalledWith('Pedido atualizado e sincronizado com o Omie!');
+  });
+
+  it('sem resposta no prazo: divergente e o envio é liberado (a tela não fica presa)', async () => {
+    const { PRAZOS } = await import('../envioEdicao');
+    const original = PRAZOS.envioMs;
+    PRAZOS.envioMs = 30;
+    try {
+      const { result } = await renderLoaded();
+      mockedInvoke.mockImplementation((async (_n: string, o: { body?: { action?: string } }) =>
+        o?.body?.action === 'alterar_pedido' ? new Promise(() => {}) : { data: { formas: [] }, error: null }) as never);
+      await act(async () => { await result.current.handleSave(); });
+      expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+      expect(result.current.saving).toBe(false);
+      const { estadoDoPedido } = await import('../registroEnvios');
+      expect(estadoDoPedido('ord-1').emVoo).toBe(false);
+    } finally {
+      PRAZOS.envioMs = original;
+    }
+  });
+
+  it('corpo do 500 lido UMA vez (mensagem e precisa_recarregar da mesma leitura)', async () => {
+    const { result } = await renderLoaded();
+    let leituras = 0;
+    const ctx = { status: 500, clone: () => ({ json: async () => { leituras++; return { error: 'Edição recusada: x', precisa_recarregar: false }; } }) };
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'sdk', context: ctx } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(leituras).toBe(1);
+    expect(result.current.precisaRecarregar).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Edição recusada: x'), expect.anything());
+  });
+
+  // A página remonta o editor a cada :id (SalesOrderEdit.tsx, key={id}): trocar de pedido = desmontar A e
+  // montar B. Os testes abaixo fazem exatamente isso.
+  async function abrir(id: string) {
+    rota.id = id;
+    salesOrderRow = { ...salesOrderRow, id };
+    return renderLoaded();
+  }
+  function abrirSemEsperar(id: string) {
+    rota.id = id;
+    salesOrderRow = { ...salesOrderRow, id };
+    return renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+  }
+  function envioPendurado() {
+    let soltar: (v: unknown) => void = () => {};
+    mockedInvoke.mockImplementation((async (_n: string, o: { body?: { action?: string } }) =>
+      o?.body?.action === 'alterar_pedido' ? new Promise((r) => { soltar = r; }) : { data: { formas: [] }, error: null }) as never);
+    return (v: unknown) => soltar(v);
+  }
+
+  it('resposta atrasada do salvar de A não publica nada na tela de B; reabrir A volta travado', async () => {
+    const a = await abrir('ord-1');
+    const soltar = envioPendurado();
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = a.result.current.handleSave(); });
+    a.unmount();
+    const b = await abrir('ord-2');
+    vi.mocked(toast.error).mockClear();
+    await act(async () => { soltar({ data: null, error: erroDaEdge({ error: 'x', precisa_recarregar: true }) }); await envio; });
+    expect(b.result.current.precisaRecarregar).toBeNull();
+    expect(b.result.current.saving).toBe(false);
+    expect(b.result.current.formularioTravado).toBe(false);
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled(); // o erro de A não aparece como se fosse de B
+    b.unmount();
+    const a2 = await abrir('ord-1');
+    expect(a2.result.current.precisaRecarregar?.tipo).toBe('divergente');
+  });
+
+  it('A → B → A antes da resposta: a nova tela de A congela e trava quando a divergência chega', async () => {
+    const a = await abrir('ord-1');
+    const soltar = envioPendurado();
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = a.result.current.handleSave(); });
+    a.unmount();
+    (await abrir('ord-2')).unmount();
+    const a2 = abrirSemEsperar('ord-1');
+    expect(a2.result.current.envioDeOutraTela).toBe(true);
+    expect(a2.result.current.formularioTravado).toBe(true);
+    await act(async () => { soltar({ data: { success: 'false' }, error: null }); await envio; });
+    await waitFor(() => expect(a2.result.current.order?.id).toBe('ord-1'));
+    expect(a2.result.current.envioDeOutraTela).toBe(false);
+    expect(a2.result.current.precisaRecarregar?.tipo).toBe('divergente');
+  });
+
+  it('A → B → A com o envio voando: o 2º salvar é recusado (um envio por pedido)', async () => {
+    const a = await abrir('ord-1');
+    const soltar = envioPendurado();
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = a.result.current.handleSave(); });
+    a.unmount();
+    const a2 = abrirSemEsperar('ord-1');
+    await act(async () => { await a2.result.current.handleSave(); });
+    const envios = mockedInvoke.mock.calls.filter(([, o]) => (o as { body?: { action?: string } })?.body?.action === 'alterar_pedido');
+    expect(envios).toHaveLength(1);
+    await act(async () => { soltar({ data: { success: true }, error: null }); await envio; });
+  });
+
+  it('quando o envio da outra tela termina com sucesso, a tela que esperava RELÊ o pedido antes de liberar', async () => {
+    const a = await abrir('ord-1');
+    const soltar = envioPendurado();
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = a.result.current.handleSave(); });
+    a.unmount();
+    const a2 = abrirSemEsperar('ord-1');
+    // Enquanto o envio de A voa, a tela nova NÃO lê o pedido (leria o carrinho de antes): fica carregando.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(a2.result.current.loading).toBe(true);
+    expect(a2.result.current.order).toBeNull();
+    salesOrderRow = { ...salesOrderRow, items: [{ ...ITEM, quantidade: 3, valor_total: 30 }], updated_at: '2026-11-26T11:00:00+00' };
+    await act(async () => { soltar({ data: { success: true }, error: null }); await envio; });
+    await waitFor(() => expect(a2.result.current.items[0].quantidade).toBe(3));
+    expect(a2.result.current.order?.updated_at).toBe('2026-11-26T11:00:00+00');
+    expect(a2.result.current.formularioTravado).toBe(false);
+  });
+
+  it('401/403 (gate de autenticação, antes da ação): não é divergência', async () => {
+    for (const status of [401, 403]) {
+      const { result, unmount } = await renderLoaded();
+      mockedInvoke.mockResolvedValue({ data: null, error: { message: 'x', context: new Response(JSON.stringify({ error: 'Unauthorized' }), { status }) } } as never);
+      await act(async () => { await result.current.handleSave(); });
+      expect(result.current.precisaRecarregar).toBeNull();
+      unmount();
+    }
+  });
+
+  it('preço de A que falha depois de abrir B não avisa na tela de B', async () => {
+    let falhar: (e: unknown) => void = () => {};
+    mockedRpc.mockImplementation(((nome: string) => {
+      if (nome === 'get_ultimos_precos_cliente') return new Promise((_r, rej) => { falhar = rej; });
+      return Promise.resolve({ data: [{ id: rota.id, omie_payload: null, omie_response: null }], error: null });
+    }) as never);
+    const a = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+    await waitFor(() => expect(a.result.current.order).toBeTruthy());
+    const falharA = falhar;
+    a.unmount();
+    mockedRpc.mockImplementation(((nome: string) => nome === 'get_ultimos_precos_cliente'
+      ? Promise.resolve({ data: [], error: null })
+      : Promise.resolve({ data: [{ id: 'ord-2', omie_payload: null, omie_response: null }], error: null })) as never);
+    await abrir('ord-2');
+    vi.mocked(toast.warning).mockClear();
+    await act(async () => { falharA(new Error('rede')); await new Promise((r) => setTimeout(r, 0)); });
+    expect(vi.mocked(toast.warning)).not.toHaveBeenCalled();
+  });
+
+  it('sucesso de A com B aberto: B não navega', async () => {
+    const a = await abrir('ord-1');
+    const soltar = envioPendurado();
+    let envio: Promise<void> = Promise.resolve();
+    act(() => { envio = a.result.current.handleSave(); });
+    a.unmount();
+    await abrir('ord-2');
+    navigateSpy.mockClear();
+    await act(async () => { soltar({ data: { success: true }, error: null }); await envio; });
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it('observação vai SEMPRE, igual à do app (ERP e cupom com a mesma nota)', async () => {
+    salesOrderRow = { ...salesOrderRow, notes: 'sinal de R$ 500' };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
+    act(() => { result.current.updateItem(0, 'quantidade', 3); });
+    await act(async () => { await result.current.handleSave(); });
+    expect(bodyDoAlterar()?.observacao).toBe('sinal de R$ 500');
+  });
+
+  it('cancela as leituras em voo ANTES de invalidar (pré-carga antiga não repõe o valor velho)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ordem: string[] = [];
+    vi.spyOn(client, 'cancelQueries').mockImplementation((async () => { ordem.push('cancel'); }) as never);
+    vi.spyOn(client, 'invalidateQueries').mockImplementation((async () => { ordem.push('invalidate'); }) as never);
+    const hook = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient(client) });
+    await waitFor(() => expect(hook.result.current.order).toBeTruthy());
+    mockedInvoke.mockResolvedValue({ data: { success: true }, error: null } as never);
+    await act(async () => { await hook.result.current.handleSave(); });
+    expect(ordem.indexOf('invalidate')).toBeGreaterThan(ordem.lastIndexOf('cancel'));
+    expect(ordem.filter((x) => x === 'cancel')).toHaveLength(4);
+  });
+
+  it('#10: recusa da base alternativa devolve "conflito" (o diálogo não conta cor confirmada)', async () => {
+    const { result } = await renderLoaded();
+    const base = { id: 'base-1', omie_codigo_produto: 10, codigo: 'B1', descricao: 'Base A', unidade: 'GL', valor_unitario: 100, estoque: 5, ativo: true, account: 'oben', is_tintometric: true, tint_type: 'base' } as OmieProduct;
+    act(() => { result.current.setTintPendingProduct(base); });
+    let r: unknown;
+    act(() => { r = result.current.handleTintConfirm('f1', 'COR1', 'Azul', 150, 0, undefined, { id: 'fora' } as never); });
+    expect(r).toBe('conflito');
   });
 });

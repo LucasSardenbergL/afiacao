@@ -151,3 +151,153 @@ cópia velha apaga o token de todo mundo. **Conserto: store próprio do vigia** 
 com 1 escritor (o lock do vigia). Ativação única pelo founder: `scripts/lovable-vigia-instalar.sh --login`
 (OAuth no navegador); o vigia só passa a usar o store quando existe `.vigia-pronto` — sem ele, segue no
 padrão. As sessões interativas também perderam o `lovable` nesse episódio: `/mcp` → lovable para religar.
+
+## Plano de 5 PRs pós-auditoria (2026-11-26) — PR 1: liberação que funciona
+
+**Medido no `vigia.log` (22–26/11, auditoria Fable):** 36 RETIDO por migration contra 2 liberações
+manuais, e NENHUMA das duas virou PUBLICADO; mediana ~5 h retido (pior 42,7 h). As duas liberações
+morreram pelo mesmo motivo: `liberar` exigia `== main de agora`, e a main andou minutos depois
+(25/11 23:04 liberou `3bda3e02`, a main foi a `c39f1f5a`; 26/11 08:36 liberou `39ea6374`, a main foi
+a `8ca02e51` às 08:38). O `--esperar` saía RETIDO com o `liberar` gravado.
+
+O que mudou (só `scripts/` e docs):
+
+- **Decisão única** `lovable-publish.sh --decidir <sha>`: o vigia e o `--esperar` chamam a MESMA função,
+  com o mesmo estado (`$LP_ESTADO` = o diretório do vigia) e a mesma validade do cache de edge
+  (`LP_CACHE_EDGE_MIN`, 15 min). Antes o `--esperar` reimplementava a política e lia o cache sem idade.
+  Últimas linhas preservadas: o vigia lê `VEREDITO=`; o `--esperar` segue saindo `RETIDO=migration:<arq>`.
+- **`liberar` vale para descendentes:** aceito se for SHA de 40 hex, ancestral de HEAD e
+  `git diff LIBERADO HEAD -- supabase/migrations` vazio (tecnicamente: as camadas passam a ser julgadas
+  em `LIBERADO..HEAD`). `HEAD`, ramo e abreviado são ignorados com aviso. Comando novo:
+  `bash scripts/lovable-publish.sh --liberar <sha40>` — valida contra a origin/main, mostra a main
+  medida e as migrations cobertas, grava atômico (tmp + mv). Vale também para `LP_LIBERAR_SHA` do workflow.
+- **`liberar` cobre SÓ migration:** edge entre o ar e o liberado segue pelo ledger — o humano atesta "apliquei as migrations", não edge.
+- **Piso de migrations atestadas** (`$EST/piso`): decisão limpa que se apoiou em atestação humana
+  (liberar ou piso anterior) imprime `PISO=<main>` e o vigia grava — o PR de front seguinte a uma
+  migration liberada não re-trava, mesmo que o `liberar` seja sobrescrito.
+- **Só migration/inerte no intervalo → `NADA_A_PUBLICAR`** (sem avançar o piso): ninguém espera Publish,
+  e a camada continua no intervalo do próximo PR porque o marcador é o ar.
+- **Não retêm:** `supabase/functions/**/*_test.ts` e `supabase/functions/**/*.md`.
+- **Aviso por episódio:** 1 notificação quando o RETIDO começa, lembrete a cada `LV_RELEMBRA_H` (4 h) com a
+  idade, log `RETIDO ar=… main=… <motivo>` quando o par muda e `fim do episódio RETIDO após N min`.
+  Antes era 1 aviso por SHA (cada merge re-notificava o mesmo bloqueio). `PUBLICAR` loga `liberado: <fonte>`.
+- **`--esperar` em RETIDO** imprime o comando de liberação da main atual e distingue
+  `liberado para SHA antigo <sha> — migration(s) depois dele`.
+
+**Challenge Codex (gpt-6.2-astra/high) — 9 achados, 8 novos, todos aceitos:**
+o piso NÃO cobre edge (o ledger vale 15 min e a edge pode sofrer rollback depois — edge é sempre
+`ar..HEAD` + ledger fresco para HEAD); o ledger mede a main que ele mesmo buscou → o vigia confere
+`ls-remote` depois e descarta a prova se a main andou; `JA_NO_AR` e decisão sem atestação humana não
+gravam piso (carimbo igual prova o front, não a migration — um rollback do ar deixaria piso falso);
+`git diff --no-renames` (mover `index.ts` para `index_test.ts` esconderia a remoção da edge); cada
+atestação (ar, liberar, piso) é testada SOZINHA contra HEAD — piso e liberar em ramos irmãos são
+incomparáveis e a regra "a mais nova" ignorava o liberar; o `--esperar` usa o ar que a decisão MEDIU
+(`AR=` completo) e sai `MECANICA=FRONT_SUPERADO` quando a main reverteu o front pedido sem publicá-lo;
+e o `--esperar` roda o decisor da main medida (`git show <main>:scripts/lovable-publish.sh`), para que
+um worktree velho não decida com a regra velha.
+
+Prova: `scripts/test-lovable-publish.sh` reproduz os dois casos reais (`dec_caso_2511` pelo `--decidir`,
+`esperar_caso_2611` pelo `--esperar`) e ambos saem LIBERADO/NO_AR; falsificação com controle verde na
+mesma invocação (ancestral→igualdade, piso ignorado, filtro de teste de edge desligado, sabotagem do
+RETIDO do `--esperar`), mais 4 sabotagens externas da suíte inteira (filtro, piso, linha `PISO=`, gravação
+do `--liberar`) — todas vermelhas no cenário certo. `scripts/test-lovable-vigia.sh`: ledger renovado pelo
+vigia + piso gravado, e o roteiro do episódio RETIDO (falsificado: vigia que re-avisa a cada tick reprova).
+
+## PR 2 (2026-11-26): liberação automática pelo recibo do `db:aplicar`
+
+**Incidente que justifica a máquina (regra de máquina meta):** o mesmo do PR 1 — `vigia.log` 22–26/11,
+36 RETIDO por migration × 2 liberações manuais, mediana ~5 h retido (pior 42,7 h). Mesmo com o
+`liberar` consertado, toda migration ainda dependia de um humano lembrar de liberar, e quem aplica
+pelo `db:aplicar` JÁ deixa a prova: recibo `aplicada` em `public.db_aplicacoes`, pelo SHA-256 dos
+bytes commitados.
+
+- `scripts/lovable-recibos.sh <ar> <head>` (psql-ro, só leitura): por migration de `ar..head`
+  (`--no-renames`), SHA-256 de `git show <head>:<arq>` contra o ledger → `aplicada` · `adiada` ·
+  `desconhecido` (`tentativa`/`desconhecido` sem `aplicada`) · `sem_recibo` (nada, ou só `falhou`) ·
+  `removida`. Veredito 0/1/2; ler falhou = 2. **Nunca** `schema_migrations`
+  (docs/historico/schema-migrations-fail-open.md).
+- `--decidir`: migration sem atestação → cache `recibos-<ar>-<head>` (o vigia grava; válido
+  `LP_CACHE_RECIBO_MIN`=5 min; o ar entra na chave porque muda o conjunto). 0 = `LIBERADO=recibos`;
+  1 = RETIDO; 2 = RETIDO com "recibo DESCONHECIDO" (não libera o que pode ter rodado pela metade);
+  ausente/vencido = `PRECISA_RECIBOS` (exit 12). Recibo **não** grava piso: `adiada` é revogável e o
+  recibo se relê a cada decisão.
+- **Status `adiada`**: tabela `public.db_migracoes_adiadas` (migration `20261126230001`, aplicada pelo
+  `db:aplicar`: ensaio → apply #1507 → validação por psql-ro). RLS, ACL por allowlist (dono, claude_rw
+  INSERT/UPDATE/SELECT, claude_ro SELECT — uma linha forjada liberaria o Publish; o default ACL dava
+  escrita a service_role/sandbox_exec_*), sem DELETE (desfazer = `revogada_em`). Escrita:
+  `bash scripts/db-adiar.sh <arq> "<motivo>"` / `--revogar <arq>`, com releitura. Prova PG17:
+  `db/test-db-migracoes-adiadas.sh` (falsificação: sem o bloco de allowlist, a postcondição A3 aborta),
+  em `LC_ALL=C` e `pt_BR.UTF-8`.
+- **Edge que o ledger não prova** (`supabase/functions/_shared/**`, ou função sem `versao.ts` em HEAD):
+  `pendencias:deploy=0` não libera; exige `liberar` sem mudança nela depois. Instrumentar as 11 edges
+  sem `versao.ts` ficou fora.
+- Vigia: laço de até 3 renovações (`PRECISA_RECIBOS` → recibos, `PRECISA_LEDGER` → ledger) e nova
+  decisão; loga `recibos ar=… main=…: <resultado>` só quando muda.
+
+Testes: `scripts/test-lovable-recibos.sh` (psql-ro/psql-rw falsos; falsificação: `tentativa` tratada
+como sem recibo, e `db-adiar` sem releitura), `scripts/test-lovable-publish.sh` (+recibos 0/1/2,
+ausente, vencido, de outro ar, ilegível; edge sem versão/_shared; sabotagens `rec_desc` e `semv`),
+`scripts/test-lovable-vigia.sh` OK (13).
+
+**Challenge Codex do PR 2 (gpt-6.2-astra/high) — 9 achados, todos tratados:** recibo casa CAMINHO + SHA
+(os mesmos bytes noutro arquivo não provam este); `tentativa`/`desconhecido` vencem `adiada` (apply em
+curso não se esconde atrás do adiamento); a base dos recibos é a atestação humana válida (liberar/piso),
+não só o ar — migration do SQL Editor liberada à mão não volta a travar quando chega outra com recibo
+(`RECIBOS_DE=` na decisão); edge sem `versao.ts` compara o DIRETÓRIO inteiro da função contra o liberar
+(um helper revertido sumia do intervalo); `core.quotePath=false` (nome com acento saía entre aspas e
+escapava do gate); `db-adiar.sh` com nome estrito e valores por variável do psql (`:'x'`, SQL pela
+entrada — o nome do arquivo entrava como SQL na conexão `claude_rw`) e recusa `--revogar` de migration já
+atrás do ar (o gate não a olharia de novo: o caminho é aplicar); e, liberado por recibo, o vigia RELÊ os
+recibos imediatamente antes do disparo (uma revogação durante o ledger perdia para o cache de 5 min).
+Grant por COLUNA (`attacl`) e membro herdando `claude_rw`: medidos em PROD em 26/11 — zero `attacl` na
+tabela, único membro do `claude_rw` é o dono `postgres`; sem migration nova, fica registrado.
+
+**Pronto do PR 2 no `vigia.log` (26/11 22:59):** o vigia já roda a versão de `f81162f6`, lê os recibos
+(`recibos ar=39ea6374 main=f81162f6: 1 …`) e RETÉM corretamente: 10 `aplicada` e 3 `sem_recibo`
+(`20261126233000_omie_os_espelho`, `20261127000000_fin_mov_chave_ncodbaixa`,
+`20261127100000_credito_painel_nome_grupo`). O par `liberado: recibos` → `PUBLICADO` ainda não aconteceu:
+fica para quando essas 3 tiverem recibo (ou forem adiadas por `db-adiar.sh`).
+
+## PR 3 (2026-11-27): disparo à prova de erro
+
+**Incidente:** o mesmo do plano (auditoria Fable + Codex, itens 4/6/7/8/9). Os buracos eram de disparo:
+store padrão como fallback (o blob onde o token do lovable SUMIU em 25/11), nenhuma memória de um deploy
+em voo quando o stream terminava inconclusivo, `DISPARADO` aceito sem conferir projeto/slug/SHA, ar
+divergente só em log, lock roubado pela idade, prazos por contagem de `sleep`.
+
+- **Store próprio obrigatório:** sem `$CFG_DIR/.vigia-pronto` o vigia avisa 1x por episódio (`$EST/sem-store`)
+  e PARA, sem chamar o claude. `needs-auth` é por episódio: acaba na 1ª leitura do PROJETO em qualquer das
+  2 chamadas.
+- **Intenção** (`$EST/intencao`: `sha= hora= tentativa= ar=` + `dep=` quando lido), gravada atomicamente
+  ANTES de qualquer `claude -p`. Se a gravação falhar, não há disparo. Só some quando: o stream está COMPLETO
+  (tem `result`) sem `deploy_project`; o ar mudou (é reclassificado contra o `sha` da intenção, mesmo num
+  tick posterior); ou passaram `LV_INTENCAO_S` (1200 s). Enquanto pendente, nenhum disparo e nem releitura
+  de recibos. Stream truncado sem deploy visível = `INDETERMINADO`, sem 2ª chamada.
+- **Controle determinístico do stream** (`controle()` em jq): ≤1 `deploy_project`; `project_id` = PROJETO;
+  `name` = `steu`; `get_project` do mesmo projeto com resultado sem erro e ANTERIOR ao deploy na ordem do
+  stream; `latest_commit_sha` NA RAIZ do JSON (o texto real vem com o prefixo `[Image: …]`) = HEAD. Fora
+  disso → `VIOLACAO`: desiste do SHA na hora (3/3, aviso + Issue) e mantém a intenção. A escrita no Lovable
+  não é interceptável pelo stream: o controle impede que o vigia aceite um deploy fora do roteiro e o escala.
+  `SHA_LOV`/`DEP_ID` só valem de chamadas com o `project_id` certo.
+- **Reconciliação do ar** (`classifica()`): alvo · `PUBLICADO_ADIANTE` (descendente limpo) · descendente COM
+  camada (aviso por SHA, nomeando o arquivo) · **divergente** → `$EST/alerta-divergente` + aviso por
+  episódio, que só acaba quando o ar sai daquele SHA. Carimbo que o clone não conhece → `fetch` e o curto cru. Stream vazio (sem `init`) = nada rodou.
+- **Lock = PID + posse:** `$EST/lock/pid`; só é tomado se o dono morreu ou se o PID foi reciclado por algo
+  que não é `bash …/lovable-vigia.sh` (um `tail -f vigia.log` não segura o lock). A tomada passa por
+  `lock.tomada` com re-conferência do PID. Dono vivo há >60 min → aviso, sem roubo.
+- **Relógio:** a prova pelo ar mede `date +%s` decorrido (`LV_PASSO_AR`); o backoff conta do FIM da falha
+  (`adia`). A Issue de desistência que não abriu (gh fora) fica em `$EST/issue-pendente` e é re-tentada no
+  máximo a cada 15 min.
+
+Testes: `scripts/test-lovable-vigia.sh` OK (53). As falsificações rodam com controle verde na MESMA invocação
+(`falsifica <nome> <sed> <roteiro>`: o roteiro passa no vigia real, a sabotagem tem de casar e o roteiro
+tem de reprovar o sabotado): `controle`, `intencao`, `lock`, `backoff`, `truncado`, `le_e_cai`, `issue`,
+`store` e o lembrete do episódio RETIDO.
+
+**Challenge Codex do PR 3 (gpt-6.2-astra/high, 89 s): 10 achados, todos tratados.** Timeout podia gerar
+2 deploys num tick (stream truncado = `SEM_DEPLOY` → 2ª chamada). Dois ticks podiam tomar o mesmo lock
+morto (B renomeava o lock novo de A). Intenção não gravada ainda disparava. O SHA era casado no texto
+inteiro, e um objeto aninhado passava. Publicação tardia divergente apagava a intenção sem alerta. Carimbo
+não resolvível virava "ar segue". PID reciclado por `tail -f vigia.log` travava todo tick. `get_project` de
+outro projeto adiava para sempre. O episódio `needs-auth` se perdia entre as 2 chamadas. A Issue que não
+abriu sumia em silêncio.

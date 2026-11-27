@@ -4,6 +4,8 @@ import type { User } from '@supabase/supabase-js';
 vi.mock('../helpers', () => ({
   formatCustomerAddress: vi.fn().mockReturnValue('Rua X, 1'),
   resolveCustomerPhone: vi.fn().mockResolvedValue('11999999999'),
+  titularDoPedido: (c: string | null, u: string, cliente: boolean) => c || (cliente ? u : null),
+  MSG_TITULAR_SEM_CLIENTE: 'sem cliente',
 }));
 vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), critical: vi.fn(), warn: vi.fn() },
@@ -271,7 +273,7 @@ describe('submitQuote — cliente do pedido (8.2)', () => {
     const { client, insert } = makeSupabase();
     const r = await submitQuote(makeParams({ supabase: client, customerUserId: null, ...carrinho }));
     expect(r.success).toBe(false);
-    expect(r.errors[0].step).toBe('validate_cliente');
+    expect(r.errors[0].step).toBe('validate_titular');
     expect(insert).not.toHaveBeenCalled();
   });
 
