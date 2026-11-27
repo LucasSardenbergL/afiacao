@@ -94,6 +94,7 @@ describe('8.2 — envio pendente: a saída é recarregar, não "Trocar" (Codex r
     const cad = hook.indexOf('const bloqueioCadastroOrc = bloqueioDoCadastro();', ini);
     expect(pend).toBeGreaterThan(ini);
     expect(cad).toBeGreaterThan(pend);
+    expect(hook.slice(ini, pend)).not.toContain('bloqueioDoCadastro(');
   });
   it('sem titular congelado liberando reenvio (r4 revertido: P0 de prazo 999 e OS nova)', () => {
     expect(hook).not.toContain('titularDoReenvio');
