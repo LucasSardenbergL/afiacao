@@ -19,6 +19,7 @@ import {
   getToolName,
   missingAccountIdentities,
   resolveCustomerPhone,
+  titularDoPedido,
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
 import { ensureSalesOrderRow } from './idempotency';
