@@ -40,7 +40,15 @@ export type LeituraDescontosItens =
   | { estado: 'nao-se-aplica' };
 
 type DescontoDoCupom =
-  | { quebra: false; aviso: string | null }
+  | {
+      quebra: false;
+      aviso: string | null;
+      /**
+       * Desconto APURADO nas linhas (R$) que não fecha com o total gravado — só quando há desconto a
+       * explicar e a conta não fecha. O painel mostra a divergência (revisão /sales #23); o cupom, não.
+       */
+      divergencia?: { apurado: number; totalGravado: number | null };
+    }
   | {
       quebra: true;
       /** desconto de cada item do jsonb, na MESMA ordem dos itens; `null` = não apurado ("—") */
@@ -127,6 +135,7 @@ export function resolverDescontoCupom(
   if (!fecha || bruto === null) {
     return {
       quebra: false,
+      divergencia: { apurado: apurado / 100, totalGravado: total },
       aviso:
         `o desconto apurado dos itens (${formatPrecoOuAusente(apurado / 100)}) não fecha com o total gravado ` +
         `(${formatPrecoOuAusente(total)}) — o cupom saiu sem a coluna de desconto.`,

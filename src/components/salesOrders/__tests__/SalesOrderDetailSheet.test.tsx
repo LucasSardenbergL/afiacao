@@ -268,8 +268,15 @@ describe('SalesOrderDetailSheet — desconto dos itens pela régua do cupom', ()
 
 // "Como hoje" medido na MARCAÇÃO inteira do painel, não numa amostra de texto: sem quebra, o painel é o
 // de um pedido cuja leitura respondeu sem desconto a explicar. Os ids do Radix mudam a cada montagem.
-function marcacao(o: SalesOrder, descontosItens: FatiaDescontosItens, { tirarAviso = false } = {}) {
+function marcacao(o: SalesOrder, descontosItens: FatiaDescontosItens, { tirarAviso = false, tirarDivergencia = false } = {}) {
   setup(o, { descontosItens });
+  if (tirarDivergencia) {
+    // Revisão /sales #23: a conta que não fecha É dita na tela — e só isso muda.
+    const el = screen.getByTestId('aviso-desconto-divergente');
+    expect(el.textContent).toContain('não fecha com o total gravado');
+    expect(el.textContent).toContain('1.629,25');
+    el.remove();
+  }
   if (tirarAviso) {
     const el = aviso();
     expect(el).not.toBeNull();
@@ -287,7 +294,7 @@ describe('SalesOrderDetailSheet — sem quebra, a tela é a de hoje', () => {
   const hojeBruto = () => marcacao(pedidoReal(1629.25), lida([]));
 
   it.each<[string, () => string, () => string]>([
-    ['cabeçalho ainda BRUTO: a conta não fecha', () => marcacao(pedidoReal(1629.25), lida(LINHAS_REAIS)), hojeBruto],
+    ['cabeçalho ainda BRUTO: a conta não fecha (mais a divergência dita)', () => marcacao(pedidoReal(1629.25), lida(LINHAS_REAIS), { tirarDivergencia: true }), hojeBruto],
     ['desconto apurado zero', () => marcacao(pedidoReal(1629.25), lida(LINHAS_REAIS.map((l) => ({ ...l, desconto_valor: 0 })))), hojeBruto],
     ['nenhuma linha apurada', () => marcacao(pedidoReal(1629.25), lida(LINHAS_REAIS.map((l) => ({ ...l, desconto_valor: null })))), hojeBruto],
     ['leitura carregando', () => marcacao(pedidoReal(1489.34), { status: 'pending', fetchStatus: 'fetching', data: undefined }), hojeLiquido],

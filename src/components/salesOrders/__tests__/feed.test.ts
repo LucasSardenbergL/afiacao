@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows, corteDoPeriodo, filtroDoPeriodo, orDoCorte,
+  feedRowDaLinha, mensagemDoErroDaLista, padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows, corteDoPeriodo, filtroDoPeriodo, orDoCorte,
   paramsTotalDoRecorte, termoBuscaFeed, textoValorRecorte, valorDaResposta, type RecorteFeed,
 } from '../feed';
 import type { OrderFeedRow } from '../types';
@@ -174,5 +174,27 @@ describe('termoBuscaFeed — o termo que a RPC do valor recebe', () => {
     expect(termoBuscaFeed('  %  ')).toBeNull(); // só espaço depois de sanitizar: sem busca nas DUAS pontas
     expect(padraoBuscaFeed('  %  ')).toBeNull();
     expect(termoBuscaFeed('')).toBeNull();
+  });
+});
+
+// Revisão /sales, leva 3.
+describe('leva 3 da revisão /sales', () => {
+  it('#33: linha com total/subtotal ausentes é aceita (vira "—" na tela), não derruba a página', () => {
+    const linha = {
+      origin: 'sales', id: 'x', created_at: '2026-11-20T10:00:00Z', account: 'oben', order_number: null,
+      omie_pedido_id: null, customer_user_id: 'u', customer_name: 'C', item_names: [], item_quantity: 0,
+      status: 'rascunho', subtotal: null, total: null,
+    };
+    expect(feedRowDaLinha(linha).total).toBeNull();
+  });
+
+  it.each([
+    ['sem rede', null, false, 'Sem conexão'],
+    ['lente', Object.assign(new Error('x'), { name: 'LensReadOnlyError' }), true, 'lente'],
+    ['permissão', { code: '42501', message: 'permission denied' }, true, 'acesso não permite'],
+    ['servidor', { code: '503', message: 'x' }, true, 'servidor não respondeu'],
+    ['forma inesperada', new Error('order_feed: página sem dados e sem erro'), true, 'leitura dos pedidos falhou'],
+  ] as const)('#40: mensagem da tela de erro por causa (%s)', (_n, erro, online, trecho) => {
+    expect(mensagemDoErroDaLista(erro, online)).toContain(trecho);
   });
 });

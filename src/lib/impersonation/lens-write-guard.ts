@@ -82,6 +82,15 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // INSERT/UPDATE/DELETE no corpo). É a leitura da base completa da tela /admin/customers: bloqueada,
   // a lente mostrava "não foi possível carregar os clientes" para o master inspecionando uma vendedora.
   'listar_clientes_base',
+  // Lista /sales (migration 20261123120000) — STABLE, SECURITY INVOKER (conferido em prod 2026-11-27:
+  // provolatile='s'; não-volátil não pode gravar). "Meus pedidos" e o valor do recorte: bloqueadas,
+  // a lente via "Não foi possível carregar os pedidos" (revisão /sales #13).
+  'order_feed_do_vendedor',
+  'order_feed_total',
+  // Payload Omie do pedido (parcelas do cupom) — STABLE, SECURITY DEFINER com gate staff, só SELECT.
+  // `contato_cliente_operacional` (VOLÁTIL: grava o ledger de acesso) fica BLOQUEADA de propósito — o
+  // detalhe do pedido abre sem ela na lente (revisão /sales #22).
+  'staff_get_sales_order_payload',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);
