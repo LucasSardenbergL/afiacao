@@ -29463,6 +29463,18 @@ export type Database = {
           total: number
         }[]
       }
+      pedido_edicao_omie_encerrar_envio: {
+        Args: { p_sales_order_id: string; p_token: string }
+        Returns: string
+      }
+      pedido_edicao_omie_estado: {
+        Args: { p_sales_order_id: string }
+        Returns: Json
+      }
+      pedido_edicao_omie_resolver: {
+        Args: { p_sales_order_id: string; p_token: string }
+        Returns: string
+      }
       pedido_por_checkout: {
         Args: { p_account: string; p_checkout_id: string }
         Returns: {

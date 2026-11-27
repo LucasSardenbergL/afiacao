@@ -73,10 +73,14 @@ export async function registrarRevisao<T extends ItemPayload>(
     parcela: { codigo: string; origem: OrigemParcela };
     items: T[];
     userId: string | null;
+    /** Edição com posse durável (migration 20261127120100): a revisão só grava se ESTA tentativa ainda está
+     *  reservada, na mesma transação (`pedido_edicao_omie_registrar_revisao`). Sem token, a RPC de sempre. */
+    tokenEdicao?: string | null;
   },
 ): Promise<{ revisao: RevisaoCredito | null; itensEnvio: T[]; parcelaEnvio: string }> {
   try {
-    const { data, error } = await supabase.rpc("credito_registrar_revisao", {
+    const { data, error } = await supabase.rpc(args.tokenEdicao ? "pedido_edicao_omie_registrar_revisao" : "credito_registrar_revisao", {
+      ...(args.tokenEdicao ? { p_token: args.tokenEdicao } : {}),
       p_sales_order_id: args.salesOrderId,
       p_company: args.company,
       p_contexto: args.contexto,

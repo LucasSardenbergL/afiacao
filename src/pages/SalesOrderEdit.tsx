@@ -12,6 +12,10 @@ import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
 import { OrderItemCard } from '@/components/salesOrderEdit/OrderItemCard';
 import { useParams } from 'react-router-dom';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
 const EditorDoPedido = () => {
   const {
@@ -55,6 +59,10 @@ const EditorDoPedido = () => {
     recarregar,
     temAlteracaoPendente,
     envioDeOutraTela,
+    divergenciaDuravel,
+    podeLiberarDivergencia,
+    liberandoDivergencia,
+    liberarDivergencia,
   } = useSalesOrderEdit();
 
   if (loading) {
@@ -129,6 +137,42 @@ const EditorDoPedido = () => {
                   <RefreshCw className="w-4 h-4" />
                   Recarregar pedido
                 </Button>
+              )}
+              {precisaRecarregar.tipo === 'divergente' && divergenciaDuravel && (
+                <>
+                  {divergenciaDuravel.motivo && (
+                    <p className="text-xs text-muted-foreground">Último erro registrado: {divergenciaDuravel.motivo}</p>
+                  )}
+                  {podeLiberarDivergencia ? (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="outline" className="w-full" disabled={liberandoDivergencia}>
+                          {liberandoDivergencia ? 'Liberando…' : 'Já conferi no Omie — liberar edição'}
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Liberar a edição deste pedido?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            A tela vai mostrar o pedido como está registrado NO APP, que pode ser a versão de antes
+                            da edição que falhou. Se o Omie ficou diferente, salvar daqui sobrescreve o Omie com o
+                            que estiver na tela. Libere só depois de conferir o pedido no Omie.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => { void liberarDivergencia(); }}>
+                            Conferi — liberar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Depois de conferir no Omie, peça a um gestor (master) para liberar a edição deste pedido.
+                    </p>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
