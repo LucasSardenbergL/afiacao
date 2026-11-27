@@ -4,7 +4,7 @@
 # Por que existe: a API de publish do Lovable exige plano Business (reverificado 2026-11-22,
 # docs/historico/lovable-publish-automatico.md); no Pro, o único caminho sem clique é o MCP
 # `lovable` (`deploy_project`), que só existe dentro de uma sessão Claude. Este vigia roda pelo
-# launchd a cada 3 min e NÃO chama LLM no tick:
+# launchd a cada 60 s e NÃO chama LLM no tick:
 #
 #   1. tick barato: `scripts/lovable-publish.sh --julgar origin/main` (ar vs main + gate de ordem);
 #   2. a decisão é `lovable-publish.sh --decidir` (a MESMA do `--esperar`): camadas julgadas a partir
@@ -32,7 +32,7 @@ PROJETO=8f005805-000a-42b7-88a1-9683f785fab6
 SLUG=steu
 ESPERA_AR=${LV_ESPERA_AR:-480}
 RAMO=${LV_RAMO:-main}            # só teste: outro ramo; em produção é sempre main
-mkdir -p "$EST"
+mkdir -p "$EST" && chmod 700 "$EST" 2>/dev/null   # PR 4: token/streams/estado só do dono
 LOG="$EST/vigia.log"
 
 # ── log rotacionado (1 MB × 3) ─────────────────────────────────────────────────────────────────
@@ -89,9 +89,19 @@ trap '[ "$(cat "$EST/lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$EST/lock"' EXI
 [ -d "$WT/.git" ] || { avisa_uma_vez "sem-repo" "clone do vigia ausente em $WT — rode scripts/lovable-vigia-instalar.sh"; exit 0; }
 
 # ── main fresca num clone SÓ do vigia (nenhuma sessão mexe nele) ───────────────────────────────
-if ! timeout 90 git -C "$WT" fetch -q origin "$RAMO" 2>>"$LOG"; then log "fetch falhou"; exit 0; fi
-HEAD_SHA=$(git -C "$WT" rev-parse FETCH_HEAD) || exit 0
-git -C "$WT" checkout -q --detach "$HEAD_SHA" 2>>"$LOG" || { log "checkout falhou"; exit 0; }
+# PR 4: `ls-remote` (1 ida e volta) a cada tick; `fetch` só quando a main aponta para um commit que o clone
+# ainda não tem. O checkout é SEMPRE (local, sem rede) e com -f: o decisor que roda é o da main, mesmo que
+# um arquivo do clone tenha sido alterado/restaurado à mão (Codex PR4 #2).
+REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>>"$LOG" | cut -f1)
+case "$REMOTA" in *[!0-9a-f]*|'') log "ls-remote falhou (${REMOTA:-vazio})"; exit 0 ;; esac
+[ ${#REMOTA} = 40 ] || { log "ls-remote sem SHA de 40 hex"; exit 0; }
+if git -C "$WT" cat-file -e "$REMOTA^{commit}" 2>/dev/null; then
+  HEAD_SHA=$REMOTA
+else
+  if ! timeout 90 git -C "$WT" fetch -q origin "$RAMO" 2>>"$LOG"; then log "fetch falhou"; exit 0; fi
+  HEAD_SHA=$(git -C "$WT" rev-parse FETCH_HEAD) || exit 0
+fi
+git -C "$WT" checkout -q -f --detach "$HEAD_SHA" 2>>"$LOG" || { log "checkout falhou"; exit 0; }
 
 # auto-atualização: a versão da main vale a partir do PRÓXIMO tick (mv = inode novo; o bash que
 # está lendo este arquivo continua no velho)

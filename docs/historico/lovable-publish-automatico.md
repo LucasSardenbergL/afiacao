@@ -301,3 +301,35 @@ inteiro, e um objeto aninhado passava. Publicação tardia divergente apagava a 
 não resolvível virava "ar segue". PID reciclado por `tail -f vigia.log` travava todo tick. `get_project` de
 outro projeto adiava para sempre. O episódio `needs-auth` se perdia entre as 2 chamadas. A Issue que não
 abriu sumia em silêncio.
+
+## PR 4 (2026-11-27): higiene — instalador verificável, menos rede, docs e workflow
+
+- **Instalador verificável:** `scripts/lovable-vigia-instalar.sh --verificar` roda o mesmo `claude -p` mínimo
+  sob `env -i`, com só `HOME`/`USER`/`LOGNAME`, o PATH do plist, o store próprio e o token. Exige um
+  `tool_result` do `get_project` com `latest_commit_sha` de 40 hex na raiz. O `--login` e a instalação
+  terminam nele: sem prova, exit 1 e "NÃO verificado". Estado (`$EST`) e store com `chmod 700`; o vigia
+  re-aplica o `chmod` no estado a cada tick.
+- **Menos rede:** cada tick faz 1 `ls-remote`; o `fetch` só roda quando a main aponta para um commit que
+  o clone ainda não tem, e o checkout só quando o HEAD local não é a main. O `bun install` já era
+  condicionado ao `bun.lock` (`bun-lock.sha`).
+- **Docs:** `docs/agent/deploy.md` não diz mais "Publish automático DESLIGADO": quem publica é o vigia.
+  O cabeçalho do vigia diz 60 s (antes dizia 3 min).
+- **Workflow:** `schedule:` do `lovable-publish.yml` desligado. Sem o secret `LOVABLE_API_KEY` eram ~96
+  runs verdes por dia sem publicar. Ficam `push`/`workflow_dispatch`.
+
+Testes: `scripts/test-lovable-vigia.sh` OK (65). Falsificações com controle verde na mesma invocação:
+`sem_fetch` (sem o atalho, o clone ganha `FETCH_HEAD`), `checkout_f` (sem `-f`, um decisor adulterado no
+clone segue rodando), `env_i` (sem o `env -i`, `LVT_VAZA`/`ANTHROPIC_BASE_URL` da sessão vazam para o claude)
+e `token` (sem o token, o dublê não o recebe).
+
+**Challenge Codex do PR 4 (gpt-6.2-astra/high, 53 s): 8 achados; 7 tratados, 1 registrado como resíduo.**
+- O checkout ficou SEMPRE e com `-f`. Com o "só se HEAD ≠ main", um `lovable-publish.sh` restaurado à mão
+  no clone rodava um decisor velho com o HEAD certo; os testes agora mudam ARQUIVO, não só o SHA.
+- O plist leva `LV_CLAUDE_DIR` = o store verificado (um `--login` num store alternativo dava OK e o vigia
+  parava em `sem-store`).
+- `jq` é resolvido pelo PATH do launchd, e o `--verificar` re-tenta 1x quando a 1ª chamada não usou
+  ferramenta, como o vigia faz.
+- O teste exige que o token chegue ao claude.
+- **Resíduo (anterior ao PR 4):** o Lovable pode sincronizar um commit B entre o `get_project` (= A) e o
+  `deploy_project`, que não recebe SHA. O pós-deploy classifica B e avisa "COM camada" se houver migration
+  ou edge no meio, mas DEPOIS do Publish. Fechar isso exige um deploy por SHA, que o MCP não oferece.
