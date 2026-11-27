@@ -333,3 +333,37 @@ e `token` (sem o token, o dublê não o recebe).
 - **Resíduo (anterior ao PR 4):** o Lovable pode sincronizar um commit B entre o `get_project` (= A) e o
   `deploy_project`, que não recebe SHA. O pós-deploy classifica B e avisa "COM camada" se houver migration
   ou edge no meio, mas DEPOIS do Publish. Fechar isso exige um deploy por SHA, que o MCP não oferece.
+
+## PR 5 (2026-11-27): medir a 1ª chamada antes de tirar o modelo do disparo
+
+O disparo ainda passa por um LLM (Haiku), que chama `get_project` + `deploy_project`. Tirar o modelo e chamar o
+MCP direto é decisão de arquitetura e espera um **número**, não impressão. O PR 5 versiona o comando que gera
+esse número; o modelo **não** sai do disparo agora.
+
+- **Comando:** `scripts/vigia-taxa-1a-chamada.sh [log] [dias]` (default `vigia.log` + `.1`/`.2`, 7 dias).
+  - Conta as linhas `claude (1/2) rc=… → <RESULTADO>`.
+  - **Acerto** = `DISPARADO` ou `NAO_SINCRONIZADO`, quando o protocolo andou e o veredito saiu do tool_result.
+  - Imprime o **denominador**. Sem 1ª chamada na janela → `TAXA=SEM_DADO denominador=0` e exit 3 (ausente ≠ zero).
+  - Só conta a era do protocolo, ou seja, as linhas com ` mcp=` (desde o #4189). As linhas legadas `VIGIA=…`
+    traziam o texto do modelo, que chegou a fabricar DISPARADO. Por isso saem do denominador e aparecem à
+    parte em `legado_excluido=`.
+- **Teste:** `scripts/test-vigia-taxa-1a-chamada.sh` (no `test:hooks`) dá OK (9). O log fabricado tem 3
+  arquivos e o esperado é `TAXA=33.3% acertos=2 denominador=6 legado_excluido=1`. Também cobre vazio/ausente
+  (exit 3). As sabotagens têm controle verde na mesma invocação: `janela`, `rotacionados`, `legado`,
+  `acerto` e `so_primeira`.
+- **1ª medição (2026-11-27):** `TAXA=75.0% acertos=3 denominador=4 legado_excluido=4`. São 3 DISPARADO e
+  1 NEEDS_AUTH (o episódio de 25/11, em que o token sumiu). **Denominador 4 não decide nada.**
+- **Decisão, por volta de 03/12/2026:** rodar o comando (janela de 7 dias) e registrar a linha `TAXA=` aqui.
+  - **≥95%:** fica como está, fechado com o número.
+  - **Abaixo de 95%:** o próximo PR tira o LLM do disparo e chama o MCP do Lovable direto.
+  - Com denominador pequeno (o vigia só chama o claude quando há o que publicar), registrar o número com o
+    denominador e decidir explicitamente. "Ninguém reclamou" não é sinal.
+
+### Pronto do PR 2 no `vigia.log` (conferido em 2026-11-27)
+O vigia está **RETIDO**, corretamente, por 3 migrations `sem_recibo`:
+- `20261126233000_omie_os_espelho`
+- `20261127000000_fin_mov_chave_ncodbaixa`
+- `20261127100000_credito_painel_nome_grupo`
+
+O par `liberado: recibos` → `PUBLICADO` ainda não aconteceu na produção. Pendência do founder: aplicar via
+`db:aplicar` (que gera o recibo) ou adiar com `db-adiar.sh`.
