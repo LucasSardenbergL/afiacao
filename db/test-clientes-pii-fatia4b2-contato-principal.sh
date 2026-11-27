@@ -141,7 +141,7 @@ suite() {
 }
 
 echo "-- aplica a migration (com a postcondição) --"
-P -q -f "$MIG" 2>&1 | grep -c "fatia 4b-2 ok" | grep -qx 1 && ok "postcondição da migration passou" || bad "postcondição não passou"
+if P -q -f "$MIG" 2>&1 | grep -c "fatia 4b-2 ok" | grep -qx 1; then ok "postcondição da migration passou"; else bad "postcondição não passou"; fi
 
 echo "-- SUÍTE (verde) --"
 suite

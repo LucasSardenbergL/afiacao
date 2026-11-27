@@ -2840,8 +2840,8 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
   it('os 3 LEITORES vêm da view fresca e os 3 WRITERS migraram para a RPC (Fatia 4)', () => {
     expect(
       count(src, '.from("omie_customer_account_map_fresco")'),
-      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 3: criar_perfil_local, sync_all_clients, sync_addresses)',
-    ).toBe(3);
+      'REVERSÃO Lovable? sumiu leitura da view fresca (esperado 5: criar_perfil_local, sync_all_clients, sync_addresses + os 2 gates de PII da onda D 4b-2 — codigosComContatoVisivel e usuariosDoCodigoFresco)',
+    ).toBe(5);
     // [Fatia 4] Os 3 writers INSERT viraram 3 chamadas da RPC. Este edge não toca mais o espelho.
     expect(
       count(src, '.from("omie_clientes")'),

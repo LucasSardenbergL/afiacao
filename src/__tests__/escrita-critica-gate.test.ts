@@ -96,7 +96,8 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   // capturar `{ error }`. Era o sítio que a coluna nova `affinity_score` tornaria perigoso —
   // publicar o front antes da migration 20260725121000 devolve 42703/PGRST204, e o `await` solto
   // reportava sucesso sem ter gravado nada, com a lista calculada na tela.
-  ['src/hooks/useCustomerContacts.ts', 1],
+  // useCustomerContacts.ts QUITADO na onda D 4b-2: o desligar-o-principal-anterior virou a RPC atômica
+  // contato_cliente_definir_principal, com o erro capturado e lançado.
   ['src/hooks/useCustomerProcess.ts', 1],
   ['src/hooks/useDepartmentsAdmin.ts', 1],
   ['src/hooks/useDiagnosticQuestions.ts', 1],
