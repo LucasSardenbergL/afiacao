@@ -155,7 +155,7 @@ CENARIO=esperar_timeout; semeia "$BASE" x; vigia; echo "$FRONT2" > "$F/vigia/lib
 CENARIO=esperar_retido_mig;  semeia "$BASE" x; rec "$BASE" "$FRONT2"; espera 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT" \
   && { printf '%s' "$ESP_OUT" | grep -qF -- "--liberar $FRONT2" || { echo "FALHOU [$CENARIO]: não imprimiu o comando de liberação da main"; fail=1; }; }
 # liberado para um SHA ANTERIOR à migration: segue RETIDO e diz que a liberação é velha
-CENARIO=esperar_lib_antiga;  semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; echo "$FRONT" > "$F/vigia/liberar"
+CENARIO=esperar_lib_antiga;  semeia "$BASE" x; vigia; rec "$FRONT" "$FRONT2"; echo "$FRONT" > "$F/vigia/liberar"
                              espera 10 'RETIDO=migration:supabase/migrations/1_x\.sql' "$FRONT" \
   && { printf '%s' "$ESP_OUT" | grep -qF "liberado para SHA antigo ${FRONT:0:8}" || { echo "FALHOU [$CENARIO]: não distinguiu liberação antiga"; fail=1; }; }
 # caso real 26/11 08:36: liberou 39ea6374 (a main), a main foi a 8ca02e51 (só front) 2 min depois
@@ -234,6 +234,9 @@ CENARIO=dec_recibo_velho;  semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2" 0; tou
                            decide 12 PRECISA_RECIBOS "$FRONT2"
 CENARIO=dec_recibo_outro_ar; semeia "$BASE" x; vigia; rec "$FRONT" "$FRONT2" 0; decide 12 PRECISA_RECIBOS "$FRONT2"
 CENARIO=dec_recibo_lixo;   semeia "$BASE" x; vigia; : > "$F/vigia/recibos-$BASE-$FRONT2"; decide 6 MECANICA "$FRONT2"
+# Codex PR2 #6: o que o liberar cobre não volta a exigir recibo — a base dos recibos é o liberar
+CENARIO=dec_recibo_base_lib; semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"; rec "$MIG" "$F3" 0; echo 0 > "$F/vigia/pendencias-$F3"
+                           decide 0 PUBLICAR "$F3" && { tem_dec "RECIBOS_DE=$MIG"; tem_dec "LIBERADO=recibos+ledger"; }
 # edge que o ledger não prova: sem versao.ts, ou _shared → ledger=0 NÃO libera; liberar sem mudança depois libera
 git checkout -q -b semv "$FRONT2"; c supabase/functions/h/index.ts sv >/dev/null; SV=$(c src/sv.ts svf); git checkout -q main
 git checkout -q -b shared "$FRONT2"; c supabase/functions/_shared/x.ts sh >/dev/null; SH=$(c src/sh.ts shf); git checkout -q main

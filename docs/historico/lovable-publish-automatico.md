@@ -238,3 +238,16 @@ Testes: `scripts/test-lovable-recibos.sh` (psql-ro/psql-rw falsos; falsificaçã
 como sem recibo, e `db-adiar` sem releitura), `scripts/test-lovable-publish.sh` (+recibos 0/1/2,
 ausente, vencido, de outro ar, ilegível; edge sem versão/_shared; sabotagens `rec_desc` e `semv`),
 `scripts/test-lovable-vigia.sh` OK (13).
+
+**Challenge Codex do PR 2 (gpt-6.2-astra/high) — 9 achados, todos tratados:** recibo casa CAMINHO + SHA
+(os mesmos bytes noutro arquivo não provam este); `tentativa`/`desconhecido` vencem `adiada` (apply em
+curso não se esconde atrás do adiamento); a base dos recibos é a atestação humana válida (liberar/piso),
+não só o ar — migration do SQL Editor liberada à mão não volta a travar quando chega outra com recibo
+(`RECIBOS_DE=` na decisão); edge sem `versao.ts` compara o DIRETÓRIO inteiro da função contra o liberar
+(um helper revertido sumia do intervalo); `core.quotePath=false` (nome com acento saía entre aspas e
+escapava do gate); `db-adiar.sh` com nome estrito e valores por variável do psql (`:'x'`, SQL pela
+entrada — o nome do arquivo entrava como SQL na conexão `claude_rw`) e recusa `--revogar` de migration já
+atrás do ar (o gate não a olharia de novo: o caminho é aplicar); e, liberado por recibo, o vigia RELÊ os
+recibos imediatamente antes do disparo (uma revogação durante o ledger perdia para o cache de 5 min).
+Grant por COLUNA (`attacl`) e membro herdando `claude_rw`: medidos em PROD em 26/11 — zero `attacl` na
+tabela, único membro do `claude_rw` é o dono `postgres`; sem migration nova, fica registrado.

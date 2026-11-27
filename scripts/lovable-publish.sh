@@ -93,6 +93,8 @@ CACHE_EDGE_MIN=${LP_CACHE_EDGE_MIN:-15}
 CACHE_RECIBO_MIN=${LP_CACHE_RECIBO_MIN:-5}
 INERTE='^(docs/|\.github/|\.claude/|scripts/|db/|supabase/)|^[^/]+\.md$'
 
+# nomes com acento saem entre aspas no git por padrão (core.quotePath) e escapariam dos casamentos
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false
 TMP=$(mktemp -d) || exit 6
 trap 'rm -rf "$TMP"' EXIT
 
@@ -293,9 +295,16 @@ if [ -n "$MIG" ]; then
   [ "$DECIDIR" = 1 ] || retido migration "$MIG"
   # RECIBO de banco (o vigia grava pelo scripts/lovable-recibos.sh; psql-ro em db_aplicacoes e
   # db_migracoes_adiadas, pelo SHA-256 dos bytes de HEAD). Cache por (ar, head): o ar muda o conjunto.
-  REC="$ESTADO/recibos-$AR-$HEAD_SHA"
+  # base dos recibos: a atestação humana válida (liberar, depois piso), senão o ar — o que o humano
+  # já cobriu não volta a exigir recibo (Codex PR2 #6: migration do SQL Editor liberada à mão)
+  RB=$AR
+  for cand in "$LIB_ARQ" "$PISO_ARQ"; do
+    c=$(sha40 "$cand" 2>/dev/null) && git merge-base --is-ancestor "$c" "$HEAD_SHA" 2>/dev/null && { RB=$c; break; }
+  done
+  echo "RECIBOS_DE=$RB"
+  REC="$ESTADO/recibos-$RB-$HEAD_SHA"
   if [ -z "$(find "$REC" -mmin "-$CACHE_RECIBO_MIN" 2>/dev/null)" ]; then
-    echo "  migration em ${AR:0:8}..${HEAD_SHA:0:8} sem atestação; recibos sem leitura válida (< ${CACHE_RECIBO_MIN} min)"
+    echo "  migration em ${RB:0:8}..${HEAD_SHA:0:8} sem atestação; recibos sem leitura válida (< ${CACHE_RECIBO_MIN} min)"
     fim 12 PRECISA_RECIBOS
   fi
   sed -n '2,$p' "$REC" | sed 's/^/  recibo: /'
@@ -318,8 +327,11 @@ if [ -n "$PEND" ]; then
   done)
   if [ -n "$SEMV" ]; then
     L=""; [ -n "$LIB_ARQ" ] && L=$(sha40 "$LIB_ARQ" || true)
+    # o DIRETÓRIO inteiro de cada função (Codex PR2 #5: um helper que volta aos bytes do ar some do
+    # intervalo, mas a edge implantada em L usa a versão de L)
+    DIRS=(); while read -r e; do DIRS+=("supabase/functions/$(printf '%s' "$e" | cut -d/ -f3)/"); done <<< "$SEMV"
     if [ -n "$L" ] && git merge-base --is-ancestor "$L" "$HEAD_SHA" 2>/dev/null \
-       && [ -z "$(printf '%s\n' "$SEMV" | xargs git diff --no-renames --name-only "$L" "$HEAD_SHA" -- 2>/dev/null)" ]; then
+       && D=$(git diff --no-renames --name-only "$L" "$HEAD_SHA" -- "${DIRS[@]}" 2>/dev/null) && [ -z "$D" ]; then
       LIBS+=("liberar ${L:0:8} (edge sem versao.ts/_shared)")
       PEND=$(printf '%s\n' "$PEND" | grep -vxF "$SEMV" || true)
     else

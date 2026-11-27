@@ -65,7 +65,9 @@ fi
 if [ -f "$LVT/ar-novo" ]; then echo "ar=$(cut -c1-8 "$LVT/head") x"; echo VEREDITO=JA_NO_AR
 else echo "ar=aaaaaaaa x"; echo VEREDITO=PUBLICAR; fi
 EOF
-printf '#!/usr/bin/env bash\necho "$1 $2" > "$LVT/recibos-args"\necho 0\necho "aplicada supabase/migrations/9_z.sql abcdef012345"\n' > "$TMP/origin/scripts/lovable-recibos.sh"
+# recibos falso: 0 na 1ª leitura; com $LVT/revoga, a 2ª (a releitura antes do disparo) vem 1
+# shellcheck disable=SC2016  # o $1/$2/$LVT são do script FALSO, expandem quando ele roda
+printf '#!/usr/bin/env bash\necho "$1 $2" > "$LVT/recibos-args"; echo x >> "$LVT/recibos-n"\nif [ -f "$LVT/revoga" ] && [ "$(wc -l < "$LVT/recibos-n")" -ge 2 ]; then echo 1; else echo 0; fi\necho "aplicada supabase/migrations/9_z.sql abcdef012345"\n' > "$TMP/origin/scripts/lovable-recibos.sh"
 git -C "$TMP/origin" add -A && git -C "$TMP/origin" -c user.email=t@t -c user.name=t commit -qm base
 git -C "$TMP/origin" rev-parse HEAD > "$TMP/head"
 
@@ -126,12 +128,16 @@ rm -f "$TMP/decisao" "$TMP/decisao-pos"
 
 # PR 2: migration no intervalo → o vigia lê os recibos (lovable-recibos.sh ar head), grava o cache e publica
 AR40=2222222222222222222222222222222222222222
-printf 'ar=22222222 x\nAR=%s\n  migration sem atestação\nVEREDITO=PRECISA_RECIBOS\n' "$AR40" > "$TMP/decisao"
-printf 'ar=22222222 x\nAR=%s\nLIBERADO=recibos ar=22222222\nVEREDITO=PUBLICAR\n' "$AR40" > "$TMP/decisao-pos"
-roda recibos
+printf 'ar=22222222 x\nAR=%s\nRECIBOS_DE=%s\n  migration sem atestação\nVEREDITO=PRECISA_RECIBOS\n' "$AR40" "$AR40" > "$TMP/decisao"
+printf 'ar=22222222 x\nAR=%s\nRECIBOS_DE=%s\nLIBERADO=recibos ar=22222222\nVEREDITO=PUBLICAR\n' "$AR40" "$AR40" > "$TMP/decisao-pos"
+rm -f "$TMP/recibos-n"; roda recibos
 { [ "$(cat "$TMP/recibos-args")" = "$AR40 $(cat "$TMP/head")" ] && [ "$(head -1 "$TMP/est-recibos/recibos-$AR40-$(cat "$TMP/head")")" = 0 ] \
   && tem "recibos ar=22222222" && tem "liberado: recibos" && tem "PUBLICADO" && [ ! -f "$TMP/est-recibos/piso" ]; } \
   && ok "PRECISA_RECIBOS → recibos gravados por (ar, head), decide de novo e publica sem liberar manual" || nok "recibos: $(tail -3 "$LOGV")"
+# Codex PR2 #4: revogado entre a 1ª leitura e o disparo → a releitura segura, sem chamar o claude
+rm -f "$TMP/recibos-n"; touch "$TMP/revoga"; roda recibos; rm -f "$TMP/revoga"
+{ tem "recibos relidos antes do disparo: veredito 1" && [ "$CHAMADAS" = "" ] && ! tem "PUBLICADO"; } \
+  && ok "recibo revogado antes do disparo → não dispara" || nok "revoga: $(tail -3 "$LOGV")"
 rm -f "$TMP/decisao" "$TMP/decisao-pos"
 
 RET='ar=aaaaaaaa x
@@ -161,5 +167,5 @@ elif ( VIGIA_SOB_TESTE="$TMP/vigia-sab.sh" episodio ) >/dev/null 2>&1; then nok 
 else ok "falsificação: vigia que re-avisa a cada tick reprova o roteiro"; fi
 rm -f "$TMP/decisao"
 
-[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (13)"; exit 0; }
+[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (14)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1

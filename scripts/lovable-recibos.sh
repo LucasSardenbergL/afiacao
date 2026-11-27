@@ -16,6 +16,8 @@
 # 2 = alguma desconhecida ou não consegui LER), depois `<estado> <arquivo> <sha12>` por migration.
 # Exit = o veredito. Uso: scripts/lovable-recibos.sh <ar> <head>   (LP_PSQL_RO = wrapper psql-ro)
 set -u
+# nomes com acento saem entre aspas no git por padrão (core.quotePath) e escapariam dos casamentos
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotePath GIT_CONFIG_VALUE_0=false
 AR=${1:?uso: lovable-recibos.sh <ar> <head>}; HEAD=${2:?uso: lovable-recibos.sh <ar> <head>}
 PSQL=${LP_PSQL_RO:-$HOME/.config/afiacao/psql-ro}
 sai() { echo "$1"; [ -n "${LINHAS:-}" ] && printf '%s' "$LINHAS"; exit "$1"; }
@@ -36,24 +38,28 @@ done <<< "$LISTA"
 VEREDITO=0
 if [ "${#SHA[@]}" -gt 0 ]; then
   IN=$(printf "'%s'," "${SHA[@]}"); IN=${IN%,}
+  # recibo casa CAMINHO + SHA (Codex PR2 #2: os mesmos bytes noutro arquivo não provam este)
+  INA=$(printf "'%s'," "${ARQ[@]}"); INA=${INA%,}
   # um SELECT só: estados do ledger + adiada (a tabela pode não existir ainda → nenhuma adiada)
   R=$("$PSQL" -X -A -t -F' ' -v ON_ERROR_STOP=1 -c "
-    select s, coalesce((select string_agg(distinct estado, ',') from public.db_aplicacoes where sha256 = s), '-')
-    from unnest(array[$IN]) s" 2>&1) || { LINHAS+=$(printf 'mecanica psql-ro %s' "$(printf '%s' "$R" | head -c 120 | tr '\n' ' ')")$'\n'; sai 2; }
+    select s, coalesce((select string_agg(distinct estado, ',') from public.db_aplicacoes
+                         where sha256 = s and arquivo = a), '-')
+    from unnest(array[$IN], array[$INA]) as t(s, a)" 2>&1) || { LINHAS+=$(printf 'mecanica psql-ro %s' "$(printf '%s' "$R" | head -c 120 | tr '\n' ' ')")$'\n'; sai 2; }
   AD=""
   T=$("$PSQL" -X -A -t -v ON_ERROR_STOP=1 -c "select to_regclass('public.db_migracoes_adiadas') is not null" 2>&1) \
     || { LINHAS+="mecanica psql-ro adiadas"$'\n'; sai 2; }
   if [ "$T" = t ]; then
     AD=$("$PSQL" -X -A -t -v ON_ERROR_STOP=1 -c "select sha256 from public.db_migracoes_adiadas
-      where revogada_em is null and sha256 = any(array[$IN])" 2>&1) || { LINHAS+="mecanica psql-ro adiadas"$'\n'; sai 2; }
+      where revogada_em is null and (sha256, arquivo) in (select * from unnest(array[$IN], array[$INA]))" 2>&1) || { LINHAS+="mecanica psql-ro adiadas"$'\n'; sai 2; }
   fi
   for i in "${!SHA[@]}"; do
     est=$(printf '%s\n' "$R" | awk -v s="${SHA[$i]}" '$1 == s { print $2 }')
     [ -n "$est" ] || { LINHAS+=$(printf 'mecanica %s sem-linha-na-resposta' "${ARQ[$i]}")$'\n'; sai 2; }
     case ",$est," in
       *,aplicada,*) e=aplicada ;;
-      *) if printf '%s\n' "$AD" | grep -qx "${SHA[$i]}"; then e=adiada
-         else case ",$est," in *,tentativa,*|*,desconhecido,*) e=desconhecido ;; *) e=sem_recibo ;; esac; fi ;;
+      # tentativa/desconhecido ANTES de adiada (Codex PR2 #3): um apply em curso não se esconde atrás do adiamento
+      *,tentativa,*|*,desconhecido,*) e=desconhecido ;;
+      *) if printf '%s\n' "$AD" | grep -qx "${SHA[$i]}"; then e=adiada; else e=sem_recibo; fi ;;
     esac
     LINHAS+=$(printf '%s %s %s' "$e" "${ARQ[$i]}" "${SHA[$i]:0:12}")$'\n'
     case "$e" in desconhecido) VEREDITO=2 ;; sem_recibo) [ "$VEREDITO" = 2 ] || VEREDITO=1 ;; esac

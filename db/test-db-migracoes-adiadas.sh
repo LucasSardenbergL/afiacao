@@ -49,6 +49,7 @@ q -d t1 -c "SET ROLE claude_rw; INSERT INTO public.db_migracoes_adiadas (sha256,
 [ "$FALHAS" = 0 ] && echo "ok   controle: apply 2x, allowlist, claude_rw insere, sem DELETE, CHECKs"
 
 # ── falsificação: sem o bloco de allowlist, a postcondição A3 tem de abortar ────────────────────
+# shellcheck disable=SC2016  # $allowlist$ é LITERAL do SQL
 sed '/^DO \$allowlist\$/,/^\$allowlist\$;/d' "$MIG" > "$TMP/sab.sql"
 if cmp -s "$MIG" "$TMP/sab.sql"; then nok "sabotagem não casou"
 else

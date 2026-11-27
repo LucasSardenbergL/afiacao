@@ -112,8 +112,8 @@ for _ in 1 2 3; do
   case "$VER" in
     PRECISA_RECIBOS)
       # recibo de banco de cada migration de ar..main (db_aplicacoes/db_migracoes_adiadas via psql-ro)
-      ARF=$(linha AR)
-      [ -n "$ARF" ] || { log "PRECISA_RECIBOS sem AR= na decisão — não libero"; exit 0; }
+      ARF=$(linha RECIBOS_DE)
+      [ -n "$ARF" ] || { log "PRECISA_RECIBOS sem RECIBOS_DE= na decisão — não libero"; exit 0; }
       rm -f "$EST"/recibos-*
       (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$ARF" "$HEAD_SHA") > "$EST/recibos.tmp.$$" 2>>"$LOG"
       mv -f "$EST/recibos.tmp.$$" "$EST/recibos-$ARF-$HEAD_SHA"
@@ -168,6 +168,13 @@ falhou() {
   fi
 }
 
+# liberado por recibo: relê o banco AGORA (Codex PR2 #4: uma revogação durante o ledger não pode perder
+# para o cache de 5 min) — qualquer coisa ≠ 0 segura este disparo
+if case "$LIBERADO" in *recibos*) true ;; *) false ;; esac; then
+  RB=$(linha RECIBOS_DE)
+  RR=$( (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$RB" "$HEAD_SHA") 2>>"$LOG" | head -1)
+  [ "$RR" = 0 ] || { log "recibos relidos antes do disparo: veredito ${RR:-vazio} — não disparo ${HEAD_SHA:0:8}"; rm -f "$EST"/recibos-*; exit 0; }
+fi
 AR_ANTES=$(ar_curto)
 log "PUBLICAR ${AR_ANTES}..${HEAD_SHA:0:8} (tentativa $((N + 1)))${LIBERADO:+ liberado: $LIBERADO}"
 [ "${LV_SECO:-0}" = 1 ] && { log "LV_SECO=1 — não chamei o claude"; exit 0; }
