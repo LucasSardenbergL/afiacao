@@ -469,3 +469,23 @@ Leitura: `db/sensor-novo-pedido-funil.sql`. Retenção do ledger é ~7 dias: rod
 38 asserts e 5 sabotagens da migration. Mais 4 sabotagens da query (contar linhas em vez de jornadas,
 p50→p0, ponte sempre verdadeira, denominador 0 virando número), todas vermelhas em `C` e `pt_BR.UTF-8`, com
 controle verde na mesma invocação.
+
+**PR 8.2 — pedido do staff nunca no nome do vendedor** (só front · Publish). Quando a busca do cadastro
+local do cliente falhava (o erro do mapeamento era ignorado) ou não achava nada, `customerUserId` ficava
+`null` e o envio gravava `customer_user_id = user.id`: o pedido nascia no nome do VENDEDOR e o telefone dele
+sobrescrevia o do Omie (21/11, cliente COM cadastro). Agora o estado do cadastro (`cadastro-cliente.ts`:
+resolvendo · confirmado · sem_cadastro · indisponível) bloqueia pedido E orçamento do staff fora de
+`confirmado`, no hook e de novo no service (`titularDoPedido` do #4251 também no `submitOrder`). Erro do
+mapa ainda tenta o documento (como na main) e só vira `indisponivel` se nada achar; busca falhou → a
+seleção para ali, antes do autocadastro. A saída é "Trocar" (como no 8.1); com envio deste carrinho ainda
+sem confirmação (envelope comprometido) a tela manda RECARREGAR, nunca "Trocar" (zera o checkoutId → 2º PV).
+Codex em 5 rodadas: r1 6 P0 (Revalidar parcial; orçamento ainda no vendedor; 4 no "Criar cadastro no app",
+acréscimo meu → cortado); r2 4 P0 (todos no Revalidar que mantinha o carrinho → founder: "Só Trocar"); r3 1
+P0 ("Trocar" com envio pendente → 2º PV); r4 5 P0 (o "titular congelado do envelope" abriu caminhos novos →
+revertido; o resto era a orientação "Trocar"); r5 2 P0 na saída por recarga — defeitos da MAIN no
+envelope/restauração (o "Restaurar" reabre o diálogo antes da seleção; a chave da fp é
+`local_user_id || codigo_cliente` e muda entre seleções) que o diff só passou a indicar. **Exceção consciente
+do founder**: mergeado com esses 2 P0 como follow-up próprio (caso raro: envio pendente + busca falhando;
+volume real ~1 pedido do app/mês). Lição (de novo, 8.1 e 8.2): toda saída que PRESERVA estado (revalidar,
+titular congelado) reabre estado velho; o corte para a saída que recomeça do zero converge. Falsificação 18/18
+(× `C` e `pt_BR.UTF-8`), controle verde na mesma invocação.
