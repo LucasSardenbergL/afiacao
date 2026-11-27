@@ -92,6 +92,12 @@
     depois `omie-vendas-sync` v1.54 — a v1.53 com a leva 1 do #4258 por cima (onda 2, relé CONFERE). Sensor
     de edição: onda 2 `SEM_EDICAO`; onda 1 acusou o commit do bot que regravou `types.ts` (as 2 funções
     novas) e o `.env` com a chave `sb_publishable` que o bundle publicado JÁ servia — falso positivo.
+    Publish conferido: o ar serve o `SalesQuotes.tsx` do squash.
+  - **Manifesto de ordem retirado:** `omie-vendas-sync/deploy-ordem.json` existia só para a leva do #4250
+    (a v1.53+ precisa do programado v1.1). Com a v1.1 atestada em prod, ele virou trava permanente: a
+    prova da predecessora vale de 10 min a 6 h, então todo deploy futuro da `omie-vendas-sync` exigiria uma
+    sonda nova de `pedido-programado-enviar` (medido no fecho: a v1.55 do #4268 ficou retida por isso).
+    A retirada é por PR, como o desenho pede (`ordem-entre-edges-da-mesma-leva.md`).
   - Fora, pré-existente e de outro caminho: a reconciliação por duplicata (`PV_<id>`) compara só SKU e
     quantidade, então confirma um PV com preço antigo (Codex, achado 5).
 - Fora: concorrência entre dois editores / alteração no Omie entre abrir e salvar; vencimentos reais de
