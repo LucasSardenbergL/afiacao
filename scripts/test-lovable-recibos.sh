@@ -64,5 +64,43 @@ else
   fi
 fi
 
+# ── db-adiar.sh: grava/revoga por SHA dos bytes commitados, com releitura (psql-rw FALSO) ───────
+cat > "$base/rw" <<'FAKE'
+#!/usr/bin/env bash
+F="$LR_FAKE"; q=""
+while [ $# -gt 0 ]; do case "$1" in -c) q="$2"; shift ;; esac; shift; done
+[ -f "$F/rw_cai" ] && exit 2
+s=$(printf '%s' "$q" | grep -oE "'[0-9a-f]{64}'" | head -1 | tr -d "'")
+case "$q" in
+  insert*) [ -f "$F/rw_mente" ] && exit 0; echo "$s adiada" > "$F/rw_$s" ;;
+  update*) [ -f "$F/rw_$s" ] && echo "$s revogada" > "$F/rw_$s" ;;
+  select*) [ -f "$F/rw_$s" ] && cut -d' ' -f2 "$F/rw_$s" ;;
+esac
+exit 0
+FAKE
+chmod +x "$base/rw"
+ADIAR="$here/db-adiar.sh"
+adiar() { local esp="$1" rc; shift; AD_OUT=$(AFIACAO_PSQL_RW="$base/rw" LR_FAKE="$F" bash "$ADIAR" "$@" 2>&1); rc=$?
+  [ "$rc" = "$esp" ] || { echo "FALHOU [$CEN]: db-adiar rc=$rc (esperado $esp): $AD_OUT"; fail=1; return 1; }; }
+git checkout -q "$M2"
+CEN=adiar_ok;        limpa; adiar 0 supabase/migrations/2_b.sql "fatia futura sem front" && [ "$(cut -d' ' -f2 "$F/rw_$S2")" = adiada ] \
+                       || { echo "FALHOU [$CEN]: não gravou o SHA dos bytes do commit"; fail=1; }
+CEN=adiar_revoga;    adiar 0 --revogar supabase/migrations/2_b.sql && [ "$(cut -d' ' -f2 "$F/rw_$S2")" = revogada ] || { echo "FALHOU [$CEN]"; fail=1; }
+CEN=adiar_sem_motivo; limpa; adiar 2 supabase/migrations/2_b.sql "curto"
+CEN=adiar_caminho;   limpa; adiar 2 src/a.ts "motivo comprido o bastante"
+CEN=adiar_sujo;      limpa; echo x >> supabase/migrations/2_b.sql; adiar 2 supabase/migrations/2_b.sql "motivo comprido o bastante"
+                     git checkout -q -- supabase/migrations/2_b.sql
+CEN=adiar_mente;     limpa; touch "$F/rw_mente"; adiar 6 supabase/migrations/2_b.sql "motivo comprido o bastante"   # INSERT "ok" sem linha
+CEN=adiar_cai;       limpa; touch "$F/rw_cai"; adiar 6 supabase/migrations/2_b.sql "motivo comprido o bastante"
+git checkout -q main
+# falsificação com controle (adiar_mente acima, verde): sem a releitura, o INSERT mentiroso passa
+sed 's/^\[ "\$EST" = "\$ESPERADO" \] || morre 6/true || morre 6/' "$ADIAR" > "$base/adiar-sab.sh"
+if cmp -s "$ADIAR" "$base/adiar-sab.sh"; then echo "FALHOU [sab-adiar]: a sabotagem não casou"; fail=1
+else limpa; touch "$F/rw_mente"; git checkout -q "$M2"
+  if AFIACAO_PSQL_RW="$base/rw" LR_FAKE="$F" bash "$base/adiar-sab.sh" supabase/migrations/2_b.sql "motivo comprido o bastante" >/dev/null 2>&1
+  then :; else echo "FALHOU [sab-adiar]: a cópia sem releitura deveria ACEITAR o INSERT mentiroso (sabotagem inerte)"; fail=1; fi
+  git checkout -q main
+fi
+
 [ "$fail" = 0 ] && echo "test-lovable-recibos: OK"
 exit "$fail"
