@@ -36,7 +36,6 @@ const h = vi.hoisted(() => {
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
-vi.mock('@/components/OrderPrintLayout', () => ({ openPrintOrder: vi.fn() }));
 vi.mock('@/components/sales/print/buscarDescontosItens', () => ({ buscarDescontosItens: vi.fn(async () => new Map()) }));
 vi.mock('@/lib/contato-cliente', () => ({
   lerContatoOperacional: vi.fn(async () => {
@@ -62,7 +61,11 @@ vi.mock('@/integrations/supabase/client', () => ({
 
 import SalesPrintDashboard from '../SalesPrintDashboard';
 import { comQueryClient } from '@/test/query-client';
-import { openPrintOrder } from '@/components/OrderPrintLayout';
+// O cupom é de OUTRO módulo (fronteiras.gate): nem import nem vi.mock dele — o teste lê o HTML que o cupom
+// REAL escreve na janela de impressão, que é o que vai ao papel.
+const vias: string[] = [];
+const ultimaVia = () => vias.at(-1) ?? '';
+const prazo = (texto: string) => `<strong>Prazo:</strong> ${texto}</div>`;
 import { toast } from 'sonner';
 
 const agora = () => new Date().toISOString();
@@ -100,6 +103,8 @@ function imprimirUm(numero: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vias.length = 0;
+  vi.spyOn(window, 'open').mockImplementation(() => ({ document: { write: (html: string) => { vias.push(html); }, close: () => {} } }) as never);
   h.estado.formas = {};
   h.estado.payloads = [];
   h.estado.inChamadas = {};
@@ -139,7 +144,7 @@ describe('SalesPrintDashboard — L2-d: a leitura que falha aparece', () => {
     renderizar();
     expect(await screen.findByTestId('aviso-leitura-nomes')).toBeTruthy();
     imprimirUm('1001');
-    expect(openPrintOrder).not.toHaveBeenCalled();
+    expect(vias).toHaveLength(0);
     expect(toast.error).toHaveBeenCalled();
   });
 
@@ -150,7 +155,7 @@ describe('SalesPrintDashboard — L2-d: a leitura que falha aparece', () => {
     renderizar();
     expect(await screen.findByTestId('aviso-leitura-contato')).toBeTruthy();
     imprimirUm('1001');
-    expect(openPrintOrder).not.toHaveBeenCalled();
+    expect(vias).toHaveLength(0);
     expect(toast.error).toHaveBeenCalled();
   });
 });
@@ -174,12 +179,12 @@ describe('SalesPrintDashboard — P3-1: impressão espera a leitura do nome', ()
       renderizar();
       await screen.findByText('#1001');
       imprimirUm('1001');
-      expect(openPrintOrder).not.toHaveBeenCalled();
+      expect(vias).toHaveLength(0);
       expect(toast.error).toHaveBeenCalled();
       liberar();
       await screen.findByText('Nome c1');
       imprimirUm('1001');
-      expect(JSON.stringify(vi.mocked(openPrintOrder).mock.calls.at(-1)?.[0])).toContain('Nome c1');
+      expect(ultimaVia()).toContain('Nome c1');
     } finally {
       h.builder = original;
     }
@@ -232,10 +237,10 @@ describe('SalesPrintDashboard — L2-c: parcela por conta', () => {
     await screen.findByText('Nome c2');
     await waitFor(() => {
       imprimirUm('1001');
-      expect(vi.mocked(openPrintOrder).mock.calls.at(-1)?.[0].condPagamento).toBe('À vista');
+      expect(ultimaVia()).toContain(prazo('À vista'));
     });
     imprimirUm('2002');
-    expect(vi.mocked(openPrintOrder).mock.calls.at(-1)?.[0].condPagamento).toBe('30 dias');
+    expect(ultimaVia()).toContain(prazo('30 dias'));
   });
 
   it('Colacor degradada → a via da Colacor sai com o CÓDIGO cru, não com a descrição da Oben', async () => {
@@ -252,10 +257,10 @@ describe('SalesPrintDashboard — L2-c: parcela por conta', () => {
     await screen.findByText('Nome c2');
     await waitFor(() => {
       imprimirUm('1001');
-      expect(vi.mocked(openPrintOrder).mock.calls.at(-1)?.[0].condPagamento).toBe('À vista');
+      expect(ultimaVia()).toContain(prazo('À vista'));
     });
     imprimirUm('2002');
-    expect(vi.mocked(openPrintOrder).mock.calls.at(-1)?.[0].condPagamento).toBe('001');
+    expect(ultimaVia()).toContain(prazo('001'));
   });
 });
 
