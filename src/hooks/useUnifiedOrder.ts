@@ -31,7 +31,7 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
-import { computeCheckoutFingerprint, decideCheckoutEnvelope, titularDoReenvio as titularDoReenvioPuro, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -888,32 +888,11 @@ export function useUnifiedOrder() {
   // 8.2: o staff só envia (ou salva orçamento) com o cadastro do cliente CONFIRMADO — senão o pedido
   // nascia no nome do VENDEDOR. Os services também barram `customerUserId` nulo fora do autoatendimento.
   // `confirmado` sem id (não deveria existir) conta como não identificado.
-  const bloqueioDoCadastro = useCallback((titularDoReenvio: string | null = null): string | null => {
-    if (isCustomerMode || titularDoReenvio) return null;
+  const bloqueioDoCadastro = useCallback((): string | null => {
+    if (isCustomerMode) return null;
     const estadoEfetivo = !customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel' : estadoCadastro;
     return mensagemBloqueioCadastro(estadoEfetivo);
   }, [isCustomerMode, customerUserId, estadoCadastro]);
-
-  // Impressão digital do pedido de produto (oben+colacor) + cliente — a MESMA do envelope de checkout.
-  const fingerprintDoPedido = useCallback((): string => {
-    const customerKey = String(selectedCustomer?.local_user_id || selectedCustomer?.codigo_cliente || '');
-    const fpItems = [
-      ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-      ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-    ];
-    return computeCheckoutFingerprint(customerKey, fpItems);
-  }, [selectedCustomer, obenProductItems, colacorProductItems]);
-
-  // 8.2 (Codex r3 P0): o REENVIO do mesmo envelope já comprometido usa o titular CONGELADO nele. O
-  // envelope só é comprometido depois do guard do cadastro (id confirmado; nunca o vendedor — grava
-  // `customerUserId ?? null`) e a fp amarra o mesmo cliente + carrinho. Sem isto, uma busca que falha
-  // no reenvio mandava "Trocar", que zera o checkoutId → o próximo envio podia criar um 2º PV.
-  // Só para o PEDIDO (o orçamento é outra gravação e segue o estado atual).
-  const titularDoReenvio = useCallback((): string | null => {
-    if (isCustomerMode || customerUserId) return null;
-    if (!selectedCustomer) return null;
-    return titularDoReenvioPuro(checkoutEnvRef.current, fingerprintDoPedido());
-  }, [isCustomerMode, customerUserId, selectedCustomer, fingerprintDoPedido]);
 
   const submitQuote = useCallback(async (opts?: { aoGravar?: (restante: CartItem[] | null) => void }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
@@ -1007,8 +986,7 @@ export function useUnifiedOrder() {
       toast.error(bloqueioVendedor);
       return;
     }
-    const titularReenvio = titularDoReenvio();
-    const bloqueioCadastro = bloqueioDoCadastro(titularReenvio);
+    const bloqueioCadastro = bloqueioDoCadastro();
     if (bloqueioCadastro) {
       toast.error(bloqueioCadastro);
       return;
@@ -1039,7 +1017,13 @@ export function useUnifiedOrder() {
     // A2 (rodada 2): a trava liga e desliga SÓ em executarComTravaDeEnvio — o ramo 'conflict'
     // abaixo fazia `return` sem soltar a ref e todo envio seguinte morria calado.
     await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
-      const fingerprint = fingerprintDoPedido();
+      // Impressão digital do pedido de produto (oben+colacor) + cliente.
+      const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+      const fpItems = [
+        ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+        ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+      ];
+      const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
       const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
       if (decision === 'conflict') {
         if (tentativa) sensor?.envioFalhou(tentativa, 'conflito_envelope');
@@ -1088,7 +1072,7 @@ export function useUnifiedOrder() {
         const effectiveCustomer = ensuredCustomer ?? selectedCustomer;
         const result = await submitOrderService({
           customer: effectiveCustomer,
-          customerUserId: customerUserId ?? titularReenvio,
+          customerUserId,
           user,
           cart: { obenProductItems, colacorProductItems, serviceItems },
           subtotals: { oben: obenSubtotal, colacor: colacorProdSubtotal, service: serviceSubtotal },
@@ -1241,7 +1225,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra, limparCamposDoPedido,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
-    waitForAccountEnsure, loadingCustomer, estadoVendedor, bloqueioDoCadastro, titularDoReenvio, fingerprintDoPedido, searchParams,
+    waitForAccountEnsure, loadingCustomer, estadoVendedor, bloqueioDoCadastro, searchParams,
     estadoFormasOben, estadoFormasColacor,
   ]);
 
@@ -1293,8 +1277,7 @@ export function useUnifiedOrder() {
     toolCategories, getFilteredServicos,
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
-    // 8.2: o que a TELA mostra — reenvio do mesmo envelope com titular congelado conta como confirmado.
-    estadoCadastro: titularDoReenvio() ? 'confirmado' as const : estadoCadastro,
+    estadoCadastro,
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,

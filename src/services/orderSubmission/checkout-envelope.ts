@@ -62,18 +62,6 @@ export function computeCheckoutFingerprint(
 }
 
 /**
- * 8.2 (Codex r3 P0): titular do REENVIO do mesmo envelope já comprometido. O envelope só é comprometido
- * depois do guard do cadastro (id confirmado) e congela `customerUserId ?? null` — nunca o vendedor; a fp
- * amarra o mesmo cliente + carrinho. Com isso o reenvio não depende de a busca do cadastro de AGORA dar
- * certo: sem ele, a saída "Trocar" zerava o checkoutId e o próximo envio podia criar um 2º PV.
- * `null` = não há reenvio com titular (sem envelope, não comprometido, sem titular, ou fp diferente).
- */
-export function titularDoReenvio(env: CheckoutEnvelope | null | undefined, fingerprint: string): string | null {
-  if (!env?.committed || !env.customerUserId) return null;
-  return decideCheckoutEnvelope(env, fingerprint) === 'reuse' ? env.customerUserId : null;
-}
-
-/**
  * Decide o que fazer com o envelope persistido dada a impressão digital atual:
  *  - sem envelope                       → 'new'
  *  - mesma fp                           → 'reuse'    (retry do MESMO pedido — com ou sem commit)
