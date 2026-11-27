@@ -228,6 +228,20 @@ migrar os ~35 leitores (pedido, expedição, rota, aprovação → RPC operacion
 - **Prova:** `db/test-clientes-pii-fatia4b1-servidor.sh`, 113 ok em C e pt_BR.UTF-8, com 22 sabotagens, cada uma com o
   vermelho exato. Ensaio de desempenho em `db/diagnostico/ensaio-clientes-pii-fatia4b1-perf.sql`.
 
+- **No ar (2026-11-27):** #4239 mergeado. Pré-flight sem deriva: os corpos de prod de `contato_cliente_operacional`,
+  `v_grupo_contatos` e `v_perfil_equipe` são iguais aos da captura. Ensaio ok; apply com recibo `db:aplicar` **#1503**,
+  postcondição `fatia 4b-1 ok`.
+  Validação por fora (psql-ro):
+  - L6 fora, `titular_staff` presente;
+  - RPC: anon=f, authenticated=t;
+  - anon sem SELECT nas 6 relações e sem DELETE em `customer_contacts`;
+  - `authenticated` lê e grava `addresses`;
+  - `v_grupo_contatos` invoker=true lendo `v_endereco_contato`;
+  - `v_perfil_equipe` invoker=off + barrier.
+  `audit:migrations` rc=0. `deriva:corpo:prod` rc=0, depois de conciliar o GRANT da RPC como `SO_CITA` na baseline.
+  Prova logada em prod pelo founder (2026-11-27), nas palavras dele: "Fiz o teste logado, deu tudo ok". Cobriu os dois testes:
+  a rua some no grupo fora da carteira, e o pedido com titular vendedor vai para o ledger.
+
 ## Fatia 4b-2 — o que falta (front + corte)
 - `addresses`: migrar `Addresses.tsx:108` (`select('*')`), `RecurringSchedules.tsx:82`, `useProfile.ts:63` (head `*`)
   e `useCustomerDashboard.ts:28` (sem filtro de dono). Depois do Publish, corte por coluna: rua/CEP só pela view.
