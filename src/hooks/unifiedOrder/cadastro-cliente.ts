@@ -21,8 +21,15 @@ export function interpretarCadastro(localUserId: string | null | undefined, erro
   return typeof localUserId === 'string' && localUserId.trim() ? 'confirmado' : 'sem_cadastro';
 }
 
+/** 8.2 (Codex r3/r4): com um envio deste carrinho ainda sem confirmação (envelope comprometido), "Trocar"
+ *  zera o checkoutId e o próximo envio pode criar um 2º PV. A saída é RECARREGAR: o envelope persiste e o
+ *  reenvio (cliente selecionado de novo, cadastro confirmado) usa o MESMO pedido. */
+export const MSG_CADASTRO_ENVIO_PENDENTE =
+  'Há um envio deste carrinho ainda sem confirmação. Não use “Trocar” (o pedido poderia sair em dobro): recarregue a página e selecione o cliente de novo.';
+
 /** Guard do caminho de envio do STAFF: mensagem = bloqueia; `null` = libera (só `confirmado`). */
-export function mensagemBloqueioCadastro(estado: EstadoCadastro): string | null {
+export function mensagemBloqueioCadastro(estado: EstadoCadastro, envioPendente = false): string | null {
+  if (envioPendente && (estado === 'sem_cadastro' || estado === 'indisponivel')) return MSG_CADASTRO_ENVIO_PENDENTE;
   switch (estado) {
     case 'confirmado': return null;
     case 'resolvendo': return 'Aguarde — ainda identificando o cliente no app.';

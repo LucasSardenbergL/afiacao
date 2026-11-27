@@ -891,22 +891,23 @@ export function useUnifiedOrder() {
   const bloqueioDoCadastro = useCallback((): string | null => {
     if (isCustomerMode) return null;
     const estadoEfetivo = !customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel' : estadoCadastro;
-    return mensagemBloqueioCadastro(estadoEfetivo);
+    return mensagemBloqueioCadastro(estadoEfetivo, !!checkoutEnvRef.current?.committed);
   }, [isCustomerMode, customerUserId, estadoCadastro]);
 
   const submitQuote = useCallback(async (opts?: { aoGravar?: (restante: CartItem[] | null) => void }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
-    const bloqueioCadastroOrc = bloqueioDoCadastro();
-    if (bloqueioCadastroOrc) {
-      toast.error(bloqueioCadastroOrc);
-      return;
-    }
     // Ciclo único: com envio de PEDIDO pendente (parcial/bloqueado), o orçamento gravaria outra linha
     // da conta já enviada (convertê-la = 2º PV) e deixaria o envelope órfão (Codex P1). Fail-closed.
     if (checkoutEnvRef.current) {
       toast.error('Há um envio de pedido pendente para este carrinho', {
         description: 'Reenvie o pedido pendente ou use "Trocar e limpar" para começar um orçamento novo.',
       });
+      return;
+    }
+    // 8.2: DEPOIS do aviso de pedido pendente (Codex r4 P0-3: antes, o bloqueio do cadastro tapava o aviso).
+    const bloqueioCadastroOrc = bloqueioDoCadastro();
+    if (bloqueioCadastroOrc) {
+      toast.error(bloqueioCadastroOrc);
       return;
     }
     // A3 (rodada 2): mesma trava por REF do submitOrder — o toque duplo gravava 2 orçamentos.
@@ -1278,6 +1279,8 @@ export function useUnifiedOrder() {
     // Vendedor
     vendedorDivergencias, validatingVendedor, estadoVendedor,
     estadoCadastro,
+    // 8.2: envio deste carrinho ainda sem confirmação (envelope comprometido) — "Trocar" pode duplicar o PV.
+    envioPendente: !!checkoutEnvRef.current?.committed,
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,

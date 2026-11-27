@@ -29,6 +29,8 @@ interface CustomerSearchProps {
    *  nova). Sem "criar daqui" (Codex r1: 4 P0) e sem revalidar mantendo o carrinho (Codex r2: 4 P0 — prazo,
    *  preço provisório, código/vendedor antigos, autocadastro em dobro; mesma lição do 8.1). */
   estadoCadastro?: EstadoCadastro;
+  /** 8.2: envio deste carrinho ainda sem confirmação — "Trocar" zera a ligação e pode duplicar o PV. */
+  envioPendente?: boolean;
   onSelectCustomer: (c: OmieCustomer) => void;
   onClearCustomer: () => void;
   /** A busca falhou (rede/edge) — distinto de "nenhum encontrado". */
@@ -42,7 +44,7 @@ export function CustomerSearch({
   selectedCustomer, customerUserId, customerSearch, onSearchChange,
   customers, searchingCustomers, loadingCustomer,
   validatingVendedor, vendedorDivergencias, estadoVendedor,
-  estadoCadastro,
+  estadoCadastro, envioPendente = false,
   onSelectCustomer, onClearCustomer,
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
@@ -77,7 +79,7 @@ export function CustomerSearch({
   const termoValido = customerSearch.trim().length >= 2;
   const semResultado = termoValido && !searchingCustomers && !loadingCustomer && !searchFalhou && customers.length === 0;
   const pedirTroca = () => {
-    if (itensNoCarrinho > 0) setConfirmarTroca(true);
+    if (itensNoCarrinho > 0 || envioPendente) setConfirmarTroca(true);
     else onClearCustomer();
   };
   return (
@@ -122,7 +124,7 @@ export function CustomerSearch({
                   <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
                   <div className="flex-1">
                     <p className="text-xs font-semibold">Não foi possível identificar o cliente no app</p>
-                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem o cadastro, o pedido sairia no nome do vendedor. Use “Trocar” e selecione o cliente de novo.</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem o cadastro, o pedido sairia no nome do vendedor. {envioPendente ? 'Há um envio deste carrinho sem confirmação: NÃO use “Trocar” — recarregue a página e selecione o cliente de novo.' : 'Use “Trocar” e selecione o cliente de novo.'}</p>
                   </div>
                 </div>
               </div>
@@ -133,7 +135,7 @@ export function CustomerSearch({
                   <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" aria-hidden />
                   <div className="flex-1">
                     <p className="text-xs font-semibold">Cliente sem cadastro no app</p>
-                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem cadastro, o pedido sairia no nome do vendedor. Cadastre o cliente no app e use “Trocar” para selecioná-lo de novo.</p>
+                    <p className="text-xs text-muted-foreground mt-1">O envio fica bloqueado: sem cadastro, o pedido sairia no nome do vendedor. {envioPendente ? 'Há um envio deste carrinho sem confirmação: NÃO use “Trocar” — cadastre o cliente, recarregue a página e selecione-o de novo.' : 'Cadastre o cliente no app e use “Trocar” para selecioná-lo de novo.'}</p>
                   </div>
                 </div>
               </div>
@@ -266,6 +268,11 @@ export function CustomerSearch({
             <AlertDialogDescription>
               {itensNoCarrinho === 1 ? 'O item do carrinho' : `Os ${itensNoCarrinho} itens do carrinho`} e a ordem de compra serão descartados — os preços são do cliente atual.
             </AlertDialogDescription>
+            {envioPendente && (
+              <p className="text-sm font-medium text-status-error" data-testid="troca-envio-pendente">
+                Há um envio deste carrinho ainda sem confirmação no Omie. Trocar desfaz a ligação com ele: um novo envio pode criar o pedido em dobro. Prefira recarregar a página.
+              </p>
+            )}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Continuar com este cliente</AlertDialogCancel>

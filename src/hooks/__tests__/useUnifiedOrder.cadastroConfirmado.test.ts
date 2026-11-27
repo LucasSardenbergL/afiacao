@@ -54,7 +54,7 @@ describe('8.2 — caminho de envio do staff confere o cadastro ANTES da trava', 
     const g = hook.slice(ini, hook.indexOf('}, [', ini));
     expect(g).toContain('if (isCustomerMode) return null;');
     expect(g).toContain("!customerUserId && estadoCadastro === 'confirmado' ? 'indisponivel'");
-    expect(g).toContain('return mensagemBloqueioCadastro(estadoEfetivo);');
+    expect(g).toContain('return mensagemBloqueioCadastro(estadoEfetivo, !!checkoutEnvRef.current?.committed);');
   });
 
   it('o useCallback do submit depende de estadoCadastro (sem closure velha)', () => {
@@ -76,6 +76,27 @@ describe('8.2 — o orçamento também confere o cadastro (Codex r1 P0-2: virava
   it('o service do orçamento recebe isCustomerMode (2ª camada)', () => {
     const ini = hook.indexOf('submitQuoteService(');
     expect(hook.slice(ini, ini + 200)).toContain('isCustomerMode,');
+  });
+});
+
+describe('8.2 — envio pendente: a saída é recarregar, não "Trocar" (Codex r3/r4: 2º PV)', () => {
+  it('o guard passa ao puro se há envelope COMPROMETIDO', () => {
+    expect(hook).toContain('return mensagemBloqueioCadastro(estadoEfetivo, !!checkoutEnvRef.current?.committed);');
+  });
+  it('o hook expõe envioPendente e a página o passa aos motivos e ao CustomerSearch', () => {
+    expect(hook).toContain('envioPendente: !!checkoutEnvRef.current?.committed,');
+    expect(pagina).toContain('envioPendente: h.envioPendente,');
+    expect(pagina).toContain('envioPendente={h.envioPendente}');
+  });
+  it('no orçamento, o aviso de pedido pendente vem ANTES do bloqueio do cadastro (Codex r4 P0-3)', () => {
+    const ini = hook.indexOf('const submitQuote = useCallback(');
+    const pend = hook.indexOf("'Há um envio de pedido pendente para este carrinho'", ini);
+    const cad = hook.indexOf('const bloqueioCadastroOrc = bloqueioDoCadastro();', ini);
+    expect(pend).toBeGreaterThan(ini);
+    expect(cad).toBeGreaterThan(pend);
+  });
+  it('sem titular congelado liberando reenvio (r4 revertido: P0 de prazo 999 e OS nova)', () => {
+    expect(hook).not.toContain('titularDoReenvio');
   });
 });
 

@@ -558,6 +558,7 @@ const UnifiedOrder = () => {
     serviceItems: h.serviceItems, vendedorDivergencias: h.vendedorDivergencias,
     estadoVendedor: h.estadoVendedor,
     estadoCadastro: h.isCustomerMode ? 'confirmado' : h.estadoCadastro,
+    envioPendente: h.envioPendente,
     estadoFormasOben: isCustomerMode ? undefined : h.estadoFormasOben,
     estadoFormasColacor: isCustomerMode ? undefined : h.estadoFormasColacor,
     loadingFormas: h.loadingFormas, exigeCondicao: !isCustomerMode,
@@ -615,7 +616,7 @@ const UnifiedOrder = () => {
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
               estadoVendedor={h.estadoVendedor}
-              estadoCadastro={h.estadoCadastro}
+              estadoCadastro={h.estadoCadastro} envioPendente={h.envioPendente}
               onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />
