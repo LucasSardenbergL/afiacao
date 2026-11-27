@@ -1,7 +1,8 @@
 // Lógica da tela de edição de pedido de venda (load, edição de itens, save no Omie).
 // Extraída verbatim de src/pages/SalesOrderEdit.tsx (god-component split).
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { itensPedidoDoJson, omiePayloadDoJson } from '@/lib/pedido/itens-json';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,6 +13,7 @@ import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
 import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
   bloqueioDaEdicao,
+  contaDaEdicao,
   type OrderItem,
   type SalesOrder,
   type FormasPagamentoResponse,
@@ -21,17 +23,29 @@ import {
   invalidPricedOrderItemIndices, invalidOrderPriceMessage, invalidQuantityOrderItemIndices, subtotalDaEdicao,
 } from './priceGuard';
 import { totalLinhaOuAusente } from '@/lib/format';
-import { valoresDaEdicaoLocal } from './edicaoLocal';
+import { mesmosItens, valoresDaEdicaoLocal } from './edicaoLocal';
+import {
+  comPrazo, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS, TRAVA_CONCORRENTE, TRAVA_DIVERGENTE,
+  type TravaDoEnvio,
+} from './envioEdicao';
+import { encerrarEnvio, estadoDoPedido, iniciarEnvio, marcarDivergente, ouvirRegistro } from './registroEnvios';
 import { precoDeNascimento, type InsumosDoNascimento } from '@/lib/pricing/precoDeNascimento';
 import { carregarPrecosPraticados } from '@/hooks/unifiedOrder/precos-praticados';
 import { buscarMultConfig, buscarTierPorConta } from '@/hooks/useClienteTier';
 
+/** Recusas que a edge `alterar_pedido` dá ANTES de tocar o Omie: o desfecho é conhecido (nada mudou). Qualquer
+ *  outro `blocked` (ou nenhum, sem `success: true`) é desfecho desconhecido. */
+const RECUSAS_ANTES_DO_OMIE = [
+  'credito', 'tint_preco', 'atp', 'desconto_omie', 'edicao_concorrente', 'versao_ausente',
+  'gemeo_omie', 'etapa_omie', 'leitura_omie_incompleta', 'cliente_omie', 'origem_omie', 'status_pedido',
+  'conta_desconhecida', 'pedido_excluido',
+];
+
 /** `blocked` da edge `alterar_pedido` que trazem `motivo` legível (edge v1.48, ./edicao-omie.ts). */
 const BLOQUEIOS_COM_MOTIVO = [
   'gemeo_omie', 'etapa_omie', 'leitura_omie_incompleta', 'cliente_omie',
-  'origem_omie', 'status_pedido', 'conta_desconhecida',
+  'origem_omie', 'status_pedido', 'conta_desconhecida', 'pedido_excluido', 'versao_ausente',
 ];
-import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import {
   lerRespostaFormas,
   condicoesDoClienteIndisponiveis,
@@ -59,8 +73,27 @@ export function useSalesOrderEdit() {
   const [formasErro, setFormasErro] = useState(false);
   const [formasMotivo, setFormasMotivo] = useState<string | null>(null);
   const [parcelaOriginal, setParcelaOriginal] = useState('');
-
-  // Add product state
+  // #30: o salvar falhou DEPOIS de mexer no Omie (ou outra edição ganhou a vez). O formulário na tela
+  // é um retrato velho — reenviá-lo regravaria itens que o Omie já não tem. Só recarregar destrava.
+  const [precisaRecarregar, setPrecisaRecarregar] = useState<TravaDoEnvio | null>(null);
+  // A página remonta a cada `:id` (SalesOrderEdit.tsx): a instância é de UM pedido. Depois de um `await`,
+  // se ela desmontou (o vendedor abriu outro pedido), o salvar não publica toast, navegação nem estado — só
+  // o que é do PEDIDO (registroEnvios: em voo / divergente) e a invalidação do cache.
+  const montadoRef = useRef(true);
+  useEffect(() => {
+    montadoRef.current = true;
+    return () => {
+      montadoRef.current = false;
+      // Leituras de preço em voo desta instância não publicam aviso na tela do próximo pedido.
+      cargaPrecoRef.current++;
+    };
+  }, []);
+  const [, reler] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => ouvirRegistro(reler), []);
+  // #48: trava síncrona do envio — o `saving` do React só chega no próximo render, um 2º clique ou
+  // uma edição no mesmo tick ainda passariam.
+  const envioEmVooRef = useRef(false);
+  const queryClient = useQueryClient();
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
@@ -86,7 +119,30 @@ export function useSalesOrderEdit() {
     // (Codex r3: atrasar só `profiles` de A fazia A pegar o token depois de B).
     const minhaCarga = ++cargaPrecoRef.current;
     const velha = () => cargaPrecoRef.current !== minhaCarga;
+    // #15: o editor é o MESMO componente quando a rota troca de :id — sem zerar, o pedido B abria com a
+    // parcela, as formas, o catálogo e o rascunho do pedido A até as leituras de B chegarem (e, se B
+    // não tem parcela, ficava com a de A para sempre).
+    setLoading(true);
+    setOrder(null);
+    setItems([]);
+    setNotes('');
+    setCustomerName('');
+    setCustomerUserId(null);
+    setSelectedParcela('');
+    setParcelaOriginal('');
+    setFormas([]);
+    setFormasDegradadas(false);
+    setFormasErro(false);
+    setFormasMotivo(null);
+    setCatalogProducts([]);
+    setTintPendingProduct(null);
+    setShowAddProduct(false);
+    setProductSearch('');
+    setPrecisaRecarregar(null);
     setInsumosPreco(null);
+    // Envio deste pedido ainda voando (outra tela, mesma aba): ler agora daria o carrinho de ANTES do envio.
+    // A tela fica carregando; o efeito de `envioDeOutraTela` chama loadOrder de novo quando ele termina.
+    if (estadoDoPedido(id).emVoo) return;
     try {
       const { data, error } = await supabase
         .from('sales_orders')
@@ -142,7 +198,10 @@ export function useSalesOrderEdit() {
         }
       });
 
-      const account = o.account === 'colacor' ? 'colacor' : 'oben';
+      // #4: conta fora de oben|colacor não vira Oben — sem conta provada não há catálogo nem condição
+      // certos para oferecer (a edge recusa igual: `conta_desconhecida`). A tela abre travada.
+      const account = contaDaEdicao(o.account);
+      if (!account) return;
 
       // Load formas + products in parallel.
       const [formasRes, products] = await Promise.all([
@@ -203,10 +262,13 @@ export function useSalesOrderEdit() {
       setFormasMotivo(estadoFormas.motivo);
       setCatalogProducts(products);
     } catch (e) {
+      if (velha()) return; // a falha do pedido anterior não é notícia sobre o aberto agora
       console.error(e);
       toast.error('Erro ao carregar pedido');
     } finally {
-      setLoading(false);
+      // Só a carga ATUAL encerra o carregamento: a anterior terminando antes deixaria a tela de B
+      // "pronta" sem o pedido B.
+      if (!velha()) setLoading(false);
     }
   };
 
@@ -241,6 +303,7 @@ export function useSalesOrderEdit() {
   };
 
   const updateItem = (index: number, field: 'quantidade' | 'valor_unitario', value: number | null) => {
+    if (envioEmVooRef.current) return; // #48: o que mudar agora não iria na requisição em voo
     setItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
       // Quantidade não aceita null no shape: ilegível vira NaN, que o guard de quantidade recusa.
@@ -264,6 +327,7 @@ export function useSalesOrderEdit() {
   };
 
   const removeItem = (index: number) => {
+    if (envioEmVooRef.current) return;
     if (items.length <= 1) {
       toast.error('O pedido precisa ter pelo menos 1 item');
       return;
@@ -280,6 +344,7 @@ export function useSalesOrderEdit() {
   };
 
   const addProduct = (product: OmieProduct) => {
+    if (envioEmVooRef.current) return;
     // If tintometric base, open color dialog
     if (product.is_tintometric && product.tint_type === 'base') {
       setTintPendingProduct(product);
@@ -324,9 +389,18 @@ export function useSalesOrderEdit() {
     pricingMeta?: { source: string | null; discountPct: number; precoSemDesconto: number | null },
     alternativeProduct?: Product,
   ) => {
+    if (envioEmVooRef.current || !tintPendingProduct) return 'conflito' as const;
+    // #10: a cor/fórmula/preço confirmados são da base ALTERNATIVA. Sem ela no catálogo desta conta, cair
+    // na base original gravaria o SKU de uma base com o preço e a fórmula de outra — recusa.
     const product = alternativeProduct
-      ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
-      : tintPendingProduct!;
+      ? catalogProducts.find(p => p.id === alternativeProduct.id) ?? null
+      : tintPendingProduct;
+    if (!product) {
+      toast.error('A base escolhida não está no catálogo desta empresa — o item não foi adicionado.', {
+        description: 'Escolha a cor na base original ou adicione a outra base pela busca de produtos.',
+      });
+      return 'conflito' as const; // o diálogo não conta como cor confirmada (tint.cor_confirmada)
+    }
     const newItem: OrderItem = {
       product_id: product.id,
       omie_codigo_produto: product.omie_codigo_produto,
@@ -350,6 +424,7 @@ export function useSalesOrderEdit() {
     setItems(prev => [...prev, newItem]);
     setTintPendingProduct(null);
     toast.success(`"${product.descricao}" com cor ${corId} adicionado`);
+    return 'adicionado' as const;
   };
 
   const tintProductAsProduct = useMemo((): Product | null => {
@@ -401,8 +476,28 @@ export function useSalesOrderEdit() {
   // continua sendo o código original e vai íntegro ao Omie. Editar item/observação segue livre.
   const parcelaTravada = condicaoDoPedidoAusente.length > 0;
 
+  // Estado do PEDIDO (registroEnvios), relido a cada aviso do registro: divergente vale mais que a trava local
+  // (recarregar não a tira); envio em voo de OUTRA tela deste mesmo pedido congela sem mensagem de erro.
+  // Pelo `id` da ROTA, não por `order`: a tela que ainda carrega também tem de ver o envio em voo (Codex
+  // 2026-11-26 — com `order` nulo ela não via o envio terminar e abria com o carrinho de antes).
+  const doRegistro = id ? estadoDoPedido(id) : { emVoo: false, divergente: false };
+  const travaEfetiva: TravaDoEnvio | null = doRegistro.divergente ? TRAVA_DIVERGENTE : precisaRecarregar;
+  const envioDeOutraTela = doRegistro.emVoo && !saving;
+  // Quando o envio de OUTRA tela deste pedido termina, o que esta tela copiou ao abrir ficou velho: relê o
+  // pedido antes de liberar os campos (Codex 2026-11-26: liberava com R$ 100 depois do envio de R$ 150).
+  const outraTelaEnviandoRef = useRef(false);
+  useEffect(() => {
+    if (outraTelaEnviandoRef.current && !envioDeOutraTela && !envioEmVooRef.current) void loadOrder();
+    outraTelaEnviandoRef.current = envioDeOutraTela;
+  }, [envioDeOutraTela]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSave = async () => {
-    if (!order) return;
+    if (!order || envioEmVooRef.current) return;
+    const trava = travaEfetiva;
+    if (trava) {
+      toast.error(trava.mensagem);
+      return;
+    }
     // Fail-closed no caminho que grava: o botão some quando bloqueado, mas a trava é aqui.
     const bloqueio = bloqueioDaEdicao(order);
     if (bloqueio) {
@@ -438,9 +533,19 @@ export function useSalesOrderEdit() {
       toast.error(mensagemCondicoesIndisponiveis(condicaoDoPedidoAusente));
       return;
     }
+    const account = contaDaEdicao(order.account);
+    if (!account) return; // inalcançável: bloqueioDaEdicao já recusou a conta
+    // Registro de envio só no caminho que toca o Omie (efeito irreversível fora do banco).
+    const viaOmie = !!order.omie_pedido_id;
+    if (viaOmie && !iniciarEnvio(order.id)) {
+      toast.error('Um salvamento deste pedido ainda está em andamento. Aguarde terminar.');
+      return;
+    }
+    envioEmVooRef.current = true;
     setSaving(true);
+    const pedidoEnviado = order.id;
+    const naTela = () => montadoRef.current;
     try {
-      const account = order.account === 'colacor' ? 'colacor' : 'oben';
 
       if (order.omie_pedido_id) {
         // ── Fase 3 (refactor exigido pelo gate — achado Codex P1): o edge vem
@@ -450,7 +555,7 @@ export function useSalesOrderEdit() {
         // EDGE persiste items/notes/payload (write-back do alterar_pedido);
         // bloqueio/erro → permanecer na tela, local intacto, nada de "salvo!".
         toast.info('Validando e sincronizando com o Omie...');
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+        const despacho = await comPrazo(supabase.functions.invoke('omie-vendas-sync', {
           body: {
             action: 'alterar_pedido',
             account,
@@ -475,7 +580,12 @@ export function useSalesOrderEdit() {
                 } : {}),
               } : {}),
             })),
+            // Sempre, como na main: o ERP recebe a MESMA nota que o app guarda e o cupom imprime (Codex
+            // 2026-11-27 — omitir a intocada deixava o PV com uma nota e o cupom com outra).
             observacao: notes,
+            // #7: a versão da linha que este formulário viu. A edge reserva o pedido por ela ANTES de tocar
+            // o Omie — outra edição (ou envio/exclusão) no meio do caminho faz a reserva não casar.
+            versao: order.updated_at ?? null,
             // Só a parcela que o VENDEDOR escolheu: sem mudança, a edge herda a condição VIVA do PV
             // (`parcelaEfetiva`). Reenviar a do recibo regravaria um prazo que o financeiro já trocou
             // no Omie (Codex r3).
@@ -484,10 +594,42 @@ export function useSalesOrderEdit() {
             // exposição Oben na edição é bloqueado na fronteira).
             atp_capaz: true,
           },
-        });
-        if (error) {
-          toast.error('Erro ao sincronizar com Omie: ' + ((await mensagemDoErroEdge(error)) || error.message || 'Erro desconhecido'));
+        }), PRAZOS.envioMs);
+        // #16: depois do despacho, QUALQUER desfecho pode ter mudado o pedido (no Omie ou no write-back) —
+        // a lista e o detalhe deste pedido saem do cache em todas as rotas, sem segurar a navegação.
+        void invalidarCachesDoPedido(queryClient, pedidoEnviado);
+        if (!despacho.ok) {
+          // Sem resposta no prazo: o Omie pode ter mudado ou não — desconhecido é divergente (#30).
+          marcarDivergente(pedidoEnviado);
+          if (!naTela()) return;
+          toast.error('O Omie não respondeu a tempo — o app não sabe se o pedido mudou', {
+            description: TRAVA_DIVERGENTE.mensagem,
+            duration: 12000,
+          });
           setSaving(false);
+          return;
+        }
+        const { data, error } = despacho.valor;
+        if (error) {
+          const falha = await lerFalhaDoEnvio(error);
+          const mensagem = falha.mensagem || error.message || 'Erro desconhecido';
+          if (falha.exigeRecarregar) {
+            // #30: o Omie pode já ter mudado (ou o desfecho é desconhecido) — o formulário velho não pode ser
+            // reenviado, nem depois de recarregar o app.
+            marcarDivergente(pedidoEnviado);
+          }
+          if (!naTela()) return;
+          toast.error('Erro ao sincronizar com Omie: ' + mensagem, { duration: 12000 });
+          setSaving(false);
+          return;
+        }
+        if (!naTela()) {
+          // A tela deste pedido já fechou: só o que é do pedido. Fora `success: true` e as recusas que a edge
+          // dá ANTES de tocar o Omie, o desfecho é desconhecido — o pedido fica divergente.
+          const d = data as { success?: unknown; blocked?: unknown } | null;
+          if (d?.success !== true && !(typeof d?.blocked === 'string' && RECUSAS_ANTES_DO_OMIE.includes(d.blocked))) {
+            marcarDivergente(pedidoEnviado);
+          }
           return;
         }
         if ((data as { blocked?: string } | null)?.blocked === 'credito') {
@@ -562,6 +704,16 @@ export function useSalesOrderEdit() {
           return;
         }
         const recusa = data as { blocked?: string; motivo?: string } | null;
+        if (recusa?.blocked === 'edicao_concorrente') {
+          track('pedido.edicao_bloqueada', { motivo: recusa.blocked, empresa: account });
+          setPrecisaRecarregar(TRAVA_CONCORRENTE);
+          toast.error('O pedido mudou enquanto você editava — o Omie NÃO foi atualizado', {
+            description: recusa.motivo ?? 'Recarregue o pedido para ver a versão atual antes de salvar.',
+            duration: 12000,
+          });
+          setSaving(false);
+          return;
+        }
         if (recusa?.blocked && BLOQUEIOS_COM_MOTIVO.includes(recusa.blocked)) {
           // Travas da edge v1.48 (./edicao-omie.ts): gêmeo avançado, etapa viva, PV de outro cliente,
           // leitura incompleta, origem/status/conta. O motivo vem da edge — a tela só o mostra.
@@ -573,12 +725,20 @@ export function useSalesOrderEdit() {
           setSaving(false);
           return;
         }
-        if (!(data as { success?: boolean } | null)?.success) {
-          toast.error('O Omie não confirmou a alteração — o pedido local seguiu intacto. Tente novamente.');
+        if ((data as { success?: unknown } | null)?.success !== true) {
+          // 200 sem recusa conhecida e sem `success: true` literal (HTML de proxy, `"false"`, corpo vazio): o
+          // desfecho no Omie é DESCONHECIDO — nem sucesso, nem "tente de novo" (Codex 2026-11-26).
+          marcarDivergente(pedidoEnviado);
+          toast.error('O app não conseguiu confirmar o resultado no Omie', {
+            description: TRAVA_DIVERGENTE.mensagem,
+            duration: 12000,
+          });
           setSaving(false);
           return;
         }
         // Sucesso: o edge já persistiu items/subtotal/notes/omie_payload.
+        // #16: lista, soma, detalhe e descontos estão frescos por 60 s — sem invalidar, a lista mostraria
+        // (e imprimiria/compartilharia) o valor de antes logo depois do "atualizado".
         toast.success('Pedido atualizado e sincronizado com o Omie!');
         navigate('/sales');
       } else {
@@ -622,12 +782,17 @@ export function useSalesOrderEdit() {
           .is('omie_pedido_id', null)
           .is('deleted_at', null)
           .eq('status', order.status);
+        // Sem prazo e sem o registro de envio, como na main: este caminho não toca o Omie, e a trava de versão
+        // (`updated_at` + 1 linha) já faz um 2º salvar com retrato velho não gravar nada (Codex 2026-11-27 —
+        // o prazo aqui criava liberação adiada e releituras que soltavam o total antigo).
         const { data: gravadas, error } = await (order.updated_at
           ? condicoes.eq('updated_at', order.updated_at)
           : condicoes.is('updated_at', null)
         ).select('id');
         if (error) throw error;
+        if (!naTela()) return;
         if ((gravadas ?? []).length !== 1) {
+          setPrecisaRecarregar(TRAVA_CONCORRENTE);
           toast.error('O pedido mudou enquanto você editava (foi enviado, alterado em outra aba, excluído ou mudou de status). Nada foi gravado — recarregue a página.');
           setSaving(false);
           return;
@@ -637,14 +802,34 @@ export function useSalesOrderEdit() {
       }
     } catch (e) {
       console.error(e);
+      if (!montadoRef.current) return;
       const message = e instanceof Error ? e.message : 'Erro ao salvar pedido';
       toast.error(message);
       setSaving(false);
+    } finally {
+      envioEmVooRef.current = false;
+      if (viaOmie) encerrarEnvio(pedidoEnviado);
     }
   };
 
   const motivoBloqueio = order ? bloqueioDaEdicao(order) : null;
   const isBlocked = motivoBloqueio !== null;
+  // #48: durante o envio e depois de uma falha que exige recarregar, nada no formulário muda.
+  const formularioTravado = isBlocked || saving || travaEfetiva !== null || envioDeOutraTela;
+  const temAlteracaoPendente = useMemo(() => {
+    if (!order || isBlocked) return false;
+    return !mesmosItens(order.items ?? [], items)
+      || notes !== (order.notes ?? '')
+      || selectedParcela !== parcelaOriginal;
+  }, [order, isBlocked, items, notes, selectedParcela, parcelaOriginal]);
+  // #48: fechar/recarregar a aba com alteração não salva pede confirmação do navegador. A navegação
+  // dentro do app não é interceptável aqui (BrowserRouter sem data router) — a tela mostra o aviso.
+  useEffect(() => {
+    if (!temAlteracaoPendente) return;
+    const aviso = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', aviso);
+    return () => window.removeEventListener('beforeunload', aviso);
+  }, [temAlteracaoPendente]);
 
   return {
     order,
@@ -682,5 +867,10 @@ export function useSalesOrderEdit() {
     isBlocked,
     motivoBloqueio,
     invalidQuantityItemIndices,
+    formularioTravado,
+    precisaRecarregar: travaEfetiva,
+    envioDeOutraTela,
+    recarregar: loadOrder,
+    temAlteracaoPendente,
   };
 }
