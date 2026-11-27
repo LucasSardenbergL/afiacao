@@ -5,8 +5,8 @@ Codex em 2 consultas (desenho + código), prova PG17 com falsificação em `C` e
 
 | # | Item | PR | Camadas | Estado |
 |---|---|---|---|---|
-| 1 | Ingestão colapsava baixas iguais | #4247 | migration `20261127000000` (recibo #1512) · edge `omie-financeiro` v1.16 · backfill `db/2026-11-27-backfill-movimentos-chave-ncodbaixa.sql` | migration + edge no ar; backfill e medição pendentes |
-| 2 | Baixa cancelada contava como caixa no DFC | #4252 | migration `20261127003000` · Publish | mergeado; migration e Publish pendentes |
+| 1 | Ingestão colapsava baixas iguais | #4247 | migration `20261127000000` (recibo #1512) · edge `omie-financeiro` v1.16 · backfill `db/2026-11-27-backfill-movimentos-chave-ncodbaixa.sql` | migration + edge no ar; backfill colacor_sc ✅ e oben ✅; colacor em curso (recibo #1540) |
+| 2 | Baixa cancelada contava como caixa no DFC | #4252 | migration `20261127003000` (recibo #1513) · Publish | ✅ no ar (bytes do Publish conferidos) |
 | 3 | Projeção A1 rotular pelo mapa de fluxo | — | — | não iniciado (esperou #4237 na mesma edge) |
 | 4 | Locale da prova da DRE | #4238 | só teste | ✅ |
 | 5 | CMV nov/2026 baixo | — | — | ✅ investigado: não é defeito |
@@ -21,6 +21,10 @@ Codex em 2 consultas (desenho + código), prova PG17 com falsificação em `C` e
   - linha legada (hash, sem id) da mesma baixa é re-chaveada no lugar.
 - **Migration:** nada apagado. Renomeia uma linha por baixa; as 4 versões ficam congeladas, e removê-las é decisão do founder. O CHECK `NOT VALID` com os dois estados é também a guarda da janela de deploy (a edge velha é recusada, não duplica).
 - **Validado por fora** (psql-ro após o recibo): 63.198 negativas + 4 congeladas; 0 baixa sem exatamente 1 negativa; CHECK presente.
+- **Backfill (2026-11-27):**
+  - colacor_sc: 5.075 relidos, 0 colapsos.
+  - oben: o sensor achou 1 colapso na 1ª execução. Medido depois: o título `12073968089` **fecha** (500 + 500 + 260,90 = 1.260,90 = líquido).
+  - colacor: foi pulada no 1º disparo (cursor pendente) e re-disparada pela variante re-rodável `db/2026-11-27-backfill-movimentos-chave-ncodbaixa-colacor.sql` (recibo #1540). Faltam medir os títulos `4239145638` e `4265682768` quando o cursor dela voltar a NULL.
 - **Lições:** psql em pt_BR escreve `ERRO:` (captura SQLSTATE com `VERBOSITY=sqlstate`; o 2º locale pegou). `LOCK TABLE` exige a transação do `db:aplicar`.
 
 ## 2 — `pendente_conciliacao` no DFC
