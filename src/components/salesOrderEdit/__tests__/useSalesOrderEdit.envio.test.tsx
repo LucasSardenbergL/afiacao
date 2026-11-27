@@ -857,15 +857,49 @@ describe('leva 1 PR 2 — posse durável no banco (migration 20261127100200)', (
     expect(navigateSpy).not.toHaveBeenCalled();
   });
 
-  it('divergente guardado na aba sai quando o banco diz LIVRE ao reabrir (o banco é a verdade)', async () => {
+  it('consulta que nem chegou ao banco: reabrir ENCERRA o token pendente antes de destravar (Codex r2)', async () => {
     posseMock.encerrar = { data: null, error: { message: 'rede' } };
     const { result } = await renderLoaded();
     mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
     await act(async () => { await result.current.handleSave(); });
     expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    const token = bodyDoAlterar()?.token;
+    // Reabrir: o banco encerra o token (lápide — o envio atrasado não reivindica mais) e só então destrava.
+    posseMock.encerrar = { data: 'abandonada', error: null };
     mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
     await act(async () => { await result.current.recarregar(); });
     await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(encerramentos().map((c) => (c.args as { p_token: string }).p_token)).toEqual([token, token]);
+    expect(result.current.precisaRecarregar).toBeNull();
+    expect(result.current.formularioTravado).toBe(false);
+  });
+
+  it('reabrir com o token pendente AINDA sem prova: continua travado (não destrava no "livre")', async () => {
+    posseMock.encerrar = { data: null, error: { message: 'rede' } };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    await act(async () => { await result.current.recarregar(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.precisaRecarregar?.tipo).toBe('divergente');
+    expect(result.current.formularioTravado).toBe(true);
+  });
+
+  it('em_voo que concluiu depois: reabrir confirma pelo token, destrava e invalida o cache do pedido', async () => {
+    posseMock.encerrar = { data: 'em_voo', error: null };
+    const { result } = await renderLoaded();
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'Failed to send a request to the Edge Function' } } as never);
+    await act(async () => { await result.current.handleSave(); });
+    expect(result.current.precisaRecarregar?.mensagem).toContain('ainda está processando');
+    posseMock.encerrar = { data: 'concluida', error: null };
+    mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+    const { PRAZOS } = await import('../envioEdicao');
+    const antes = encerramentos().length;
+    await act(async () => { await result.current.recarregar(); });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(encerramentos().length).toBe(antes + 1);
+    expect(antes).toBe(PRAZOS.reconsultas + 1);
     expect(result.current.precisaRecarregar).toBeNull();
     expect(result.current.formularioTravado).toBe(false);
   });

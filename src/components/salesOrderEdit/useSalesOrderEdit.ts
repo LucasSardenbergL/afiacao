@@ -28,7 +28,24 @@ import {
   comPrazo, desfechoDoEnvioPeloBanco, type DivergenciaDuravel, invalidarCachesDoPedido, lerFalhaDoEnvio, PRAZOS,
   TRAVA_CONCORRENTE, TRAVA_DIVERGENTE, TRAVA_EM_ANDAMENTO, TRAVA_EM_CURSO, travaDaPosse, type TravaDoEnvio,
 } from './envioEdicao';
-import { encerrarEnvio, estadoDoPedido, iniciarEnvio, liberarDivergente, marcarDivergente, ouvirRegistro } from './registroEnvios';
+import {
+  encerrarEnvio, estadoDoPedido, iniciarEnvio, liberarDivergente, marcarDivergente, marcarPendente, ouvirRegistro,
+  resolverPendente, tokensPendentes,
+} from './registroEnvios';
+
+/** Pergunta ao banco — e ENCERRA — o desfecho de UM salvamento (`pedido_edicao_omie_encerrar_envio`), com prazo.
+ *  Leitura que falha ou não fecha = divergente (fail-closed). */
+async function desfechoNoBanco(pedidoId: string, token: string): Promise<'concluido' | 'nao_alterado' | 'em_voo' | 'divergente'> {
+  try {
+    const lido = await comPrazo(
+      Promise.resolve(supabase.rpc('pedido_edicao_omie_encerrar_envio', { p_sales_order_id: pedidoId, p_token: token })),
+      PRAZOS.corpoMs,
+    );
+    return lido.ok ? desfechoDoEnvioPeloBanco(lido.valor) : 'divergente';
+  } catch {
+    return 'divergente';
+  }
+}
 import { precoDeNascimento, type InsumosDoNascimento } from '@/lib/pricing/precoDeNascimento';
 import { carregarPrecosPraticados } from '@/hooks/unifiedOrder/precos-praticados';
 import { buscarMultConfig, buscarTierPorConta } from '@/hooks/useClienteTier';
@@ -185,11 +202,27 @@ export function useSalesOrderEdit() {
       if (o.omie_pedido_id) {
         const posse = travaDaPosse(await supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: o.id }));
         if (velha()) return;
-        setPrecisaRecarregar(posse.trava);
+        // Salvamentos desta aba com desfecho não provado: ENCERRADOS no banco antes de qualquer destrava — sem
+        // isso, um envio cuja consulta nem chegou ao banco podia reivindicar DEPOIS do "livre" (Codex no diff r2).
+        let pendenteAberto = false;
+        let algumConcluiu = false;
+        for (const t of tokensPendentes(o.id)) {
+          const d = await desfechoNoBanco(o.id, t);
+          if (velha()) return;
+          if (d === 'concluido' || d === 'nao_alterado') {
+            resolverPendente(o.id, t);
+            if (d === 'concluido') algumConcluiu = true;
+          } else {
+            pendenteAberto = true;
+          }
+        }
+        // Concluiu depois que a tela desistiu: o cache pode ter relido o total de antes (cupom/WhatsApp).
+        if (algumConcluiu) void invalidarCachesDoPedido(queryClient, o.id);
+        setPrecisaRecarregar(posse.trava ?? (pendenteAberto && !estadoDoPedido(o.id).divergente ? TRAVA_EM_ANDAMENTO : null));
         setDivergenciaDuravel(posse.divergencia);
-        // O banco é a verdade: PV livre ⇒ o "divergente" que esta aba guardou (resposta perdida, `em_voo` na hora)
-        // já se resolveu — concluído, liberado ou resolvido pelo master. Sai da memória, e o cache relê os valores.
-        if (posse.trava === null && estadoDoPedido(o.id).divergente) {
+        // O banco é a verdade: PV livre e nenhum salvamento desta aba em aberto ⇒ o "divergente" que ela guardou já
+        // se resolveu (concluído, abandonado, liberado). Sai da memória, e o cache relê os valores.
+        if (posse.trava === null && !pendenteAberto && estadoDoPedido(o.id).divergente) {
           liberarDivergente(o.id);
           void invalidarCachesDoPedido(queryClient, o.id);
         }
@@ -574,17 +607,11 @@ export function useSalesOrderEdit() {
       // divergente na hora perdia o sucesso que chega logo depois).
       for (let tentativa = 0; tokenEnvio && tentativa <= PRAZOS.reconsultas; tentativa++) {
         if (tentativa > 0) await new Promise((r) => setTimeout(r, PRAZOS.reconsultaMs));
-        try {
-          const lido = await comPrazo(
-            Promise.resolve(supabase.rpc('pedido_edicao_omie_encerrar_envio', { p_sales_order_id: pedidoEnviado, p_token: tokenEnvio })),
-            PRAZOS.corpoMs,
-          );
-          desfecho = lido.ok ? desfechoDoEnvioPeloBanco(lido.valor) : 'divergente';
-        } catch {
-          desfecho = 'divergente';
-        }
+        desfecho = await desfechoNoBanco(pedidoEnviado, tokenEnvio);
         if (desfecho !== 'em_voo') break;
       }
+      // Sem prova: o token fica PENDENTE — reabrir o pedido o encerra no banco antes de destravar.
+      if ((desfecho === 'divergente' || desfecho === 'em_voo') && tokenEnvio) marcarPendente(pedidoEnviado, tokenEnvio);
       if (desfecho === 'divergente') marcarDivergente(pedidoEnviado);
       // Concluído: o refetch disparado no despacho pode ter relido o total de ANTES do write-back.
       if (desfecho === 'concluido') void invalidarCachesDoPedido(queryClient, pedidoEnviado);
@@ -786,16 +813,19 @@ export function useSalesOrderEdit() {
             description: recusa.motivo ?? 'Recarregue o pedido antes de editar.',
             duration: 12000,
           });
-          setSaving(false);
           if (recusa.blocked === 'edicao_divergente') {
-            // A trava durável e o token que o master precisa vêm do banco. Só a posse — o `loadOrder` aqui zeraria
-            // a tela enquanto este envio ainda consta em voo (Codex no diff).
+            // A trava durável e o token que o master precisa vêm do banco — lidos COM PRAZO e ANTES de soltar o
+            // `saving`: solto antes, o próprio envio pareceria "de outra tela" e o efeito zeraria o rascunho (Codex r2).
             setPrecisaRecarregar(TRAVA_DIVERGENTE);
-            const posse = travaDaPosse(await supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: pedidoEnviado }));
-            if (naTela()) setDivergenciaDuravel(posse.divergencia);
+            const lida = await comPrazo(
+              Promise.resolve(supabase.rpc('pedido_edicao_omie_estado', { p_sales_order_id: pedidoEnviado })),
+              PRAZOS.corpoMs,
+            );
+            if (naTela()) setDivergenciaDuravel(lida.ok ? travaDaPosse(lida.valor).divergencia : null);
           } else {
             setPrecisaRecarregar(TRAVA_EM_CURSO);
           }
+          setSaving(false);
           return;
         }
         if (recusa?.blocked && BLOQUEIOS_COM_MOTIVO.includes(recusa.blocked)) {

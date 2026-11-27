@@ -10,6 +10,9 @@
 
 const emVoo = new Set<string>();
 const divergentes = new Set<string>();
+// Tokens de salvamento com desfecho NÃO provado (divergente sem leitura, ou ainda em voo): ao reabrir, a tela os
+// ENCERRA no banco antes de destravar — o envio atrasado não chega mais ao Omie (Codex no diff r2).
+const pendentes = new Map<string, Set<string>>();
 const ouvintes = new Set<() => void>();
 
 const avisar = () => { for (const f of ouvintes) f(); };
@@ -37,6 +40,23 @@ export function marcarDivergente(pedidoId: string): void {
   avisar();
 }
 
+export function marcarPendente(pedidoId: string, token: string): void {
+  const k = chave(pedidoId);
+  pendentes.set(k, new Set([...(pendentes.get(k) ?? []), token]));
+}
+
+export function tokensPendentes(pedidoId: string): string[] {
+  return [...(pendentes.get(chave(pedidoId)) ?? [])];
+}
+
+export function resolverPendente(pedidoId: string, token: string): void {
+  const k = chave(pedidoId);
+  const s = pendentes.get(k);
+  if (!s) return;
+  s.delete(token);
+  if (s.size === 0) pendentes.delete(k);
+}
+
 /** Só depois de um master liberar a divergência DURÁVEL no banco (`pedido_edicao_omie_resolver`). */
 export function liberarDivergente(pedidoId: string): void {
   divergentes.delete(chave(pedidoId));
@@ -56,5 +76,6 @@ export function ouvirRegistro(f: () => void): () => void {
 export function limparRegistroParaTeste(): void {
   emVoo.clear();
   divergentes.clear();
+  pendentes.clear();
   avisar();
 }
