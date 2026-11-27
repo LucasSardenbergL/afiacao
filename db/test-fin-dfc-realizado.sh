@@ -37,10 +37,13 @@ bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
 MIG="$REPO_ROOT/supabase/migrations/20261122180000_fin_categoria_fluxo_mapping.sql"
+# VIEW vigente: a 20261127003000 recria v_fin_fluxo_caixa_realizado (pendente_conciliacao). As
+# sabotagens de VIEW editam ESTA; as de tabela/RLS seguem na base.
+VIEWMIG="$REPO_ROOT/supabase/migrations/20261127003000_dfc_pendente_conciliacao.sql"
 MAPA="$REPO_ROOT/db/2026-11-22-fin-fluxo-mapa-proprio.sql"
 FIX="$REPO_ROOT/db/fixtures/fin-dre-mapa-proprio-prod-20261122.sql"
 TMPD="$(dirname "$DATA")"
-for f in "$MIG" "$MAPA" "$FIX"; do [ -f "$f" ] || { echo "FALTA $f"; exit 2; }; done
+for f in "$MIG" "$VIEWMIG" "$MAPA" "$FIX"; do [ -f "$f" ] || { echo "FALTA $f"; exit 2; }; done
 echo "═══ setup pronto (PG17 :$PORT, locale $PG_LOCALE) ═══"
 
 eq "Z0 lc_collate do cluster é o pedido" "$(Pq -c "SELECT datcollate FROM pg_database WHERE datname = current_database();")" "$PG_LOCALE"
@@ -57,7 +60,9 @@ CREATE TABLE public.fin_categorias (company text, omie_codigo text, descricao te
 CREATE TABLE public.fin_movimentacoes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), company text, natureza text, categoria_codigo text,
   categoria_descricao text, valor numeric, data_movimento date, omie_ncodbaixa bigint,
-  omie_codigo_lancamento bigint, omie_ncodcc bigint, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
+  omie_codigo_lancamento bigint, omie_ncodcc bigint, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(),
+  -- colunas de PROD lidas pela 20261127003000 (default = linha RELIDA, chave hash): os casos antigos não mudam.
+  omie_ncodmov bigint DEFAULT 1, resumo_lido_em timestamptz DEFAULT now(), resumo_val_pago numeric, resumo_val_liquido numeric);
 ALTER TABLE public.fin_movimentacoes ENABLE ROW LEVEL SECURITY;
 -- como em PROD (fin_user_can_access): STAFF lê a movimentação — quem barra o funcionário é a VIEW.
 CREATE POLICY mov_staff ON public.fin_movimentacoes FOR SELECT
@@ -111,6 +116,48 @@ INSERT INTO public.fin_movimentacoes (company, natureza, categoria_codigo, categ
  ('colacor','EXTR','1.04.01','CONTA_CORRENTE_REC',25,'2026-09-22',NULL,NULL,9,now(),now());
 SQL
 
+# Fixture da CONCILIAÇÃO com o título vigente (colacor_sc, 2026-03 — isolada dos casos acima).
+P -q <<'SQL'
+INSERT INTO public.fin_movimentacoes (company, natureza, categoria_codigo, categoria_descricao, valor, data_movimento, omie_ncodbaixa, omie_codigo_lancamento, omie_ncodmov, resumo_lido_em, resumo_val_pago, resumo_val_liquido, updated_at) VALUES
+ -- C1 (caso 12097272930): título relido diz pago 0; CC sem id e nunca relida ⇒ pendente. A linha do
+ --    título MAIS NOVA mas NÃO relida diz pago (só a relida vale ⇒ dente do filtro resumo_lido_em).
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',0,'2026-03-02',NULL,9001,11,'2026-10-13',0,0,'2026-10-13'),
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',1343.30,'2026-03-02',NULL,9001,12,NULL,1195.75,1195.75,'2026-11-20'),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',1195.75,'2026-03-03',NULL,9001,13,NULL,NULL,NULL,'2026-07-10'),
+ -- C2: 2 baixas identificadas de 545 num título de líquido 545 ⇒ AMBAS pendentes
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',545,'2026-03-04',NULL,9002,21,now(),545,545,now()),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',545,'2026-03-05',9102,9002,-9102,now(),NULL,NULL,now()),
+ -- (a 2ª em ABRIL: a soma é do título no histórico inteiro, não do mês)
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',545,'2026-04-06',9103,9002,-9103,now(),NULL,NULL,now()),
+ -- C3: 1 baixa de CP com juros acima do líquido ⇒ CONTA (diferença de base, não duplicata)
+ ('colacor_sc','VENP','2.01.01','CONTA_A_PAGAR',5196.66,'2026-03-07',NULL,9003,31,now(),5196.66,5196.66,now()),
+ ('colacor_sc','BAXP','2.01.01','CONTA_CORRENTE_PAG',5317.57,'2026-03-08',9301,9003,-9301,now(),NULL,NULL,now()),
+ -- C4: baixa sem título no espelho e nunca relida ⇒ pendente
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',300,'2026-03-09',NULL,9004,41,NULL,NULL,NULL,'2026-07-01'),
+ -- C5: baixa sem título mas relida ⇒ CONTA (fato bancário)
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',200,'2026-03-10',NULL,9005,51,now(),NULL,NULL,now()),
+ -- C6: soma < líquido ⇒ CONTA
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',1000,'2026-03-11',NULL,9006,61,now(),1000,1000,now()),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',600,'2026-03-12',9601,9006,-9601,now(),NULL,NULL,now()),
+ -- C7: mesma baixa 9701: viva (-9701, 70, mais velha) × versão congelada (hash, 50, mais NOVA) ⇒ vale 70
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',70,'2026-03-13',NULL,9007,71,now(),70,70,now()),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',70,'2026-03-14',9701,9007,-9701,now(),NULL,NULL,'2026-11-01'),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',50,'2026-03-14',9701,9007,72,now(),NULL,NULL,'2026-11-26'),
+ -- C8: duas releituras do título em ordem INVERSA de updated_at: a relida por ÚLTIMO (nov) diz pago;
+ --     a relida em out (mas tocada depois) diz pago 0 ⇒ vale a releitura mais recente ⇒ CONTA
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',0,'2026-03-15',NULL,9008,81,'2026-10-01',0,0,'2026-11-25'),
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',80,'2026-03-15',NULL,9008,82,'2026-11-20',80,80,'2026-11-21'),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',80,'2026-03-16',9801,9008,-9801,now(),NULL,NULL,now()),
+ -- C9: baixa identificada 400 + SOMBRA sem id de mesmo valor (vai a pendente_identidade) num título de
+ --     líquido 400 ⇒ a soma conta SÓ a não segregada (400 = líquido) ⇒ a identificada CONTA
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',400,'2026-03-17',NULL,9009,91,now(),400,400,now()),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',400,'2026-03-18',9901,9009,-9901,now(),NULL,NULL,now()),
+ ('colacor_sc','BAXR','1.01.01','CONTA_CORRENTE_REC',400,'2026-03-18',NULL,9009,92,now(),NULL,NULL,now()),
+ -- C10: natureza NULL (cOrigem omitido) num título com pago 0 ⇒ NÃO concilia, segue o mapa (conta)
+ ('colacor_sc','VENR','1.01.01','CONTA_A_RECEBER',0,'2026-03-19',NULL,9010,101,now(),0,0,now()),
+ ('colacor_sc',NULL,'1.01.01','CONTA_CORRENTE_REC',33,'2026-03-20',NULL,9010,102,now(),NULL,NULL,now());
+SQL
+
 # ── PARTE 1: migration ──
 sab_mig() {
   local f="$TMPD/sab-mig.sql" out
@@ -129,6 +176,10 @@ sab_mig "anon-le-view" "s/^REVOKE ALL ON public.v_fin_fluxo_caixa_realizado FROM
 
 P -q -f "$MIG" && ok "M0 migration real aplicou (controle verde, mesma invocação)"
 P -q -f "$MIG" && ok "M0b reaplicação idempotente"
+# M1/M1b ABORTAM a prova se falharem: as sabotagens adiante recriam a view do zero e esconderiam um
+# CREATE OR REPLACE que não aplica sobre a view existente (Codex).
+if P -q -f "$VIEWMIG"; then ok "M1 view vigente (20261127003000) aplicou sobre a view existente"; else bad "M1 view vigente NÃO aplicou"; exit 1; fi
+if P -q -f "$VIEWMIG"; then ok "M1b reaplicação idempotente"; else bad "M1b reaplicação falhou"; exit 1; fi
 
 # ── PARTE 2: script do mapa ──
 if out=$(P -q -1 -f "$MAPA" 2>&1); then ok "S0 mapa aplicou"; else bad "S0 mapa falhou: ${out:0:300}"; fi
@@ -165,7 +216,7 @@ eq "V6 conta sem decisão fica visível" "$(LINHA nao_classificado)" "nao_classi
 eq "V7 juros pagos em financiamento" "$(LINHA fin_juros)" "fin_juros=0.00/40.00"
 eq "V8 parcela de empréstimo e aporte" "$(LINHA fin_amortizacao) $(LINHA fin_aporte)" "fin_amortizacao=0.00/300.00 fin_aporte=70.00/0.00"
 eq "V9 atividade derivada do prefixo" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT string_agg(DISTINCT fluxo_linha||':'||atividade, ' ' ORDER BY fluxo_linha||':'||atividade) FROM v_fin_fluxo_caixa_realizado WHERE fluxo_linha IN ('fin_juros','op_fornecedores','transferencia_interna');" | tail -1)" "fin_juros:financiamento op_fornecedores:operacional transferencia_interna:transferencia_interna"
-eq "V10 ótica do título, valor 0 e versões velhas fora (total de lançamentos)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(lancamentos) FROM v_fin_fluxo_caixa_realizado;" | tail -1)" "16"
+eq "V10 ótica do título, valor 0 e versões velhas fora (total de lançamentos)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(lancamentos) FROM v_fin_fluxo_caixa_realizado WHERE company <> 'colacor_sc';" | tail -1)" "16"
 eq "V12b líquido = entradas − saídas na própria view (linha mista)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT liquido FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND mes='2026-09-01' AND fluxo_linha='transferencia_interna';" | tail -1)" "-7.00"
 eq "V12c líquido de saída pura" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT liquido FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND mes='2026-09-01' AND fluxo_linha='fin_juros';" | tail -1)" "-40.00"
 eq "V13 baixa corrigida para 0 não ressuscita a versão de 80" "$(LINHA op_despesas)" "op_despesas=0.00/100.00"
@@ -179,13 +230,13 @@ eq "V11 employee vê 0 linhas pela view" "$(P -tA -c "SET ROLE authenticated; SE
 # F-view: cada regra sabotada na migration (copiada) tem de deixar um assert V vermelho.
 sab_view() { # $1 rótulo · $2 sed · $3 linha a conferir · $4 valor correto (tem de MUDAR)
   local f="$TMPD/sab-view.sql" got
-  sed "$2" "$MIG" > "$f"
-  if cmp -s "$f" "$MIG"; then bad "F-view-$1: sed não aplicou"; return; fi
+  sed "$2" "$VIEWMIG" > "$f"
+  if cmp -s "$f" "$VIEWMIG"; then bad "F-view-$1: sed não aplicou"; return; fi
   P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;"
-  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-view-$1: cópia sabotada NÃO aplicou (assert ficaria vermelho por ausência — teatro)"; P -q -f "$MIG" >/dev/null; return; fi
+  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-view-$1: cópia sabotada NÃO aplicou (assert ficaria vermelho por ausência — teatro)"; P -q -f "$VIEWMIG" >/dev/null; return; fi
   if [ "$3" = TOTAL ]; then got="$(TOTAL)"; else got="$(LINHA "$3")"; fi
   if [ "$got" != "$4" ]; then ok "F-view-$1: sabotagem muda $3 ($got)"; else bad "F-view-$1: SEM dente ($got)"; fi
-  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$MIG" >/dev/null
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$VIEWMIG" >/dev/null
 }
 # recebimento de clientes em TODOS os meses (a versão velha está em agosto): com dedupe = 100
 TOTAL() { P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(entradas) FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND fluxo_linha='op_recebimento_clientes';" | tail -1; }
@@ -196,17 +247,47 @@ sab_view "transferencia-pela-categoria" "s/  SELECT e.company, date_trunc('month
 LIQ() { P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT liquido FROM v_fin_fluxo_caixa_realizado WHERE company='oben' AND mes='2026-09-01' AND fluxo_linha='fin_juros';" | tail -1; }
 sab_view_liq() {
   local f="$TMPD/sab-view.sql" got
-  sed "s/       round(sum(entrada) - sum(saida), 2) AS liquido,/       0::numeric AS liquido,/" "$MIG" > "$f"
-  if cmp -s "$f" "$MIG"; then bad "F-view-liquido-zerado: sed não aplicou"; return; fi
+  sed "s/       round(sum(entrada) - sum(saida), 2) AS liquido,/       0::numeric AS liquido,/" "$VIEWMIG" > "$f"
+  if cmp -s "$f" "$VIEWMIG"; then bad "F-view-liquido-zerado: sed não aplicou"; return; fi
   P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;"
-  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-view-liquido-zerado: cópia não aplicou"; P -q -f "$MIG" >/dev/null; return; fi
+  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-view-liquido-zerado: cópia não aplicou"; P -q -f "$VIEWMIG" >/dev/null; return; fi
   got="$(LIQ)"
   if [ "$got" != "-40.00" ]; then ok "F-view-liquido-zerado: sabotagem muda o líquido ($got)"; else bad "F-view-liquido-zerado: SEM dente"; fi
-  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$MIG" >/dev/null
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$VIEWMIG" >/dev/null
 }
 sab_view_liq
-sab_view "dedupe-mantem-velha" "s/ORDER BY m.updated_at DESC, m.created_at DESC, m.id DESC/ORDER BY m.updated_at ASC, m.created_at ASC, m.id ASC/" op_recebimento_clientes "op_recebimento_clientes=100.00/0.00"
+sab_view "dedupe-mantem-velha" "s/m.updated_at DESC, m.created_at DESC, m.id DESC) AS rn/m.updated_at ASC, m.created_at ASC, m.id ASC) AS rn/" op_recebimento_clientes "op_recebimento_clientes=100.00/0.00"
 eq "F-view-controle: view restaurada volta ao verde" "$(LINHA op_recebimento_clientes)" "op_recebimento_clientes=100.00/0.00"
+
+
+# ── PARTE 4: conciliação com o título vigente (colacor_sc, 2026-03) ──
+PC() { P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT coalesce(max(fluxo_linha)||'='||sum(entradas)||'/'||sum(saidas)||'#'||sum(lancamentos),'') FROM v_fin_fluxo_caixa_realizado WHERE company='colacor_sc' AND mes IN ('2026-03-01','2026-04-01') AND fluxo_linha = 'pendente_conciliacao';" | tail -1; }
+CONTA() { P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT sum(entradas)||'/'||sum(saidas) FROM v_fin_fluxo_caixa_realizado WHERE company='colacor_sc' AND mes IN ('2026-03-01','2026-04-01') AND fluxo_linha NOT LIKE 'pendente%';" | tail -1; }
+PC_OK="pendente_conciliacao=2585.75/0.00#4"
+eq "K1 C1+C2+C4 em pendente_conciliacao (1195,75 + 2×545 + 300), fora das atividades" "$(PC)" "$PC_OK"
+eq "K2 C3 (juros) + C5 + C6 + C7(=70) + C8 (releitura recente) + C9 (sombra segregada) + C10 (natureza NULL) contam" "$(CONTA)" "1383.00/5317.57"
+eq "K3 atividade do balde é ele mesmo (não operacional)" "$(P -tA -c "SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-00000000000a'; SELECT atividade FROM v_fin_fluxo_caixa_realizado WHERE company='colacor_sc' AND fluxo_linha='pendente_conciliacao';" | tail -1)" "pendente_conciliacao"
+sab_k() { # $1 rótulo · $2 sed · $3 função (PC|CONTA) · $4 valor correto (tem de MUDAR)
+  local f="$TMPD/sab-k.sql" got
+  sed "$2" "$VIEWMIG" > "$f"
+  if cmp -s "$f" "$VIEWMIG"; then bad "F-k-$1: sed não aplicou"; return; fi
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;"
+  if ! P -q -f "$f" >/dev/null 2>&1; then bad "F-k-$1: cópia sabotada NÃO aplicou (teatro)"; P -q -f "$VIEWMIG" >/dev/null; return; fi
+  got="$($3)"
+  if [ "$got" != "$4" ]; then ok "F-k-$1: sabotagem muda $3 ($got)"; else bad "F-k-$1: SEM dente ($got)"; fi
+  P -q -c "DROP VIEW v_fin_fluxo_caixa_realizado;" && P -q -f "$VIEWMIG" >/dev/null
+}
+sab_k "sem-pago-zero" "s/           WHEN tv.pago = 0 THEN 'pendente_conciliacao'/           WHEN false THEN NULL/" PC "$PC_OK"
+sab_k "excesso-sem-n2" "s/           WHEN s.n_baixas_titulo >= 2 AND tv.liquido IS NOT NULL/           WHEN tv.liquido IS NOT NULL/" PC "$PC_OK"
+sab_k "sem-excesso" "s/AND s.soma_titulo > tv.liquido + 0.01/AND false/" PC "$PC_OK"
+sab_k "orfa-nunca-relida-conta" "s/           WHEN tv.liquido IS NULL AND s.resumo_lido_em IS NULL THEN 'pendente_conciliacao'/           WHEN false THEN NULL/" PC "$PC_OK"
+sab_k "vigente-nao-relido" "s/     AND t.resumo_lido_em IS NOT NULL/     AND true/" PC "$PC_OK"
+sab_k "vigente-por-updated" "s/            t.resumo_lido_em DESC, t.updated_at DESC, t.created_at DESC, t.id DESC/            t.updated_at DESC, t.created_at DESC, t.id DESC/" CONTA "1383.00/5317.57"
+sab_k "soma-por-mes" "s/OVER (PARTITION BY k.company, k.omie_codigo_lancamento, k.categoria_descricao) AS soma_titulo/OVER (PARTITION BY k.company, k.omie_codigo_lancamento, k.categoria_descricao, date_trunc('month', k.data_movimento)) AS soma_titulo/" PC "$PC_OK"
+sab_k "soma-inclui-segregadas" "s/         sum(k.valor) FILTER (WHERE k.concilia)/         sum(k.valor)/; s/         count(\*) FILTER (WHERE k.concilia)/         count(*)/" CONTA "1383.00/5317.57"
+sab_k "natureza-null-nao-guardada" "s/           WHEN s.concilia IS NOT TRUE THEN s.linha_forcada/           WHEN NOT s.concilia THEN s.linha_forcada/; s/         coalesce(e.linha_forcada IS NULL AND e.natureza IN ('BAXR', 'BAXP', 'APBR')/         (e.linha_forcada IS NULL AND e.natureza IN ('BAXR', 'BAXP', 'APBR')/; s/                  AND e.omie_codigo_lancamento IS NOT NULL, false) AS concilia/                  AND e.omie_codigo_lancamento IS NOT NULL) AS concilia/" CONTA "1383.00/5317.57"
+sab_k "negativa-nao-prioriza" "s/ORDER BY (m.omie_ncodmov < 0) DESC, m.updated_at DESC/ORDER BY m.updated_at DESC/" CONTA "1383.00/5317.57"
+eq "F-k-controle: view restaurada volta ao verde" "$(PC)" "$PC_OK"
 
 echo "═══ PASS=$PASS FAIL=$FAIL ═══"
 [ "$FAIL" -eq 0 ] && echo "PROVA-VERDE-FIM"
