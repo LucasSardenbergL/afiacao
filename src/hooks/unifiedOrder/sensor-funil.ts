@@ -21,9 +21,9 @@ import type { SubmitErrorEntry } from '@/services/orderSubmission/types';
  * Fail-open: telemetria nunca quebra a tela (registrarNoLedger engole e loga).
  */
 
-export type EventoFunilPedido = Extract<EventoLedger, `novo_pedido.${string}`>;
+type EventoFunilPedido = Extract<EventoLedger, `novo_pedido.${string}`>;
 export type ContaEnvio = 'oben' | 'colacor' | 'afiacao';
-export type ClasseFalhaEnvio =
+type ClasseFalhaEnvio =
   | 'validacao_local'  // guarda da tela antes do envio (vendedor, prazo, dia vencido, cliente carregando)
   | 'conflito_envelope' // envio pendente de outro carrinho
   | 'validacao'        // validate_* do service (preço, identidade, vendabilidade, ATP no modo cliente)
