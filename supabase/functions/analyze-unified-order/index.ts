@@ -20,6 +20,17 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { rotuloEstoqueCurto, rotuloEstoquePrompt } from "../_shared/estoque-desconhecido.ts";
 import { escolherContaPorQuantidade } from "./escolha-conta.ts";
 import {
+  colapsarMesmoCodigo,
+  filtrarParaResgate,
+  normalizarCodigo,
+  type Resolucao,
+  resolverCandidatos,
+  resolverEmbalagens,
+  rotuloItem,
+  type SugestaoProduto,
+  sugestoesDeAmbiguo,
+} from "./variantes.ts";
+import {
   type AcumuladorCache,
   acumularUsoCache,
   criarAcumuladorCache,
@@ -120,6 +131,8 @@ interface AIProduct {
   codigo?: string;
   descricao?: string;
   quantity?: number;
+  /** PR 3.1: a quantidade NÃO foi dita pelo vendedor (marca de `sanitizarItemIA`). */
+  quantidade_inferida?: boolean;
   account?: string;
   notes?: string;
 }
@@ -138,6 +151,7 @@ interface AISuggestion {
   codigo?: string;
   descricao: string;
   quantity?: number;
+  quantidade_inferida?: boolean;
   account?: string;
   reason: string;
   userToolId?: string;
@@ -935,10 +949,11 @@ Deno.serve(async (req) => {
             codigo: { type: "string", description: "Código do produto" },
             descricao: { type: "string", description: "Descrição do produto" },
             quantity: { type: "number", description: "Quantidade (padrão 1)" },
+            quantidade_explicita: { type: "boolean", description: "true SÓ se o vendedor disse ou escreveu a quantidade deste item; false se você assumiu (ex.: não havia número e você usou 1)" },
             account: { type: "string", description: "Conta: oben ou colacor" },
             notes: { type: "string", description: "Observações" },
           },
-          required: ["product_id", "quantity", "account"],
+          required: ["product_id", "quantity", "quantidade_explicita", "account"],
         },
       },
       services: {
@@ -951,9 +966,10 @@ Deno.serve(async (req) => {
             omie_codigo_servico: { type: "number", description: "Código do serviço Omie" },
             servico_descricao: { type: "string", description: "Descrição do serviço" },
             quantity: { type: "number", description: "Quantidade" },
+            quantidade_explicita: { type: "boolean", description: "true SÓ se o vendedor disse ou escreveu a quantidade deste item; false se você assumiu (ex.: não havia número e você usou 1)" },
             notes: { type: "string", description: "Observações (danos, urgência, etc)" },
           },
-          required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity"],
+          required: ["userToolId", "omie_codigo_servico", "servico_descricao", "quantity", "quantidade_explicita"],
         },
       },
       suggestions: {
@@ -967,6 +983,7 @@ Deno.serve(async (req) => {
             codigo: { type: "string", description: "Código do produto sugerido" },
             descricao: { type: "string", description: "Descrição do item sugerido" },
             quantity: { type: "number", description: "Quantidade sugerida" },
+            quantidade_explicita: { type: "boolean", description: "true SÓ se o vendedor disse ou escreveu a quantidade deste item; false se você assumiu (ex.: não havia número e você usou 1)" },
             account: { type: "string", description: "Conta: oben ou colacor" },
             reason: { type: "string", description: "Motivo da sugestão" },
             userToolId: { type: "string", description: "ID da ferramenta (se type=service)" },
@@ -1124,277 +1141,198 @@ Deno.serve(async (req) => {
     result.services = sanitizarListaIA(result.services);
     result.suggestions = sanitizarListaIA(result.suggestions);
 
-    // Validate product IDs - rescue invalid ones by fuzzy matching
+    // ─── Resgate de product_id inválido (PR 3.1: ambíguo fica para o vendedor) ───
+    // Até a v1.15 cada etapa usava `.find`: o PRIMEIRO candidato que casava pelo prefixo virava o
+    // produto, sem conferir a embalagem pedida, e o resgate do banco ficava com `dbRescue[0]` entre
+    // até 5. Agora toda etapa passa por `resolverCandidatos` (variantes.ts): um código distinto
+    // resgata; mais de um vira sugestão, e o vendedor escolhe. A embalagem pedida é filtro DURO.
     const validProductIds = new Set(prodList.map((p) => p.id));
+    // Catálogo que as etapas seguintes consultam: o da consulta + o que o resgate trouxe do banco.
+    const catalogoConhecido = new Map<string, ProdutoCatalogo>(prodList.map((p) => [p.id, p]));
     const aiProducts: AIProduct[] = result.products || [];
     let validProducts: AIProduct[] = [];
-    
+    const sugestoesHonestas: SugestaoProduto[] = [];
+    let itensAmbiguos = 0;
+    result.suggestions = result.suggestions || [];
+
     for (const ap of aiProducts) {
-      if (validProductIds.has(ap.product_id)) {
+      if (validProductIds.has(ap.product_id ?? '')) {
         validProducts.push(ap);
+        continue;
+      }
+      console.log(`[analyze-unified-order] Product ID not valid: ${ap.product_id}, trying rescue by codigo="${ap.codigo}" descricao="${ap.descricao}"`);
+
+      const apCodigo = normalizarCodigo(ap.codigo);
+
+      // Todas as sequências numéricas (3+ dígitos) de codigo e descricao; das longas, também os 4
+      // últimos ("56717" → "6717").
+      const allNumericCodes = new Set<string>();
+      for (const src of [ap.codigo || '', ap.descricao || '']) {
+        const nums = src.match(/\d{3,}/g) ?? [];
+        for (const n of nums) {
+          allNumericCodes.add(n);
+          if (n.length >= 5) allNumericCodes.add(n.slice(-4));
+        }
+      }
+
+      // Prefixo da linha ("FO" de "FO5.6717BH") e sufixo de embalagem (BH, LT, QT, GL, L5, BD).
+      const prefixFromCodigo = (ap.codigo || '').match(/^([A-Za-z]{2,3})/);
+      const alphaPrefix = prefixFromCodigo ? prefixFromCodigo[1].toUpperCase() : null;
+      // Corrige a precedência do `||` da v1.15 (`ap.codigo || '' + ' ' + ap.descricao`), que nunca
+      // lia a descrição quando havia código.
+      const suffixMatch = `${ap.codigo || ''} ${ap.descricao || ''}`.match(/(BH|LT|QT|GL|L5|BD)\b/i);
+      const packSuffix = suffixMatch ? suffixMatch[1].toUpperCase() : null;
+
+      let desfecho: Resolucao<ProdutoCatalogo> = { tipo: "nenhum" };
+
+      // 1. Código exato (sem pontuação), no código ou na descrição do catálogo.
+      if (apCodigo) {
+        desfecho = resolverCandidatos(
+          prodList.filter((p) => normalizarCodigo(p.codigo) === apCodigo || normalizarCodigo(p.descricao).includes(apCodigo)),
+          ap.quantity,
+        );
+      }
+
+      // 2. Número do código + embalagem (dura) + prefixo (brando). Para no 1º número que decide.
+      if (desfecho.tipo === "nenhum") {
+        for (const nc of allNumericCodes) {
+          const candidates = prodList.filter((p) => p.descricao.includes(nc));
+          if (candidates.length === 0) continue;
+          desfecho = resolverCandidatos(filtrarParaResgate(candidates, alphaPrefix, packSuffix), ap.quantity);
+          if (desfecho.tipo !== "nenhum") break;
+        }
+      }
+
+      // 3. Último recurso: o banco, para números fora do catálogo da consulta — sob a MESMA regra.
+      if (desfecho.tipo === "nenhum" && allNumericCodes.size > 0) {
+        for (const nc of allNumericCodes) {
+          try {
+            let query = supabase
+              .from("omie_products")
+              .select("id, codigo, descricao, account, valor_unitario, estoque")
+              .eq("ativo", true)
+              .ilike("descricao", `%${nc}%`);
+            if (packSuffix) query = query.ilike("descricao", `%${packSuffix}%`);
+            if (alphaPrefix) query = query.ilike("descricao", `%${alphaPrefix}%`);
+            const { data: dbRescue } = await query.limit(5);
+            const doBanco = (dbRescue ?? []) as ProdutoCatalogo[];
+            if (doBanco.length === 0) continue;
+            for (const p of doBanco) catalogoConhecido.set(p.id, p);
+            desfecho = resolverCandidatos(doBanco, ap.quantity);
+            if (desfecho.tipo !== "nenhum") break;
+          } catch (e) {
+            console.error(`DB rescue error for ${nc}:`, e);
+          }
+        }
+      }
+
+      if (desfecho.tipo === "unico") {
+        const match = desfecho.produto;
+        console.log(`[analyze-unified-order] Rescued: ${ap.codigo}/${ap.descricao} → ${match.descricao} (${match.id})`);
+        validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account ?? undefined });
+      } else if (desfecho.tipo === "ambiguo") {
+        itensAmbiguos += 1;
+        console.log(`[analyze-unified-order] Ambiguous rescue for ${ap.codigo}/${ap.descricao}: ${desfecho.candidatos.length} códigos — fica para o vendedor`);
+        sugestoesHonestas.push(...sugestoesDeAmbiguo(
+          ap,
+          desfecho.candidatos,
+          `"${rotuloItem(ap)}" casa com ${desfecho.candidatos.length} produtos${packSuffix ? "" : " e o pedido não diz a embalagem"} — escolha o certo`,
+        ));
       } else {
-        // Try to rescue by matching codigo or descricao against prodList
-        console.log(`[analyze-unified-order] Product ID not valid: ${ap.product_id}, trying rescue by codigo="${ap.codigo}" descricao="${ap.descricao}"`);
-        
-        let rescued = false;
-        const apCodigo = (ap.codigo || '').replace(/[.\-\s]/g, '').toLowerCase();
-        const apDesc = (ap.descricao || '').toLowerCase();
-        const apDescStripped = apDesc.replace(/[.\-\s]/g, '');
-        
-        // Extract ALL numeric sequences (4+ digits) from both codigo and descricao
-        const allNumericCodes = new Set<string>();
-        for (const src of [ap.codigo || '', ap.descricao || '']) {
-          const nums = src.match(/\d{3,}/g);
-          if (nums) nums.forEach((n: string) => allNumericCodes.add(n));
-          // Also extract last 4 digits from longer sequences (e.g., "56717" → "6717")
-          if (nums) {
-            for (const n of nums) {
-              if (n.length >= 5) allNumericCodes.add(n.slice(-4));
-            }
-          }
-        }
-
-        // Extract alpha prefix from codigo (e.g., "FO" from "FO5.6717BH")
-        const prefixFromCodigo = (ap.codigo || '').match(/^([A-Za-z]{2,3})/);
-        const alphaPrefix = prefixFromCodigo ? prefixFromCodigo[1].toUpperCase() : null;
-
-        // Extract suffix for packaging (BH, LT, QT, GL, L5, BD)
-        const suffixMatch = (ap.codigo || '' + ' ' + ap.descricao || '').match(/(BH|LT|QT|GL|L5|BD)\b/i);
-        const packSuffix = suffixMatch ? suffixMatch[1].toUpperCase() : null;
-
-        // 1. Exact codigo match (stripped)
-        if (apCodigo) {
-          const match = prodList.find((p) => {
-            const pDesc = p.descricao.replace(/[.\-\s]/g, '').toLowerCase();
-            const pCodigo = p.codigo.replace(/[.\-\s]/g, '').toLowerCase();
-            return pCodigo === apCodigo || pDesc.includes(apCodigo);
-          });
-          if (match) {
-            console.log(`[analyze-unified-order] Rescued by codigo: ${ap.codigo} → ${match.descricao} (${match.id})`);
-            validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account });
-            rescued = true;
-          }
-        }
-        
-        // 2. Search by numeric code + prefix + suffix (most precise)
-        if (!rescued && allNumericCodes.size > 0) {
-          for (const nc of allNumericCodes) {
-            // Find all products containing this numeric code
-            const candidates = prodList.filter((p) => p.descricao.includes(nc));
-            if (candidates.length === 0) continue;
-
-            // If we have prefix and suffix, find best match
-            if (alphaPrefix && packSuffix) {
-              const bestMatch = candidates.find((p) => {
-                const desc = p.descricao.toUpperCase();
-                return desc.includes(alphaPrefix) && desc.includes(packSuffix);
-              });
-              if (bestMatch) {
-                console.log(`[analyze-unified-order] Rescued by prefix+numeric+suffix: ${ap.codigo}/${ap.descricao} → ${bestMatch.descricao}`);
-                validProducts.push({ ...ap, product_id: bestMatch.id, codigo: bestMatch.codigo, descricao: bestMatch.descricao, account: bestMatch.account });
-                rescued = true;
-                break;
-              }
-            }
-            // Try prefix only
-            if (!rescued && alphaPrefix) {
-              const prefixMatch = candidates.find((p) => p.descricao.toUpperCase().includes(alphaPrefix));
-              if (prefixMatch) {
-                console.log(`[analyze-unified-order] Rescued by prefix+numeric: ${ap.codigo}/${ap.descricao} → ${prefixMatch.descricao}`);
-                validProducts.push({ ...ap, product_id: prefixMatch.id, codigo: prefixMatch.codigo, descricao: prefixMatch.descricao, account: prefixMatch.account });
-                rescued = true;
-                break;
-              }
-            }
-            // Try suffix only
-            if (!rescued && packSuffix) {
-              const suffMatch = candidates.find((p) => p.descricao.toUpperCase().includes(packSuffix));
-              if (suffMatch) {
-                console.log(`[analyze-unified-order] Rescued by numeric+suffix: ${ap.codigo}/${ap.descricao} → ${suffMatch.descricao}`);
-                validProducts.push({ ...ap, product_id: suffMatch.id, codigo: suffMatch.codigo, descricao: suffMatch.descricao, account: suffMatch.account });
-                rescued = true;
-                break;
-              }
-            }
-            // Fallback: first candidate with numeric match — but ONLY if there's exactly one candidate
-            // If multiple candidates exist (e.g., 6673LT and 6673L5), do NOT auto-pick; move to suggestions
-            if (!rescued) {
-              if (candidates.length === 1) {
-                const match = candidates[0];
-                console.log(`[analyze-unified-order] Rescued by numeric (single match): ${ap.codigo}/${ap.descricao} → ${match.descricao}`);
-                validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account });
-                rescued = true;
-              } else {
-                console.log(`[analyze-unified-order] Multiple candidates for ${nc}, not auto-picking. Moving to suggestions.`);
-              }
-              break;
-            }
-          }
-        }
-        
-        // 3. Last resort: query DB directly for numeric codes not in prodList
-        if (!rescued && allNumericCodes.size > 0) {
-          for (const nc of allNumericCodes) {
-            try {
-              let query = supabase
-                .from("omie_products")
-                .select("id, codigo, descricao, account, valor_unitario, estoque")
-                .eq("ativo", true)
-                .ilike("descricao", `%${nc}%`);
-              if (packSuffix) query = query.ilike("descricao", `%${packSuffix}%`);
-              if (alphaPrefix) query = query.ilike("descricao", `%${alphaPrefix}%`);
-              const { data: dbRescue } = await query.limit(5);
-              if (dbRescue && dbRescue.length > 0) {
-                const best = dbRescue[0];
-                console.log(`[analyze-unified-order] Rescued from DB: ${ap.codigo}/${ap.descricao} → ${best.descricao}`);
-                validProducts.push({ ...ap, product_id: best.id, codigo: best.codigo, descricao: best.descricao, account: best.account });
-                rescued = true;
-                break;
-              }
-            } catch (e) {
-              console.error(`DB rescue error for ${nc}:`, e);
-            }
-          }
-        }
-
-        // 4. If still not rescued, move to suggestions
-        if (!rescued) {
-          console.log(`[analyze-unified-order] Could not rescue product, moving to suggestions: ${ap.descricao}`);
-          result.suggestions = result.suggestions || [];
-          result.suggestions.push({
-            type: 'product',
-            product_id: '',
-            codigo: ap.codigo || '',
-            descricao: ap.descricao || 'Produto não identificado',
-            quantity: ap.quantity || 1,
-            account: ap.account || 'oben',
-            reason: `Produto "${ap.descricao || ap.codigo}" mencionado mas não encontrado no catálogo`,
-          });
-        }
+        // 4. Sem candidato: vira sugestão sem product_id, com o motivo.
+        console.log(`[analyze-unified-order] Could not rescue product, moving to suggestions: ${ap.descricao}`);
+        result.suggestions.push({
+          type: 'product',
+          product_id: '',
+          codigo: ap.codigo || '',
+          descricao: ap.descricao || 'Produto não identificado',
+          quantity: ap.quantity || 1,
+          quantidade_inferida: ap.quantidade_inferida !== false,
+          account: ap.account || 'oben',
+          reason: `Produto "${ap.descricao || ap.codigo}" mencionado mas não encontrado no catálogo`,
+        });
       }
     }
 
-    // ─── Variant dedup: if AI returned multiple packaging variants of same base product, keep only best match ───
-    // e.g. if both 6673LT (18L) and 6673L5 (5L) are returned, keep only the one matching context
-    const packingSuffixes = ['LT', 'L5', 'QT', 'GL', 'BH', 'BD'];
-    const inputContext = (text || '').toUpperCase() + ' ' + (result.message || '').toUpperCase();
-    
-    // Group validProducts by their base numeric code (e.g., "6673")
-    const variantGroups = new Map<string, Array<{ vp: AIProduct; prod: ProdutoCatalogo }>>();
-    for (const vp of validProducts) {
-      const prod = prodList.find((p) => p.id === vp.product_id);
-      if (!prod) { continue; }
-      // Extract numeric code from descricao (e.g., "6673" from "FL.6673.00LT")
-      const numMatch = prod.descricao.match(/(\d{4,})/);
-      if (!numMatch) { continue; }
-      const baseNum = numMatch[1];
-      // Check if descricao ends with a packing suffix
-      const hasSuffix = packingSuffixes.some(s => prod.descricao.toUpperCase().includes(s));
-      if (!hasSuffix) { continue; }
-      
-      if (!variantGroups.has(baseNum)) variantGroups.set(baseNum, []);
-      variantGroups.get(baseNum)!.push({ vp, prod });
-    }
-    
-    // For groups with >1 variant, pick the best match
-    const removedProductIds = new Set<string>();
-    for (const [baseNum, group] of variantGroups) {
-      if (group.length <= 1) continue;
-      
-      console.log(`[analyze-unified-order] Variant dedup: ${baseNum} has ${group.length} variants: ${group.map((g) => g.prod.descricao).join(', ')}`);
-      
-      // Score each variant by context clues
-      let bestIdx = 0;
-      let bestScore = -1;
-      for (let i = 0; i < group.length; i++) {
-        const desc = group[i].prod.descricao.toUpperCase();
-        let score = 0;
-        // Exact suffix in input context
-        if (desc.includes('LT') && (inputContext.includes('18L') || inputContext.includes('LATA') || inputContext.includes('18 L'))) score += 10;
-        if (desc.includes('L5') && (inputContext.includes('5L') || inputContext.includes('5 L') || inputContext.includes('CINCO'))) score += 10;
-        if (desc.includes('QT') && (inputContext.includes('900') || inputContext.includes('QUARTINHO') || inputContext.includes('810'))) score += 10;
-        if (desc.includes('GL') && (inputContext.includes('GALÃO') || inputContext.includes('GALAO') || inputContext.includes('3,6') || inputContext.includes('3.6'))) score += 10;
-        if (desc.includes('BH') && (inputContext.includes('BALDE') || inputContext.includes('20L') || inputContext.includes('20 L'))) score += 10;
-        if (desc.includes('BD') && (inputContext.includes('BALDE') || inputContext.includes('18L') || inputContext.includes('18 L'))) score += 10;
-        // If LT suffix and no specific size mentioned, prefer LT (most common)
-        if (desc.includes('LT') && !inputContext.match(/\b(5L|5 L|900|QUARTINHO|810|GALÃO|GALAO|3[,.]6|BALDE|20L|20 L)\b/i)) score += 2;
-        // Higher price = larger packaging = more likely if context says "18L"
-        if (score > bestScore) { bestScore = score; bestIdx = i; }
-      }
-      
-      // Remove all except best
-      for (let i = 0; i < group.length; i++) {
-        if (i !== bestIdx) {
-          removedProductIds.add(group[i].vp.product_id);
-          console.log(`[analyze-unified-order] Variant dedup: removing ${group[i].prod.descricao} in favor of ${group[bestIdx].prod.descricao}`);
-        }
-      }
-    }
-    
-    if (removedProductIds.size > 0) {
-      validProducts = validProducts.filter((vp) => !removedProductIds.has(vp.product_id ?? ''));
-    }
+    // ─── Uma variante por item (PR 3.1) ───
+    // O mesmo código nas duas empresas vira UM item, na conta de `escolherContaPorQuantidade`;
+    // repetido com quantidades diferentes vira sugestão. Até a v1.15 o prompt pedia as duas
+    // variantes e a deduplicação era por `codigo + quantidade`: quantidade diferente duplicava.
+    const colapso = colapsarMesmoCodigo(validProducts, catalogoConhecido);
+    validProducts = colapso.unicos;
+    sugestoesHonestas.push(...colapso.sugestoes);
+    itensAmbiguos += new Set(colapso.sugestoes.map((s) => normalizarCodigo(s.codigo))).size;
 
-    // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
-    // Pick the account by stock AND the ordered quantity (see escolha-conta.ts — unknown stock is not zero)
-    const prodMap = new Map<string, ProdutoCatalogo>(prodList.map((p) => [p.id, p]));
+    // ─── Embalagens do mesmo produto base (PR 3.1: nada some em silêncio) ───
+    // Fica com UMA só quando o texto do VENDEDOR pede exatamente a embalagem dela; senão todas viram
+    // sugestão. Até a v1.15 as outras eram removidas sem aviso, a 1ª do grupo vencia o empate, e a
+    // `message` da própria IA contava como pista.
+    const embalagens = resolverEmbalagens(validProducts, catalogoConhecido, text || '');
+    itensAmbiguos += embalagens.ambiguos;
+    validProducts = embalagens.mantidos;
+    sugestoesHonestas.push(...embalagens.sugestoes);
+
+    // ─── Conta (oben × colacor) por estoque E quantidade pedida ───
+    // Regra em `escolherContaPorQuantidade` (escolha-conta.ts): cobre o pedido (menor saldo) > cobre
+    // em parte (maior saldo) > desconhecido > zero real. Estoque desconhecido não é zero.
     const optimizedProducts: AIProduct[] = [];
-    const processedCodes = new Set<string>();
-
     for (const vp of validProducts) {
-      const prod = prodMap.get(vp.product_id);
+      const prod = catalogoConhecido.get(vp.product_id ?? '');
       if (!prod) { optimizedProducts.push(vp); continue; }
 
-      // Extract base code (remove account-specific parts)
       const baseCode = prod.codigo;
-      const codeKey = `${baseCode}_${vp.quantity}`;
-      if (processedCodes.has(codeKey)) continue; // skip duplicate from AI
-      processedCodes.add(codeKey);
-
-      // Find equivalent product in the other account by matching codigo
       const otherAccount = prod.account === 'oben' ? 'colacor' : 'oben';
       const equivalent = prodList.find((p) =>
         p.codigo === baseCode && p.account === otherAccount
       );
 
-      if (equivalent) {
-        // Regra em `escolherContaPorQuantidade`: cobre o pedido (menor saldo) > cobre em parte
-        // (maior saldo) > desconhecido > zero real. Quantidade inválida cai na regra só por saldo.
+      if (equivalent && escolherContaPorQuantidade(prod.estoque, equivalent.estoque, vp.quantity) === "outra") {
         const currentStock = rotuloEstoqueCurto(prod.estoque);
         const otherStock = rotuloEstoqueCurto(equivalent.estoque);
-        if (escolherContaPorQuantidade(prod.estoque, equivalent.estoque, vp.quantity) === "outra") {
-          console.log(`[analyze-unified-order] Switching ${baseCode} from ${prod.account}(est:${currentStock}) to ${otherAccount}(est:${otherStock})`);
-          optimizedProducts.push({
-            ...vp,
-            product_id: equivalent.id,
-            account: otherAccount,
-            notes: (vp.notes || '') + ` (Origem otimizada: ${otherAccount}, est: ${otherStock})`,
-          });
-        } else {
-          optimizedProducts.push(vp);
-        }
+        console.log(`[analyze-unified-order] Switching ${baseCode} from ${prod.account}(est:${currentStock}) to ${otherAccount}(est:${otherStock})`);
+        optimizedProducts.push({
+          ...vp,
+          product_id: equivalent.id,
+          account: otherAccount,
+          notes: (vp.notes || '') + ` (Origem otimizada: ${otherAccount}, est: ${otherStock})`,
+        });
       } else {
-        optimizedProducts.push(vp);
+        optimizedProducts.push({ ...vp, account: prod.account ?? vp.account });
       }
     }
     validProducts = optimizedProducts;
+    result.suggestions.push(...sugestoesHonestas);
 
     // Validate tool IDs
     const validToolIds = new Set(tools.map((t) => t.id));
-    const validServices = ((result.services || []) as AIService[]).filter((s) => validToolIds.has(s.userToolId));
+    // PR 3.1: o que sai das listas sai com o MOTIVO (`descartados`), não some em silêncio.
+    const descartados: Array<{ descricao: string; motivo: string }> = [];
+    const validServices = ((result.services || []) as AIService[]).filter((s) => {
+      if (validToolIds.has(s.userToolId)) return true;
+      descartados.push({
+        descricao: s.servico_descricao || 'Serviço de afiação',
+        motivo: 'a ferramenta não está no cadastro deste cliente',
+      });
+      return false;
+    });
 
     // Validate suggestions — also DEDUP: remove suggestions that are already in validProducts
     const validProductIdSet = new Set(validProducts.map((vp) => vp.product_id));
     const validSuggestions = ((result.suggestions || []) as AISuggestion[]).filter((s) => {
       if (s.type === 'product') {
-        // Remove if this product is already in the confirmed products list
+        // Já está nos produtos confirmados: é repetição, não descarte.
         if (s.product_id && s.product_id !== '' && validProductIdSet.has(s.product_id)) return false;
-        if (s.product_id && s.product_id !== '') return validProductIds.has(s.product_id);
+        if (s.product_id && s.product_id !== '') {
+          if (catalogoConhecido.has(s.product_id)) return true;
+          descartados.push({ descricao: s.descricao || s.codigo || 'Sugestão', motivo: 'a IA citou um produto que não existe no catálogo' });
+          return false;
+        }
         return true;
       }
       if (s.type === 'service') {
-        if (s.userToolId) return validToolIds.has(s.userToolId);
-        return true;
+        if (!s.userToolId || validToolIds.has(s.userToolId)) return true;
+        descartados.push({ descricao: s.servico_descricao || s.descricao || 'Serviço', motivo: 'a ferramenta não está no cadastro deste cliente' });
+        return false;
       }
       return true;
     });
@@ -1523,8 +1461,17 @@ Deno.serve(async (req) => {
     // Foto que ficou de fora entra na MENSAGEM, não só num campo: análise de 3
     // de 5 fotos não pode chegar com cara de análise completa.
     const avisoFotos = avisoImagensRejeitadas(imagensRejeitadas);
-    const mensagemBase = result.message ||
+    // A `message` é da IA e foi escrita ANTES das travas acima: se alguma coisa foi para as
+    // sugestões ou saiu, a mensagem diz (PR 3.1 — o "identifiquei 3" não pode esconder a 4ª).
+    const avisosHonestos = [
+      itensAmbiguos > 0
+        ? `${itensAmbiguos} item(ns) ambíguo(s) ficaram nas sugestões para você escolher.`
+        : null,
+      descartados.length > 0 ? `${descartados.length} item(ns) não puderam ser usados.` : null,
+    ].filter(Boolean).join(' ');
+    const mensagemIA = result.message ||
       `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`;
+    const mensagemBase = avisosHonestos ? `${mensagemIA} ${avisosHonestos}` : mensagemIA;
 
     // FRONTEIRA DE SAÍDA (money-path): todo item sai pela lista fechada de `montarRespostaAnalise`
     // — nenhum `unit_price`/preço atravessa, venha do LLM ou de quem for. O vitest
@@ -1535,6 +1482,7 @@ Deno.serve(async (req) => {
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
+      descartados,
       customer: safeCustomer,
       imagens_rejeitadas: imagensRejeitadas,
       message: avisoFotos ? `${mensagemBase} ⚠️ ${avisoFotos}` : mensagemBase,

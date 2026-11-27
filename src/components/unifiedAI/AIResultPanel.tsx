@@ -7,12 +7,15 @@ import {
   type AIService,
   type AISuggestion,
   type AICustomerMatch,
+  type AIDescartado,
   type Product,
+  type RelatorioAdicaoIA,
   type UserTool,
 } from './types';
 import { IdentifiedCustomerCard } from './IdentifiedCustomerCard';
 import { IdentifiedProductsList, IdentifiedServicesList } from './IdentifiedItemsLists';
 import { SuggestionsList } from './SuggestionsList';
+import { DescartadosIALista, RelatorioAdicaoLista } from './RelatorioIA';
 
 interface AIResultPanelProps {
   aiMessage: string;
@@ -36,6 +39,10 @@ interface AIResultPanelProps {
   precoNascimentoPorId: (productId: string) => number | null;
   /** Preço de partida não firme: sem número e ADD de PRODUTO bloqueado (mesmo gate da lista). */
   precoLoading?: boolean;
+  /** PR 3.1: o que a edge descartou da análise, com o motivo. */
+  descartadosIA?: AIDescartado[];
+  /** PR 3.1: o desfecho, por item, da última adição ao carrinho. */
+  relatorio?: RelatorioAdicaoIA | null;
 }
 
 export function AIResultPanel({
@@ -58,6 +65,8 @@ export function AIResultPanel({
   onAcceptSuggestion,
   precoNascimentoPorId,
   precoLoading = false,
+  descartadosIA = [],
+  relatorio = null,
 }: AIResultPanelProps) {
   return (
     <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 space-y-3">
@@ -72,6 +81,8 @@ export function AIResultPanel({
       </div>
 
       <p className="text-sm text-foreground">{aiMessage}</p>
+
+      {relatorio && <RelatorioAdicaoLista relatorio={relatorio} />}
 
       {/* Retry button when AI fallback is active */}
       {aiFallbackActive && (
@@ -127,6 +138,8 @@ export function AIResultPanel({
           ⚠️ Clique em "Selecionar" no cliente acima para depois adicionar os itens.
         </p>
       )}
+
+      <DescartadosIALista itens={descartadosIA} />
 
       {/* Suggestions */}
       {suggestions.length > 0 && (

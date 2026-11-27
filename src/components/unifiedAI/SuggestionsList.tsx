@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { type AISuggestion, type Product, type UserTool } from './types';
 import { getToolName } from './helpers';
 import { PrecoNascimentoIA } from './PrecoNascimentoIA';
+import { SeloQuantidadeInferida } from './RelatorioIA';
 
 interface SuggestionsListProps {
   suggestions: AISuggestion[];
@@ -64,6 +65,10 @@ export function SuggestionsList({
                       precoNascimentoPorId={precoNascimentoPorId}
                       precoLoading={precoLoading}
                     />
+                    {sug.quantity != null && (
+                      <span className="text-xs text-muted-foreground">Qtd {sug.quantity}</span>
+                    )}
+                    {sug.quantity != null && <SeloQuantidadeInferida inferida={sug.quantidade_inferida} />}
                   </div>
                 )}
                 {sug.type === 'service' && sug.servico_descricao && (

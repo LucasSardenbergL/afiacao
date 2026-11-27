@@ -102,3 +102,39 @@ describe('AIResultPanel', () => {
     expect(screen.getByText(/Clique em "Selecionar" no cliente acima/)).toBeTruthy();
   });
 });
+
+describe('AIResultPanel — IA honesta (PR 3.1)', () => {
+  it('mostra o desfecho por item com o motivo, inclusive o que NÃO entrou', () => {
+    base({
+      aiMessage: 'Resultado: 1 adicionado(s) · 1 não entrou(aram).',
+      relatorio: {
+        itens: [
+          { tipo: 'produto', descricao: 'Disco', desfecho: 'adicionado', quantidade: 2, quantidadeInferida: false },
+          { tipo: 'produto', descricao: 'Lixa 80', desfecho: 'descartado', quantidade: 1, quantidadeInferida: true, motivo: 'não está no catálogo carregado nesta tela — busque pelo código' },
+        ],
+        tintas: [],
+      },
+    });
+    expect(screen.getByText('Não entrou')).toBeTruthy();
+    expect(screen.getByText(/não está no catálogo carregado/)).toBeTruthy();
+    // Descartado não leva selo de inferida (não há quantidade a conferir no carrinho).
+    expect(screen.queryAllByTestId('selo-quantidade-inferida')).toHaveLength(0);
+  });
+
+  it('marca a quantidade inferida no produto identificado (ausente = inferida)', () => {
+    base({
+      hasCustomerSelected: true,
+      identifiedProducts: [
+        { ...oneProduct[0], quantidade_inferida: false },
+        { product_id: 'p2', codigo: 'C2', descricao: 'Lixa', quantity: 1, account: 'oben' },
+      ],
+    });
+    expect(screen.getAllByTestId('selo-quantidade-inferida')).toHaveLength(1);
+  });
+
+  it('lista o que a edge descartou, com o motivo', () => {
+    base({ descartadosIA: [{ descricao: 'Afiar serra 300', motivo: 'a ferramenta não está no cadastro deste cliente' }] });
+    expect(screen.getByText('Afiar serra 300')).toBeTruthy();
+    expect(screen.getByText(/não está no cadastro/)).toBeTruthy();
+  });
+});

@@ -43,12 +43,31 @@ export function quantidadeValida(valor: unknown): number {
 }
 
 /**
+ * A quantidade foi INFERIDA (não dita pelo vendedor)? PR 3.1, "IA honesta": até a v1.15 o `1` do
+ * default entrava no carrinho sem marca, indistinguível de um "1" pedido.
+ *
+ * Fail-closed: só NÃO é inferida quando há prova — número válido E a IA declarou
+ * `quantidade_explicita: true` (o schema da tool pede o campo). Sem o campo, com o campo falso, ou
+ * com quantidade inválida/ausente, a marca fica: melhor um selo a mais que um "1" com cara de pedido.
+ */
+export function quantidadeFoiInferida(item: Record<string, unknown>): boolean {
+  const n = numeroFinito(item.quantity);
+  if (n === null || n <= 0) return true;
+  return item.quantidade_explicita !== true;
+}
+
+/**
  * Normaliza UM item vindo da IA. Devolve `null` para o que não é objeto —
  * string solta ou number no array não vira item de pedido.
  */
 export function sanitizarItemIA(cru: unknown): Record<string, unknown> | null {
   if (!cru || typeof cru !== "object" || Array.isArray(cru)) return null;
   const item = { ...(cru as Record<string, unknown>) };
+
+  // A marca nasce ANTES de a quantidade ser saneada (depois o `1` do default já não se distingue).
+  // `quantidade_explicita` é o insumo da IA e não sai; o que sai é a marca.
+  item.quantidade_inferida = quantidadeFoiInferida(item);
+  delete item.quantidade_explicita;
 
   // Sempre presente e numérico: `undefined` viraria NaN ao somar no carrinho.
   item.quantity = quantidadeValida(item.quantity);
@@ -92,15 +111,17 @@ export function sanitizarListaIA(bruto: unknown): Record<string, unknown>[] {
 // novo de amanhã, vazaria). Campo fora daqui não sai — inclusive os que o LLM inventar.
 // Os campos são exatamente os que o front lê (`src/components/unifiedAI/types.ts`).
 export const CAMPOS_SAIDA_PRODUTO = [
-  "product_id", "codigo", "descricao", "quantity", "account", "notes",
+  "product_id", "codigo", "descricao", "quantity", "quantidade_inferida", "account", "notes",
 ] as const;
 export const CAMPOS_SAIDA_SERVICO = [
-  "userToolId", "omie_codigo_servico", "servico_descricao", "quantity", "notes",
+  "userToolId", "omie_codigo_servico", "servico_descricao", "quantity", "quantidade_inferida", "notes",
 ] as const;
 export const CAMPOS_SAIDA_SUGESTAO = [
-  "type", "product_id", "codigo", "descricao", "quantity", "account", "reason",
+  "type", "product_id", "codigo", "descricao", "quantity", "quantidade_inferida", "account", "reason",
   "userToolId", "omie_codigo_servico", "servico_descricao",
 ] as const;
+/** O que a edge recebeu da IA e NÃO devolve como item (PR 3.1): sai com o motivo, nunca some. */
+export const CAMPOS_SAIDA_DESCARTADO = ["descricao", "motivo"] as const;
 
 /** Copia só as chaves permitidas que vieram preenchidas — o resto (preço incluso) fica. */
 export function apenasCampos(
@@ -121,6 +142,7 @@ export interface RespostaAnalise {
   products: Record<string, unknown>[];
   services: Record<string, unknown>[];
   suggestions: Record<string, unknown>[];
+  descartados: Record<string, unknown>[];
   customer: unknown;
   imagens_rejeitadas: unknown;
   message: string;
@@ -135,6 +157,8 @@ export function montarRespostaAnalise(entrada: {
   products: ReadonlyArray<object>;
   services: ReadonlyArray<object>;
   suggestions: ReadonlyArray<object>;
+  /** Opcional: a canária e os caminhos de erro não descartam nada. */
+  descartados?: ReadonlyArray<object>;
   customer: unknown;
   imagens_rejeitadas: unknown;
   message: string;
@@ -143,6 +167,7 @@ export function montarRespostaAnalise(entrada: {
     products: entrada.products.map((p) => apenasCampos(p, CAMPOS_SAIDA_PRODUTO)),
     services: entrada.services.map((s) => apenasCampos(s, CAMPOS_SAIDA_SERVICO)),
     suggestions: entrada.suggestions.map((s) => apenasCampos(s, CAMPOS_SAIDA_SUGESTAO)),
+    descartados: (entrada.descartados ?? []).map((d) => apenasCampos(d, CAMPOS_SAIDA_DESCARTADO)),
     customer: entrada.customer,
     imagens_rejeitadas: entrada.imagens_rejeitadas,
     message: entrada.message,

@@ -6,13 +6,17 @@ import { decodeHtmlEntities } from '@/lib/utils';
 import { invokeFunction } from '@/lib/invoke-function';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
+  type AIDescartado,
   type AIProduct,
   type AIService,
   type AISuggestion,
   type AICustomerMatch,
   type ImageAttachment,
+  type RelatorioAdicaoIA,
   type UnifiedAIAssistantProps,
 } from './types';
+import { resumoRelatorio } from './helpers';
+import { contarRelatorio } from '@/hooks/unifiedOrder/adicao-ia';
 
 export function useUnifiedAIAssistant({
   products,
@@ -33,6 +37,9 @@ export function useUnifiedAIAssistant({
   const [identifiedServices, setIdentifiedServices] = useState<AIService[]>([]);
   const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
   const [identifiedCustomer, setIdentifiedCustomer] = useState<AICustomerMatch | null>(null);
+  // PR 3.1: o que a edge descartou (com motivo) e o desfecho da última adição, por item.
+  const [descartadosIA, setDescartadosIA] = useState<AIDescartado[]>([]);
+  const [relatorio, setRelatorio] = useState<RelatorioAdicaoIA | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
 
@@ -200,6 +207,8 @@ export function useUnifiedAIAssistant({
     setIdentifiedServices([]);
     setSuggestions([]);
     setIdentifiedCustomer(null);
+    setDescartadosIA([]);
+    setRelatorio(null);
     setAiFallbackActive(false);
 
     try {
@@ -208,6 +217,7 @@ export function useUnifiedAIAssistant({
         services?: AIService[];
         suggestions?: AISuggestion[];
         customer?: AICustomerMatch | null;
+        descartados?: AIDescartado[];
         message?: string;
       }>('analyze-unified-order', {
         text: text.trim() || undefined,
@@ -237,6 +247,7 @@ export function useUnifiedAIAssistant({
       const svcs = Array.isArray(result.services) ? result.services : [];
       const sugs = Array.isArray(result.suggestions) ? result.suggestions : [];
       const cust = result.customer || null;
+      setDescartadosIA(Array.isArray(result.descartados) ? result.descartados : []);
 
       if (prods.length > 0 || svcs.length > 0 || sugs.length > 0 || cust) {
         setIdentifiedProducts(prods);
@@ -272,18 +283,37 @@ export function useUnifiedAIAssistant({
     }
   };
 
+  // PR 3.1: o anúncio e o sensor contam o que ENTROU (o relatório por item que o carrinho devolve),
+  // não o que foi pedido. Antes, "N item(ns) adicionado(s)" incluía o produto fora do catálogo e a
+  // ferramenta já no pedido, que o carrinho pulava em silêncio.
+  const anunciar = (rel: RelatorioAdicaoIA, via: 'confirmar' | 'sugestao') => {
+    const c = contarRelatorio(rel);
+    aoSensor?.('novo_pedido.ia_itens_adicionados', {
+      n: c.entrou, via, aguardando_cor: c.cor, nao_entraram: c.descartado, qtd_inferida: c.inferidas,
+    });
+    const resumo = resumoRelatorio(c);
+    if (c.entrou === 0 && c.cor === 0) toast.error('Nenhum item entrou no pedido', { description: resumo });
+    else if (c.descartado > 0 || c.inferidas > 0) toast.warning('Itens adicionados com ressalvas', { description: resumo });
+    else toast.success('Itens adicionados!', { description: resumo });
+    return c;
+  };
+
   const confirmItems = () => {
-    onItemsIdentified({ products: identifiedProducts, services: identifiedServices });
+    const rel = onItemsIdentified({ products: identifiedProducts, services: identifiedServices });
+    const c = anunciar(rel, 'confirmar');
+    setRelatorio(rel);
+    // Nada entrou (ex.: carrinho travado no envio): os itens FICAM no painel para tentar de novo.
+    if (c.entrou === 0 && c.cor === 0) return;
+    // Saída que RECOMEÇA (lição dos PRs 8.1/8.2): o painel troca a análise pelo resultado da adição,
+    // sem guardar a lista velha que já virou carrinho.
     setText('');
-    setAiMessage(null);
+    setAiMessage(`Resultado: ${resumoRelatorio(c)}.`);
     setIdentifiedProducts([]);
     setIdentifiedServices([]);
     setSuggestions([]);
+    setDescartadosIA([]);
     setIdentifiedCustomer(null);
     clearImages();
-    const total = identifiedProducts.length + identifiedServices.length;
-    aoSensor?.('novo_pedido.ia_itens_adicionados', { n: total, via: 'confirmar' });
-    toast.success('Itens adicionados!', { description: `${total} item(ns) adicionado(s) ao pedido.` });
   };
 
   const confirmCustomer = () => {
@@ -297,49 +327,59 @@ export function useUnifiedAIAssistant({
   };
 
   const acceptSuggestion = (suggestion: AISuggestion) => {
+    let rel: RelatorioAdicaoIA | null = null;
     if (suggestion.type === 'product' && suggestion.product_id && suggestion.product_id !== '') {
       const prod: AIProduct = {
         product_id: suggestion.product_id,
         codigo: suggestion.codigo || '',
         descricao: suggestion.descricao,
         quantity: suggestion.quantity || 1,
+        quantidade_inferida: suggestion.quantity ? suggestion.quantidade_inferida : true,
         account: (suggestion.account || 'oben') as 'oben' | 'colacor',
       };
-      onItemsIdentified({ products: [prod], services: [] });
-      aoSensor?.('novo_pedido.ia_itens_adicionados', { n: 1, via: 'sugestao' });
-      toast.success('Produto adicionado!', { description: suggestion.descricao });
+      rel = onItemsIdentified({ products: [prod], services: [] });
     } else if (suggestion.type === 'product' && (!suggestion.product_id || suggestion.product_id === '')) {
-      // Suggestion without exact product_id - try to find it in products list
-      const matchProd = products.find(p =>
+      // Sugestão sem product_id: procura no catálogo da tela. Só adiciona com UM candidato — o
+      // primeiro que casava pelo texto entrava mesmo havendo outras embalagens (PR 3.1).
+      const candidatos = products.filter(p =>
         (suggestion.codigo && p.codigo.toLowerCase().includes(suggestion.codigo.toLowerCase())) ||
         p.descricao.toLowerCase().includes(suggestion.descricao.toLowerCase())
       );
-      if (matchProd) {
-        const prod: AIProduct = {
-          product_id: matchProd.id,
-          codigo: matchProd.codigo,
-          descricao: matchProd.descricao,
-          quantity: suggestion.quantity || 1,
-          account: (matchProd.account || suggestion.account || 'oben') as 'oben' | 'colacor',
-        };
-        onItemsIdentified({ products: [prod], services: [] });
-        aoSensor?.('novo_pedido.ia_itens_adicionados', { n: 1, via: 'sugestao' });
-        toast.success('Produto adicionado!', { description: matchProd.descricao });
-      } else {
-        toast.error('Produto não encontrado', { description: 'Busque manualmente no catálogo.' });
+      if (candidatos.length > 1) {
+        toast.error('Mais de um produto casa com a sugestão', {
+          description: `${candidatos.length} produtos parecidos — busque pelo código para escolher o certo.`,
+        });
+        return;
       }
+      const matchProd = candidatos[0];
+      if (!matchProd) {
+        toast.error('Produto não encontrado', { description: 'Busque manualmente no catálogo.' });
+        return;
+      }
+      const prod: AIProduct = {
+        product_id: matchProd.id,
+        codigo: matchProd.codigo,
+        descricao: matchProd.descricao,
+        quantity: suggestion.quantity || 1,
+        quantidade_inferida: suggestion.quantity ? suggestion.quantidade_inferida : true,
+        account: (matchProd.account || suggestion.account || 'oben') as 'oben' | 'colacor',
+      };
+      rel = onItemsIdentified({ products: [prod], services: [] });
     } else if (suggestion.type === 'service' && suggestion.userToolId && suggestion.omie_codigo_servico) {
       const svc: AIService = {
         userToolId: suggestion.userToolId,
         omie_codigo_servico: suggestion.omie_codigo_servico,
         servico_descricao: suggestion.servico_descricao || suggestion.descricao,
         quantity: suggestion.quantity || 1,
+        quantidade_inferida: suggestion.quantity ? suggestion.quantidade_inferida : true,
       };
-      onItemsIdentified({ products: [], services: [svc] });
-      aoSensor?.('novo_pedido.ia_itens_adicionados', { n: 1, via: 'sugestao' });
-      toast.success('Serviço adicionado!', { description: suggestion.descricao });
+      rel = onItemsIdentified({ products: [], services: [svc] });
     }
-    setSuggestions(prev => prev.filter(s => s !== suggestion));
+    if (!rel) return;
+    const c = anunciar(rel, 'sugestao');
+    setRelatorio(rel);
+    // A sugestão só sai da lista quando entrou (ou foi para a cor) — a que não entrou continua lá.
+    if (c.entrou > 0 || c.cor > 0) setSuggestions(prev => prev.filter(s => s !== suggestion));
   };
 
   const clearSuggestions = () => {
@@ -350,6 +390,8 @@ export function useUnifiedAIAssistant({
     setIdentifiedServices([]);
     setSuggestions([]);
     setIdentifiedCustomer(null);
+    setDescartadosIA([]);
+    setRelatorio(null);
   };
 
   const removeIdentifiedProduct = (idx: number) => {
@@ -387,6 +429,8 @@ export function useUnifiedAIAssistant({
     identifiedServices,
     suggestions,
     identifiedCustomer,
+    descartadosIA,
+    relatorio,
     // result handlers
     confirmItems,
     confirmCustomer,

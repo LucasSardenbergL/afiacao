@@ -14,6 +14,7 @@ import {
   extrairToolUseUnico,
   montarRespostaAnalise,
   numeroFinito,
+  quantidadeFoiInferida,
   quantidadeValida,
   type RespostaAnalise,
   sanitizarItemIA,
@@ -163,6 +164,7 @@ function montarFormaVelha(entrada: Parameters<typeof montarRespostaAnalise>[0]):
     products: entrada.products.map((p) => ({ ...p }) as Record<string, unknown>),
     services: entrada.services.map((p) => ({ ...p }) as Record<string, unknown>),
     suggestions: entrada.suggestions.map((p) => ({ ...p }) as Record<string, unknown>),
+    descartados: [],
     customer: entrada.customer,
     imagens_rejeitadas: entrada.imagens_rejeitadas,
     message: entrada.message,
@@ -242,4 +244,53 @@ Deno.test("canariaSemPreco: CONTROLE — fronteira que devolve listas VAZIAS tam
   assertEquals(r.precos_na_saida, 0);
   assertEquals(r.itens_na_saida, 0);
   assertEquals(r.ok, false);
+});
+
+// ─────────────────────── quantidade inferida (PR 3.1) ───────────────────────
+
+Deno.test("quantidadeFoiInferida: só a quantidade válida E declarada explícita NÃO é inferida", () => {
+  assertEquals(quantidadeFoiInferida({ quantity: 3, quantidade_explicita: true }), false);
+});
+
+Deno.test("quantidadeFoiInferida: fail-closed — sem o campo, campo falso ou quantidade inválida = inferida", () => {
+  const casos: Record<string, unknown>[] = [
+    { quantity: 3 },
+    { quantity: 3, quantidade_explicita: false },
+    { quantity: 3, quantidade_explicita: "true" },
+    { quantidade_explicita: true },
+    { quantity: 0, quantidade_explicita: true },
+    { quantity: "doze", quantidade_explicita: true },
+  ];
+  for (const c of casos) {
+    assertEquals(quantidadeFoiInferida(c), true, `entrada ${JSON.stringify(c)}`);
+  }
+});
+
+Deno.test("sanitizarItemIA: quantidade ausente vira 1 COM a marca, e o insumo da IA não sai", () => {
+  const item = sanitizarItemIA({ product_id: "p1", quantidade_explicita: true });
+  assertEquals(item!.quantity, 1);
+  assertEquals(item!.quantidade_inferida, true);
+  assert(!("quantidade_explicita" in item!), "quantidade_explicita vazou para a saída");
+});
+
+Deno.test("sanitizarItemIA: quantidade dita pelo vendedor sai sem a marca", () => {
+  const item = sanitizarItemIA({ product_id: "p1", quantity: "4", quantidade_explicita: true });
+  assertEquals(item!.quantity, 4);
+  assertEquals(item!.quantidade_inferida, false);
+});
+
+Deno.test("montarRespostaAnalise: a marca e os descartados ATRAVESSAM a lista fechada", () => {
+  const out = montarRespostaAnalise({
+    products: [{ product_id: "p1", quantity: 1, quantidade_inferida: true, account: "oben" }],
+    services: [{ userToolId: "t1", omie_codigo_servico: 9, servico_descricao: "A", quantity: 1, quantidade_inferida: false }],
+    suggestions: [{ type: "product", product_id: "p2", descricao: "X", reason: "r", quantity: 1, quantidade_inferida: true }],
+    descartados: [{ descricao: "Serra 300", motivo: "ferramenta fora do cadastro", unit_price: 9 }],
+    customer: null,
+    imagens_rejeitadas: [],
+    message: "ok",
+  });
+  assertEquals(out.products[0].quantidade_inferida, true);
+  assertEquals(out.services[0].quantidade_inferida, false);
+  assertEquals(out.suggestions[0].quantidade_inferida, true);
+  assertEquals(out.descartados, [{ descricao: "Serra 300", motivo: "ferramenta fora do cadastro" }]);
 });

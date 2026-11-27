@@ -1,3 +1,8 @@
+// PR 3.1 ("IA honesta", v1.16): a tarefa 1 deixou de pedir "TODAS as variantes (oben E colacor)" —
+// era a origem do item duplicado no "adicionar tudo"; a empresa sai da edge (`escolha-conta.ts`).
+// A regra 1 pede `quantidade_explicita` (a marca de quantidade inferida, `saida-ia.ts`), e a regra 27
+// deixou de mandar assumir a lata (LT) quando o pedido não diz a embalagem: ambíguo é do vendedor.
+//
 // Montagem do prompt — puro, sem import remoto (roda sob `deno test --no-remote`, o
 // `test:edges` do CI).
 //
@@ -103,12 +108,12 @@ Se a pessoa mencionar a cidade, use isso para desambiguar entre clientes com nom
   }
 Sua tarefa: analisar o pedido (texto ou imagem) e identificar:
 ${searchCustomer ? "0. O CLIENTE mencionado (se houver)" : ""}
-1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades — para CADA item, retorne TODAS as variantes encontradas (oben E colacor) se existirem ambas
+1. PRODUTOS do catálogo que o cliente quer comprar, com quantidades — UM produto por item pedido: se o mesmo código existir na oben E na colacor, retorne só UM deles (o sistema escolhe a empresa pelo estoque)
 2. FERRAMENTAS DO CLIENTE que precisam de SERVIÇO DE AFIAÇÃO
 3. SUGESTÕES quando não encontrar correspondência exata
 
 REGRAS:
-1. Para PRODUTOS: identifique pelo nome, código ou descrição parcial. Use a quantidade mencionada ou 1.
+1. Para PRODUTOS: identifique pelo nome, código ou descrição parcial. Use a quantidade mencionada ou 1. Em quantidade_explicita diga a verdade: true só se o vendedor disse ou escreveu a quantidade daquele item; false se você usou 1 por falta dela.
 2. Para AFIAÇÃO: identifique a ferramenta cadastrada e o serviço compatível.
 3. Priorize correspondências exatas de nome/código. Seja MUITO flexível com sinônimos, abreviações, erros de grafia (ex: "thiner" = "thinner", "disco 7" = "disco de corte 7 polegadas"). CÓDIGOS PODEM TER PONTOS, ZEROS OU DASHES NO MEIO QUE O VENDEDOR OMITE.
 4. Se o vendedor mencionar "afiar", "afiação", "serrar", "lâmina lascada" etc, trate como serviço.
@@ -160,7 +165,7 @@ REGRA CRÍTICA DE EMBALAGEM ÚNICA:
 26. Quando a embalagem está ESPECIFICADA na imagem ou texto (ex: "18L", "lata", "balde", "5L", "galão", "quartinho"), retorne APENAS a variante correspondente àquela embalagem. NÃO retorne múltiplas variantes do mesmo produto com embalagens diferentes.
    Exemplo: "6673 18L" → retorne APENAS o produto com sufixo LT (18L). NÃO inclua a variante L5 (5L) nem qualquer outra embalagem.
    Exemplo: "4403 5L" → retorne APENAS o produto com sufixo L5. NÃO inclua LT, QT, BH ou GL.
-27. Se a embalagem NÃO está especificada, retorne a variante mais comum (geralmente LT/18L) como produto principal e as outras como sugestões.
+27. Se a embalagem NÃO está especificada e o produto tem mais de uma, NÃO escolha por conta própria: retorne as embalagens existentes como SUGESTÕES (o vendedor escolhe), não como produto.
 26. Ex: "3 latas de catalisador FC6975" → busque "CATALISADOR FC.6975LT" no catálogo (18L=LT).
 27. Ex: "5 baldes de FO56717" → busque produtos com "6717" E "BH" na descrição → "VERNIZ PU FOSCO FO5.6717.00BH" ou "FO10.6717.00BH".
 ${
