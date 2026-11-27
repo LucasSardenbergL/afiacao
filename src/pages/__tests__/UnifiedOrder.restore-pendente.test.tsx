@@ -51,7 +51,10 @@ vi.mock('@/integrations/supabase/client', () => ({
     functions: {
       invoke: (_nome: string, opts?: { body?: { action?: string } }) => Promise.resolve(
         opts?.body?.action === 'listar_clientes'
-          ? { data: { clientes: [{ codigo_cliente: 999, razao_social: 'Outra Empresa B', nome_fantasia: 'Outra Empresa B', cnpj_cpf: '11', codigo_vendedor: null }] }, error: null }
+          ? { data: { clientes: [
+              { codigo_cliente: 999, razao_social: 'Outra Empresa B', nome_fantasia: 'Outra Empresa B', cnpj_cpf: '11', codigo_vendedor: null },
+              { codigo_cliente: 173, razao_social: 'Empresa Certa A', nome_fantasia: 'Empresa Certa A', cnpj_cpf: '22', codigo_vendedor: null },
+            ] }, error: null }
           : { data: null, error: null },
       ),
     },
@@ -150,6 +153,24 @@ describe('UnifiedOrder — restaurar com envio pendente e sem cliente na tela', 
     expect(screen.queryByText(TITULO), 'o diálogo reabriu depois da troca').toBeNull();
     expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
     expect(JSON.parse(localStorage.getItem('order_draft:vendedor-1') ?? 'null')?.state?.customerCodigoCliente).toBe(173);
+  });
+
+  // Codex r3 do #4271 (P2): preservar disco não basta — a PENDÊNCIA em memória também tem de sobreviver
+  // à troca, senão selecionar o cliente certo já não devolve o carrinho do envio pendente.
+  it('depois do "Trocar cliente", selecionar o cliente CERTO devolve o carrinho com o mesmo envelope', async () => {
+    const item = { type: 'product', product: PRODUTO, quantity: 1, unit_price: 10, account: 'oben', precoNascimento: 10 };
+    localStorage.setItem('order_draft:vendedor-1', JSON.stringify({ ...RASCUNHO, state: { ...RASCUNHO.state, cart: [item] } }));
+    montar();
+    fireEvent.click(await screen.findByRole('button', { name: /Restaurar/ }));
+    fireEvent.click(await screen.findByText('Outra Empresa B', {}, { timeout: 3000 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Trocar cliente' }, { timeout: 3000 }));
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Trocar cliente' })).toBeNull(); });
+    // CONTROLE: o carrinho ainda está vazio (a pendência espera o cliente 173).
+    expect(screen.queryByRole('button', { name: 'Remover Produto Teste Um' })).toBeNull();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Buscar cliente por nome ou CPF/CNPJ' }), { target: { value: 'Empresa' } });
+    fireEvent.click(await screen.findByText('Empresa Certa A', {}, { timeout: 3000 }));
+    expect(await screen.findByRole('button', { name: 'Remover Produto Teste Um' }, { timeout: 3000 }), 'o carrinho do envio pendente não voltou').toBeTruthy();
+    expect(JSON.parse(localStorage.getItem('unified_order_checkout_env') ?? 'null')).toEqual(ENVELOPE);
   });
 
   // Codex r2 do #4271: carrinho NOVO no cliente errado, esvaziado → o rascunho de A (em memória)
