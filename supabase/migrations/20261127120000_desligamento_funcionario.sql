@@ -59,8 +59,9 @@ CREATE POLICY funcionario_desligamentos_select ON public.funcionario_desligament
   USING (COALESCE((SELECT public.has_role((SELECT auth.uid()), 'master'::public.app_role)), false));
 
 -- Nenhum papel da aplicação escreve (nem service_role: seria 2º escritor capaz de forjar/apagar).
+-- service_role também não LÊ (Codex P2: BYPASSRLS leria tudo); a edge só usa as RPCs.
 REVOKE ALL ON public.funcionario_desligamentos FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.funcionario_desligamentos TO authenticated, service_role;
+GRANT SELECT ON public.funcionario_desligamentos TO authenticated;
 
 -- ───────────────────────── RPC ─────────────────────────
 CREATE OR REPLACE FUNCTION public.desligar_funcionario(
@@ -87,61 +88,79 @@ DECLARE
   n_sip         integer := 0;
   n_hunter      integer := 0;
   n_flag        integer := 0;
+  v_aprovado    boolean;
+  v_anterior    uuid;
+  v_rb_status   text;
+  v_rb_em       timestamptz;
   v_tem_dono    boolean;
   v_id          uuid;
   v_resumo      jsonb;
 BEGIN
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'desligamento: funcionário obrigatório' USING ERRCODE = '22004';
+  END IF;
+
+  -- Serializa TODOS os desligamentos ANTES do gate (Codex P1): dois masters não se desligam um ao outro
+  -- em paralelo — o 2º espera, e o gate abaixo lê o estado já comitado (READ COMMITTED: snapshot novo
+  -- por comando).
+  PERFORM pg_advisory_xact_lock(hashtextextended('desligar_funcionario', 0));
+
   -- Gate na fronteira: só master, autenticado.
   IF v_ator IS NULL OR NOT COALESCE(public.has_role(v_ator, 'master'::public.app_role), false) THEN
     RAISE EXCEPTION 'desligamento: apenas master' USING ERRCODE = '42501';
-  END IF;
-  IF p_user_id IS NULL THEN
-    RAISE EXCEPTION 'desligamento: funcionário obrigatório' USING ERRCODE = '22004';
   END IF;
   IF p_user_id = v_ator THEN
     RAISE EXCEPTION 'desligamento: não é possível desligar a si mesmo' USING ERRCODE = '42501';
   END IF;
 
-  -- Serializa desligamentos do MESMO usuário e trava o rebuild de carteira.
-  PERFORM pg_advisory_xact_lock(hashtextextended('desligar_funcionario:' || p_user_id::text, 0));
-  PERFORM 1 FROM public.sync_state
+  -- Trava o rebuild de carteira e decide pela MESMA leitura (Codex P1: checar antes de travar deixava um
+  -- claim entrar no meio). Sem a linha, um claim concorrente a criaria sem esperar ⇒ recusa (fail-closed).
+  -- 15 min = a janela do próprio claim; uma edge não vive tanto, então não há worker vivo além dela.
+  SELECT status, last_sync_at INTO v_rb_status, v_rb_em
+    FROM public.sync_state
    WHERE entity_type = 'carteira_rebuild' AND account = 'global'
-     AND status = 'syncing' AND last_sync_at >= now() - interval '15 minutes'
    FOR UPDATE;
-  IF FOUND THEN
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'desligamento: estado do rebuild de carteira ausente' USING ERRCODE = '55000';
+  END IF;
+  IF v_rb_status = 'syncing' AND v_rb_em >= now() - interval '15 minutes' THEN
     RAISE EXCEPTION 'desligamento: rebuild de carteira em andamento, tente em alguns minutos'
       USING ERRCODE = '55P03';
   END IF;
-  PERFORM 1 FROM public.sync_state
-   WHERE entity_type = 'carteira_rebuild' AND account = 'global' FOR UPDATE;
 
   SELECT COALESCE(array_agg(role::text ORDER BY role::text), '{}')
     INTO v_papeis
     FROM public.user_roles
    WHERE user_id = p_user_id AND role IN ('employee'::public.app_role, 'master'::public.app_role);
   SELECT commercial_role::text INTO v_cr FROM public.commercial_roles WHERE user_id = p_user_id;
-  SELECT COALESCE(bool_or(is_employee), false) INTO v_flag FROM public.profiles WHERE user_id = p_user_id;
+  SELECT COALESCE(bool_or(is_employee), false), COALESCE(bool_or(is_approved), false)
+    INTO v_flag, v_aprovado
+    FROM public.profiles WHERE user_id = p_user_id;
   SELECT NULLIF(btrim(value::text, '" '), '') INTO v_hunter
     FROM public.company_config WHERE key = 'carteira_hunter_user_id';
+  SELECT id INTO v_anterior FROM public.funcionario_desligamentos
+   WHERE user_id = p_user_id ORDER BY criado_em DESC LIMIT 1;
+
+  -- Elegível = é equipe HOJE (papel, flag ou commercial_role) ou já foi desligado (retry/resíduo).
+  -- Trabalho a transferir, sozinho, NÃO torna alguém desligável (Codex P1).
+  IF cardinality(v_papeis) = 0 AND v_cr IS NULL AND NOT v_flag AND v_anterior IS NULL THEN
+    RAISE EXCEPTION 'desligamento: usuário não é da equipe' USING ERRCODE = '22023';
+  END IF;
 
   v_tem_dono :=
        EXISTS (SELECT 1 FROM public.omie_vendedor_map WHERE user_id = p_user_id)
     OR EXISTS (SELECT 1 FROM public.carteira_assignments WHERE owner_user_id = p_user_id)
-    OR v_hunter = p_user_id::text
+    OR COALESCE(v_hunter = p_user_id::text, false)
     OR EXISTS (SELECT 1 FROM public.cobranca_caso WHERE dona_user_id = p_user_id AND fechado_em IS NULL)
     OR EXISTS (SELECT 1 FROM public.tarefas WHERE assigned_to = p_user_id AND status = 'aberta');
 
-  -- Idempotência: nada a revogar nem a transferir ⇒ devolve o último registro, sem escrever.
-  IF cardinality(v_papeis) = 0 AND v_cr IS NULL AND NOT v_flag AND NOT v_tem_dono
+  -- Idempotência: nada a revogar nem a transferir ⇒ devolve o último registro, sem escrever. Aprovação
+  -- residual conta como resíduo (Codex P2: reaprovar um desligado não pode passar como "já desligado").
+  IF cardinality(v_papeis) = 0 AND v_cr IS NULL AND NOT v_flag AND NOT v_aprovado AND NOT v_tem_dono
      AND NOT EXISTS (SELECT 1 FROM public.carteira_coverage
                       WHERE active AND (covering_user_id = p_user_id OR covered_user_id = p_user_id))
      AND NOT EXISTS (SELECT 1 FROM public.vendor_sip_credentials WHERE user_id = p_user_id) THEN
-    SELECT id INTO v_id FROM public.funcionario_desligamentos
-     WHERE user_id = p_user_id ORDER BY criado_em DESC LIMIT 1;
-    IF v_id IS NULL THEN
-      RAISE EXCEPTION 'desligamento: usuário não é da equipe' USING ERRCODE = '22023';
-    END IF;
-    RETURN jsonb_build_object('status', 'ja_desligado', 'desligamento_id', v_id);
+    RETURN jsonb_build_object('status', 'ja_desligado', 'desligamento_id', v_anterior);
   END IF;
 
   IF p_motivo IS NULL OR length(btrim(p_motivo)) < 3 THEN
@@ -150,11 +169,10 @@ BEGIN
 
   -- "Nunca o último master" não precisa de guard: o ator é master e ≠ alvo, então sempre sobra um.
 
-  -- Novo dono: obrigatório quando há o que transferir; tem de ser equipe ATIVA e outra pessoa.
-  IF v_tem_dono THEN
-    IF p_novo_dono IS NULL THEN
-      RAISE EXCEPTION 'desligamento: escolha quem recebe a carteira' USING ERRCODE = '22023';
-    END IF;
+  -- Novo dono: obrigatório quando há o que transferir; tem de ser equipe ATIVA e outra pessoa
+  -- (o próprio master pode receber).
+  IF v_tem_dono AND p_novo_dono IS NULL THEN
+    RAISE EXCEPTION 'desligamento: escolha quem recebe a carteira' USING ERRCODE = '22023';
   END IF;
   IF p_novo_dono IS NOT NULL THEN
     IF p_novo_dono = p_user_id OR NOT EXISTS (
@@ -180,10 +198,10 @@ BEGIN
     UPDATE public.carteira_assignments SET owner_user_id = p_novo_dono, updated_at = now()
      WHERE owner_user_id = p_user_id;
     GET DIAGNOSTICS n_carteira = ROW_COUNT;
-    IF v_hunter = p_user_id::text THEN
-      UPDATE public.company_config SET value = p_novo_dono::text WHERE key = 'carteira_hunter_user_id';
-      GET DIAGNOSTICS n_hunter = ROW_COUNT;
-    END IF;
+    -- Condicionado ao valor ATUAL (Codex P2): não sobrescreve um hunter trocado em paralelo.
+    UPDATE public.company_config SET value = p_novo_dono::text
+     WHERE key = 'carteira_hunter_user_id' AND btrim(value::text, '" ') = p_user_id::text;
+    GET DIAGNOSTICS n_hunter = ROW_COUNT;
     UPDATE public.cobranca_caso SET dona_user_id = p_novo_dono, atualizado_em = now(), atualizado_por = v_ator
      WHERE dona_user_id = p_user_id AND fechado_em IS NULL;
     GET DIAGNOSTICS n_cobranca = ROW_COUNT;
@@ -233,12 +251,17 @@ BEGIN
   IF p_desligamento_id IS NULL OR p_ok IS NULL THEN
     RAISE EXCEPTION 'registrar_ban: parâmetros obrigatórios' USING ERRCODE = '22004';
   END IF;
-  UPDATE public.funcionario_desligamentos
+  -- Só o desligamento VIGENTE daquele usuário, e um sucesso já registrado não é rebaixado por uma
+  -- resposta atrasada (Codex P2).
+  UPDATE public.funcionario_desligamentos d
      SET ban_status = CASE WHEN p_ok THEN 'aplicado' ELSE 'falhou' END,
          ban_erro   = CASE WHEN p_ok THEN NULL ELSE left(p_erro, 500) END,
          ban_em     = now()
-   WHERE id = p_desligamento_id;
-  IF NOT FOUND THEN
+   WHERE d.id = p_desligamento_id
+     AND d.id = (SELECT x.id FROM public.funcionario_desligamentos x
+                  WHERE x.user_id = d.user_id ORDER BY x.criado_em DESC LIMIT 1)
+     AND (p_ok OR d.ban_status <> 'aplicado');
+  IF NOT FOUND AND NOT EXISTS (SELECT 1 FROM public.funcionario_desligamentos WHERE id = p_desligamento_id) THEN
     RAISE EXCEPTION 'registrar_ban: desligamento inexistente' USING ERRCODE = 'P0002';
   END IF;
 END
