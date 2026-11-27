@@ -1,6 +1,6 @@
 # Caça — candidatos re-agregados por linha (Nested Loop sobre estimativa rows=1)
 
-**Migration:** `20261126235000_caca_candidatos_plano_materializado.sql` · **sem edge · sem Publish** (só banco).
+**Migration:** `20261126235000_caca_candidatos_plano_materializado.sql` · **APLICADA** em 2026-11-27 por `db:aplicar` (recibo #1509, PR #4243) · **sem edge · sem Publish** (só banco).
 
 ## Sintoma
 A página de candidatos da Caça (`useCaca` → `v_caca_candidatos`, 32 páginas sequenciais de 1.000 via
@@ -28,6 +28,8 @@ onda D (fatia 3) a view inteira passou de 300 s, antes e depois do corte de PII.
 | 1ª página, farmer sob `authenticated` (conector Lovable, `SET TRANSACTION READ ONLY` + `SET LOCAL ROLE`) | **> 60 s** (timeout do conector) | **870 ms** (só hash joins) |
 | view inteira, todas as colunas, envelope (postgres + JWT da farmer) | **> 300 s** (timeout) | **830 ms** (farmer) · 927 ms (master) |
 | equivalência linha a linha (`db/medir-caca-candidatos-equivalencia.sql`) | — | md5 **igual** nas 2 personas, n=31.786; sabotagem (`<>`→`=`) dá vermelho com `EQUIVALENCIA QUEBRADA` |
+
+**Pós-apply (prod, view viva, farmer sob `authenticated`):** última página 3,98 s no 1º toque (cache frio, planejamento 44 ms), depois 2 páginas na MESMA consulta couberam num teto de 3 s (< 1,5 s cada); view inteira com todas as colunas coube no `statement_timeout=8s` com md5 `eac8551f…` = o da view antiga pré-apply (n=31.786). Corpo vivo tem `contas_ativas AS MATERIALIZED`, `security_invoker=on`, anon sem SELECT.
 
 A tela continua fazendo 32 requisições em sequência: ~32 × ~0,9 s ≈ 30 s no total, contra "nunca" antes,
 e cada requisição fica bem abaixo do `statement_timeout=8s` do `authenticated`. Reduzir o número de idas
