@@ -107,6 +107,8 @@ roda() {  # roda <cenario> → um tick do vigia num estado novo (LVT_MANTEM=1: m
   [ "${LVT_MANTEM:-0}" = 1 ] || rm -rf "$est"
   rm -rf "$TMP/wt" "$TMP/chamadas" "$TMP/ar-novo" "$TMP/intencao-visto"; mkdir -p "$est"
   git clone -q "$TMP/origin" "$TMP/wt"
+  # PR 4: a main anda DEPOIS do clone → o vigia tem de buscar (o clone não tem o commit)
+  [ "${LVT_ANDA_POS_CLONE:-0}" = 1 ] && { git -C "$TMP/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m pos-clone; git -C "$TMP/origin" rev-parse HEAD > "$TMP/head"; }
   cp "${VIGIA_SOB_TESTE:-$VIGIA}" "$TMP/vigia.sh"
   # PR 3: store próprio é obrigatório — todo cenário o tem, salvo LVT_SEM_STORE=1
   rm -rf "$TMP/cfg"; [ "${LVT_SEM_STORE:-0}" = 1 ] || { mkdir -p "$TMP/cfg" && touch "$TMP/cfg/.vigia-pronto"; }
@@ -304,6 +306,41 @@ tem "lock de processo morto ($D) removido" && ok "PID reciclado por \`tail -f vi
 mkdir -p "$TMP/est-lock/lock"; echo 999999 > "$TMP/est-lock/lock/pid"; LVT_MANTEM=1 roda lock
 tem "lock de processo morto (999999) removido" && ok "PID morto → lock tomado" || nok "lock morto: $(tail -2 "$LOGV")"
 
+# ═══ PR 4 — higiene ═════════════════════════════════════════════════════════════════════════════
+BASE0=$(cat "$TMP/head")
+r_sem_fetch() { roda ok; tem "PUBLICADO" && [ ! -f "$TMP/wt/.git/FETCH_HEAD" ]; }
+r_sem_fetch && ok "main já no clone → sem fetch (só ls-remote)" || nok "sem_fetch: FETCH_HEAD=$(ls "$TMP/wt/.git/FETCH_HEAD" 2>&1) $(tail -1 "$LOGV")"
+LVT_ANDA_POS_CLONE=1 roda ok
+{ [ -f "$TMP/wt/.git/FETCH_HEAD" ] && [ "$(git -C "$TMP/wt" rev-parse HEAD)" = "$(cat "$TMP/head")" ] && tem "PUBLICADO $(cut -c1-8 "$TMP/head")"; } \
+  && ok "main andou além do clone → fetch e checkout do SHA novo" || nok "fetch: $(tail -2 "$LOGV")"
+git -C "$TMP/origin" reset -q --hard "$BASE0"; echo "$BASE0" > "$TMP/head"
+[ "$(stat -f %Lp "$TMP/est-ok" 2>/dev/null || stat -c %a "$TMP/est-ok")" = 700 ] && ok "estado do vigia com chmod 700" || nok "modo do estado: $(stat -f %Lp "$TMP/est-ok" 2>&1)"
+
+# instalador --verificar: o claude roda com o ambiente do launchd (env -i) e a prova é o tool_result
+mkdir -p "$TMP/home/.local/share/afiacao/vigia-claude"; touch "$TMP/home/.local/share/afiacao/vigia-claude/.vigia-pronto"
+cat > "$TMP/bin/claude-instalar" <<EOF
+#!/bin/bash
+cat > /dev/null
+env > "$TMP/inst-env"
+cat "$TMP/inst-stream.jsonl"
+EOF
+chmod +x "$TMP/bin/claude-instalar"
+verificar() { HOME="$TMP/home" LVT_VAZA=sim ANTHROPIC_BASE_URL=http://x LV_CLAUDE="$TMP/bin/claude-instalar" PATH="$TMP/bin:$PATH" \
+  bash "${INSTALADOR_SOB_TESTE:-$RAIZ/scripts/lovable-vigia-instalar.sh}" --verificar > "$TMP/inst-out" 2>&1; }
+r_verifica() {
+  { init connected; uso t1 get_project; res t1 "[Image: source: /x.png]$(gp "$BASE0")"; fim OK; } > "$TMP/inst-stream.jsonl"
+  verificar || return 1
+  grep -q "^VERIFICAR=OK .*latest_commit_sha=${BASE0:0:8}" "$TMP/inst-out" && grep -q '^USER=' "$TMP/inst-env" && grep -q '^LOGNAME=' "$TMP/inst-env" \
+    && grep -q "^CLAUDE_CONFIG_DIR=$TMP/home/.local/share/afiacao/vigia-claude$" "$TMP/inst-env" \
+    && ! grep -qE '^(LVT_VAZA|ANTHROPIC_BASE_URL)=' "$TMP/inst-env"
+}
+r_verifica && ok "--verificar: get_project lido com ambiente mínimo do launchd (sem herança da sessão)" || nok "verificar: $(cat "$TMP/inst-out") | env: $(grep -cE 'LVT_VAZA|ANTHROPIC' "$TMP/inst-env" 2>&1)"
+{ init needs-auth; fim "não consegui"; } > "$TMP/inst-stream.jsonl"
+if verificar; then nok "--verificar sem tool_result passou"; else grep -q '^VERIFICAR=FALHOU .*mcp=needs-auth' "$TMP/inst-out" && ok "--verificar sem tool_result → FALHOU (exit ≠ 0), nomeando o needs-auth" || nok "verificar falho: $(cat "$TMP/inst-out")"; fi
+rm "$TMP/home/.local/share/afiacao/vigia-claude/.vigia-pronto"
+if verificar; then nok "--verificar sem store passou"; else grep -q 'store próprio ausente' "$TMP/inst-out" && ok "--verificar sem store próprio → FALHOU" || nok "sem store: $(cat "$TMP/inst-out")"; fi
+touch "$TMP/home/.local/share/afiacao/vigia-claude/.vigia-pronto"
+
 # ── falsificação com controle VERDE na MESMA invocação: o roteiro passa no vigia real e REPROVA o sabotado
 falsifica() {  # <nome> <sed> <roteiro>
   sed "$2" "$VIGIA" > "$TMP/vigia-sab-$1.sh"
@@ -323,6 +360,14 @@ falsifica truncado 's/then CTRL=TRUNCADO; fi/then true; fi/' r_truncado
 # shellcheck disable=SC2016  # $SHA_LOV é LITERAL do fonte sabotado
 falsifica le_e_cai 's/^  \[ -n "\$SHA_LOV" \] \&\& LIDO=1$/  true/' r_le_e_cai
 falsifica issue 's/^abre_issue tick$/true/' r_issue
+# shellcheck disable=SC2016  # $WT/$REMOTA são LITERAIS do fonte sabotado
+falsifica sem_fetch 's/^if git -C "\$WT" cat-file -e "\$REMOTA^{commit}" 2>\/dev\/null; then$/if false; then/' r_sem_fetch
+# instalador sabotado: sem o env -i, o ambiente da sessão vaza para o claude
+sed 's/| env -i HOME=/| env HOME=/' "$RAIZ/scripts/lovable-vigia-instalar.sh" > "$TMP/instalar-sab.sh"
+if ! ( r_verifica ) >/dev/null 2>&1; then nok "controle: r_verifica reprovou o instalador REAL"
+elif cmp -s "$RAIZ/scripts/lovable-vigia-instalar.sh" "$TMP/instalar-sab.sh"; then nok "sabotagem do instalador não casou"
+elif ( INSTALADOR_SOB_TESTE="$TMP/instalar-sab.sh" r_verifica ) >/dev/null 2>&1; then nok "instalador sem env -i passou"
+else ok "falsificação env_i: real verde, sabotado vermelho"; fi
 # shellcheck disable=SC2016
 falsifica store 's/^if \[ ! -f "\$CFG_DIR\/.vigia-pronto" \]; then$/if false; then/' r_store
 

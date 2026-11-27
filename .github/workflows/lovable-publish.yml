@@ -24,8 +24,11 @@ name: Lovable publish
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '*/15 * * * *'
+  # schedule DESLIGADO (2026-11-27, PR 4 do vigia): sem o secret LOVABLE_API_KEY (a API exige plano
+  # Business) cada run agendada saía `success` SEM publicar — 96 runs/dia de verde que não é Publish.
+  # Quem publica hoje é o vigia do Mac (scripts/lovable-vigia.sh). Religar junto com o secret.
+  # schedule:
+  #   - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       liberar_sha:
