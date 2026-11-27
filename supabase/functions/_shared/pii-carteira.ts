@@ -65,14 +65,14 @@ export function codigosVisiveis(
 /** O único caminho operacional aceito por `consultar_cliente`: o endereço na impressão do pedido. */
 export type AcessoOperacional = { objeto_tipo: "pedido"; objeto_id: string; motivo: "impressao_pedido" };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_OBJETO_PEDIDO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Valida o `operacional` do body. Qualquer outra forma → `null` (sem exceção operacional). */
 export function lerAcessoOperacional(bruto: unknown): AcessoOperacional | null {
   if (!bruto || typeof bruto !== "object") return null;
   const o = bruto as Record<string, unknown>;
   if (o.objeto_tipo !== "pedido" || o.motivo !== "impressao_pedido") return null;
-  if (typeof o.objeto_id !== "string" || !UUID.test(o.objeto_id)) return null;
+  if (typeof o.objeto_id !== "string" || !UUID_OBJETO_PEDIDO.test(o.objeto_id)) return null;
   return { objeto_tipo: "pedido", objeto_id: o.objeto_id, motivo: "impressao_pedido" };
 }
 
