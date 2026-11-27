@@ -27,7 +27,8 @@ import {
   desfechoVarreduraReversa,
   fingerprintPagina,
 } from "../_shared/omie-paginacao.ts";
-import { colunasResumo, type ColunasResumo } from "./resumo-movimento.ts";
+import { colunasResumo, type ColunasResumo, idOmie } from "./resumo-movimento.ts";
+import { aplicarChaves, type ItemChave, SensorColapso } from "./chave-movimento.ts";
 import { colunasCmvHeuristica } from "./cmv-heuristica.ts";
 import { chamarOmieComPolitica } from "./omie-chamada.ts";
 import {
@@ -1198,6 +1199,46 @@ function resolveMovementDescription(detalhes: OmieMovimentoDetalhes) {
   return parts.join(" · ") || "Movimentação financeira";
 }
 
+/**
+ * Linhas gravadas ANTES da captura do nCodBaixa ficaram com chave = hash e omie_ncodbaixa NULL. Se o
+ * Omie devolve a MESMA baixa (mesmo hash = mesmos ~22 campos) agora com id, a chave nova é -id e o
+ * upsert inseriria uma 2ª linha. Aqui a linha legada é re-chaveada para (-id, id) antes do upsert.
+ * Raro (66 baixas históricas sem id); qualquer erro LANÇA (melhor parar que dobrar caixa).
+ */
+async function rechavearLegadoSemId(
+  db: SupabaseClient,
+  company: Company,
+  itens: ItemChave<MovimentoRow>[],
+) {
+  const porHash = new Map<string, number>();
+  for (const i of itens) {
+    const id = idOmie(i.nCodBaixaBruto);
+    if (id !== null) porHash.set(i.hashLegado, id);
+  }
+  if (porHash.size === 0) return;
+  const { data, error } = await db
+    .from("fin_movimentacoes")
+    .select("omie_ncodmov")
+    .eq("company", company)
+    .is("omie_ncodbaixa", null)
+    .in("omie_ncodmov", [...porHash.keys()])
+    // UNIQUE(company, omie_ncodmov): no máximo 1 linha por hash ⇒ o teto é exato (≤ 100, a página).
+    .limit(porHash.size);
+  if (error) throw new Error(`[Fin][${company}] Mov: leitura de legado sem id falhou: ${error.message}`);
+  for (const { omie_ncodmov } of (data ?? []) as { omie_ncodmov: number | string }[]) {
+    const id = porHash.get(String(omie_ncodmov));
+    if (id === undefined) continue;
+    const { error: eUp } = await db
+      .from("fin_movimentacoes")
+      .update({ omie_ncodmov: String(-id), omie_ncodbaixa: id })
+      .eq("company", company)
+      .eq("omie_ncodmov", String(omie_ncodmov))
+      .is("omie_ncodbaixa", null);
+    if (eUp) throw new Error(`[Fin][${company}] Mov: re-chavear legado ${omie_ncodmov}→-${id} falhou: ${eUp.message}`);
+    console.log(`[Fin][${company}] Mov: legado sem id ${omie_ncodmov} re-chaveado para -${id}`);
+  }
+}
+
 async function syncMovimentacoes(
   db: SupabaseClient,
   company: Company,
@@ -1218,6 +1259,8 @@ async function syncMovimentacoes(
   let totalSynced = 0;
   let pagesProcessed = 0;
   let consecutiveEmptyPages = 0;
+  // Baixas que a chave ANTIGA (hash sem nCodBaixa) colapsaria nesta execução — prova do reparo.
+  const sensorColapso = new SensorColapso();
 
   const firstPage = await callOmie(
     company,
@@ -1271,8 +1314,8 @@ async function syncMovimentacoes(
     }
 
     const agoraIso = new Date().toISOString();
-    const rows = movs
-      .map((mov): MovimentoRow | null => {
+    const itens = movs
+      .map((mov): ItemChave<MovimentoRow> | null => {
         const detalhes = mov?.detalhes || {};
         const resumo = mov?.resumo || {};
         const dataMovimento = resolveMovementDate(detalhes);
@@ -1282,10 +1325,13 @@ async function syncMovimentacoes(
         const valorBase =
           resumo.nValPago ?? resumo.nValLiquido ?? detalhes.nValorTitulo ?? 0;
         const codigoLancamento = Number(detalhes.nCodTitulo || 0);
+        // Chave provisória = hash legado; a final (-nCodBaixa quando há id) só é aplicada DEPOIS do
+        // filtro de janela, sobre o que vai ser gravado (aplicarChaves, chave-movimento.ts).
+        const hashLegado = buildSyntheticMovementId(company, detalhes, resumo);
 
-        return {
+        const row: MovimentoRow = {
           company,
-          omie_ncodmov: buildSyntheticMovementId(company, detalhes, resumo),
+          omie_ncodmov: hashLegado,
           omie_ncodcc: detalhes.nCodCC || null,
           data_movimento: dataMovimento,
           tipo: resolveMovementType(detalhes),
@@ -1307,8 +1353,10 @@ async function syncMovimentacoes(
           resumo_lido_em: agoraIso,
           updated_at: agoraIso,
         };
+        return { row, hashLegado, nCodBaixaBruto: detalhes.nCodBaixa };
       })
-      .filter((r): r is MovimentoRow => r !== null);
+      .filter((r): r is ItemChave<MovimentoRow> => r !== null);
+    const rows = itens.map((i) => i.row);
 
     // P2 do challenge Codex: `uniqueRows.length === 0` NÃO prova "fora da janela". Uma
     // página crua CHEIA cujas linhas caiam todas no `return null` do map (nenhuma data
@@ -1319,11 +1367,18 @@ async function syncMovimentacoes(
       throw new Error(`[Fin][${company}] Mov p${pagina}: ${movs.length} movimentos e NENHUM com data resolvível — payload malformado, não página fora da janela`);
     }
 
-    const filteredRows = rows.filter((row) => {
+    const itensNaJanela = itens.filter(({ row }) => {
       if (dataInicioIso && row.data_movimento < dataInicioIso) return false;
       if (dataFimIso && row.data_movimento > dataFimIso) return false;
       return true;
     });
+
+    // Chave final + sensor SÓ sobre o que será gravado. nCodBaixa presente e inválido LANÇA aqui
+    // (antes do Map e do upsert: a página não grava, o cursor não avança).
+    const filteredRows = aplicarChaves(itensNaJanela, sensorColapso);
+    // Linha LEGADA (hash, sem id) da MESMA baixa que agora chega com id: re-chaveia no lugar em vez
+    // de inserir (-id, id) ao lado dela — senão o caixa dobra (Codex, revisão de código).
+    await rechavearLegadoSemId(db, company, itensNaJanela);
 
     const uniqueRows = Array.from(
       new Map(filteredRows.map((row) => [String(row.omie_ncodmov), row])).values()
@@ -1358,6 +1413,9 @@ async function syncMovimentacoes(
 
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] Mov stopped: time budget exhausted`);
+  if (sensorColapso.baixasColapsadas() > 0) {
+    console.log(`[Fin][${company}] Mov: ${sensorColapso.baixasColapsadas()} baixa(s) em ${sensorColapso.hashesComColisao()} hash(es) que a chave antiga colapsaria — agora separadas por nCodBaixa`);
+  }
 
   // `complete = pagina < 1` bastava quando o ponto de partida era confiável. Não é: o
   // firstPage sub-reportado fazia a varredura NASCER abaixo do topo, e descer até 1
@@ -1395,6 +1453,8 @@ async function syncMovimentacoes(
     complete: desfecho.complete,
     nextPage: desfecho.nextPage,
     timedOut,
+    baixas_colapsadas_chave_antiga: sensorColapso.baixasColapsadas(),
+    hashes_com_colisao: sensorColapso.hashesComColisao(),
   };
 }
 

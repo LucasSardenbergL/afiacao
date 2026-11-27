@@ -28,7 +28,7 @@ export const respostaSonda = criarRespostaSonda("omie-financeiro");
 // v1.13 (2026-11-22, DRE mapa próprio): linha `nao_resultado` (patrimonial definitivo, sem pendência) no detalhamento.
 // v1.14 (2026-11-22, Placar do CEO entrega 3): DRE grava cmv_heuristica + cmv_heuristica_pct (colunas dedicadas).
 // v1.15 (2026-11-24): regime tributário da DRE por (empresa, competência) — colacor Simples até 2022-12, Presumido desde 2023-01.
-export const VERSAO = "v1.15-dre-regime-por-competencia";
+export const VERSAO = "v1.16-mov-chave-ncodbaixa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

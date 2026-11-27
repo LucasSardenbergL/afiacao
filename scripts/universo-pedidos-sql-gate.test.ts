@@ -92,9 +92,7 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
       // private.v_perfil_chaves_internas e o contato da v_perfil_contato — o filtro do universo é o MESMO.
       'public.v_grupo_comercial': /^20261125120000_clientes_pii_fatia3_leitores_servidor\.sql$/,
       'public.v_caca_compradores': /^20261125120000_clientes_pii_fatia3_leitores_servidor\.sql$/,
-      // 20261126235000: v_caca_candidatos recriada só no PLANO (CTEs MATERIALIZED + contas_ativas, contra o
-      // Nested Loop sobre estimativa rows=1) — o so_ok e o filtro do universo são os MESMOS.
-      'public.v_caca_candidatos': /^20261126235000_caca_candidatos_plano_materializado\.sql$/,
+      'public.v_caca_candidatos': /^20261125120000_clientes_pii_fatia3_leitores_servidor\.sql$/,
       // 20261104113000 (plano v5, lote 10): a régua foi para uma CTE e o UPDATE só escreve a linha que mudou — as
       // duas leituras de sales_orders seguem com o filtro do universo; o juízo abaixo continua sobre o corpo novo.
       'public.classificar_clientes_fornecedores': /^20261104113000_classificacao_diff_before_write\.sql$/,
