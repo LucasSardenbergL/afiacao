@@ -30,6 +30,7 @@ import * as varrerPedidosPortal from "../sayerlack-varrer-pedidos-portal/versao.
 import * as encerrarCanceladoPortal from "../sayerlack-encerrar-cancelado-portal/versao.ts";
 import * as trocarVendedorOmie from "../omie-cliente-trocar-vendedor/versao.ts";
 import * as pvExclusaoOmie from "../omie-pv-exclusao-reconciliar/versao.ts";
+import * as omieOsSync from "../omie-os-sync/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
@@ -339,6 +340,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 2026-11-21 — nasce instrumentada: lê o Omie (ListarPedidos/ConsultarPedido) e DÁ BAIXA no app de PV excluído lá
   // (deleted_at nas linhas + reserva de estoque liberada). Não escreve no Omie.
   { nome: "omie-pv-exclusao-reconciliar", mod: pvExclusaoOmie },
+  // 2026-11-26 — nasce instrumentada: lê o Omie da Colacor SC (ListarOS) e GRAVA o espelho das OS no app
+  // (omie_os_espelho, base da sombra de crédito das OS — crédito-IA PR 7 opção C). Não escreve no Omie.
+  { nome: "omie-os-sync", mod: omieOsSync },
   // 2026-11-17 — lote 5 do rescan do scanner Lovable Security: as duas ganharam o gate de dono
   // (`_shared/dono-pela-rls.ts`) e, com ele, a sonda — sem marcador o deploy do conserto não seria
   // julgável. Ambas escrevem com service-role num registro cujo id vem do body.
@@ -1745,5 +1749,13 @@ Deno.test("omie-pv-exclusao-reconciliar: o EFEITO diz que DÁ BAIXA, libera a re
   const e = pvExclusaoOmie.EFEITO;
   if (!/baixa/i.test(e) || !/reserva/i.test(e) || !/omie/i.test(e)) {
     throw new Error(`EFEITO não menciona a baixa, a reserva e o Omie: ${e}`);
+  }
+});
+
+Deno.test("omie-os-sync: o EFEITO diz que GRAVA o espelho das OS e não escreve no Omie", () => {
+  // O efeito caro é reescrever o espelho que a sombra de crédito lê; a recusa da sonda tem de dizer isso e o Omie.
+  const e = omieOsSync.EFEITO;
+  if (!/grava/i.test(e) || !/omie_os_espelho/.test(e) || !/n[aã]o cria nem altera nada no omie/i.test(e)) {
+    throw new Error(`EFEITO não menciona a gravação do espelho e o Omie só leitura: ${e}`);
   }
 });
