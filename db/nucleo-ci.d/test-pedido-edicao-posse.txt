@@ -1,4 +1,4 @@
 # Edição de pedido com PV no Omie — posse DURÁVEL por (conta, PV) (revisão /sales leva 1 PR 2, migration 20261127120100):
 # reivindicar/despachar/liberar/marcar/encerrar/resolver, write-back de 9 args com posse, exclusão conferida, trigger do
 # soft-delete, papéis, e 2 corridas com sessões reais. 29 sabotagens × 2 locales, uma camada por vez.
-db/test-pedido-edicao-posse.sh 86 falsificar=58
+db/test-pedido-edicao-posse.sh 87 falsificar=58

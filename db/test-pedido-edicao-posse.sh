@@ -215,6 +215,15 @@ P -c "CREATE FUNCTION public.sales_order_excluir_sem_envio(p_sales_order_id uuid
 # ── ZONA 2: aplica a migration REAL (cópia, talvez sabotada) ──
 if P -f "$MIG" > "$TMPD/apply.log" 2>&1; then ok "A0 migration aplica e a postcondicao passa"
 else bad "A0 migration aplica — $(grep -m1 'ERROR' "$TMPD/apply.log" || echo sem-erro)"; fi
+# A2: o irmão do `db:aplicar` é o MESMO corpo (sem o envelope) — anti-deriva entre os dois caminhos.
+IRMAO="$REPO_ROOT/db/2026-11-27-pedido-edicao-omie-posse-duravel.sql"
+if [ -z "${SABOTAGEM:-}" ]; then
+  if diff -q <(grep -v '^BEGIN;$' "$MIG_REAL" | grep -v '^COMMIT;$') <(tail -n +7 "$IRMAO") >/dev/null; then
+    ok "A2 irmao do db:aplicar tem o mesmo corpo da migration"
+  else
+    bad "A2 irmao do db:aplicar divergiu da migration"
+  fi
+fi
 if P -f "$MIG" > "$TMPD/reapply.log" 2>&1; then ok "A1 re-aplicar e idempotente"
 else bad "A1 re-aplicar — $(grep -m1 'ERROR' "$TMPD/reapply.log" || echo sem-erro)"; fi
 
