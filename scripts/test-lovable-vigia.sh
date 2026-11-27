@@ -30,7 +30,7 @@ echo x >> "$LVT/chamadas"
 printf '%s\n' "$*" > "$LVT/args"
 printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$LVT/cfgdir"
 sed "s/@HEAD@/$(cat "$LVT/head")/g" "$LVT/stream-$LVT_CENARIO.jsonl"
-case "$LVT_CENARIO" in ok|ledger|timeout_pos_deploy) touch "$LVT/ar-novo" ;; esac
+case "$LVT_CENARIO" in ok|ledger|recibos|timeout_pos_deploy) touch "$LVT/ar-novo" ;; esac
 [ "$LVT_CENARIO" = timeout_pos_deploy ] && exit 124
 exit 0
 EOF
@@ -45,7 +45,7 @@ fim()  { printf '{"type":"result","subtype":"success","result":"%s","total_cost_
 gp()   { printf '{\\"id\\":\\"p\\",\\"latest_commit_sha\\":\\"%s\\"}' "$1"; }
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project
   res t2 '{\"status\":\"pending\",\"deployment_id\":\"dep-123\"}'; fim "VIGIA=DISPARADO dep-123"; } > "$TMP/stream-ok.jsonl"
-cp "$TMP/stream-ok.jsonl" "$TMP/stream-ledger.jsonl"
+cp "$TMP/stream-ok.jsonl" "$TMP/stream-ledger.jsonl"; cp "$TMP/stream-ok.jsonl" "$TMP/stream-recibos.jsonl"
 { init connected; fim "VIGIA=DISPARADO inventado"; } > "$TMP/stream-fabricado.jsonl"
 { init connected; uso t1 get_project; res t1 "$(gp "$OUTRO")"; fim "VIGIA=DISPARADO x"; } > "$TMP/stream-divergente.jsonl"
 { init needs-auth; fim "VIGIA=ERRO ferramentas_mcp_nao_disponiveis"; } > "$TMP/stream-needs_auth.jsonl"
@@ -59,12 +59,13 @@ cat > "$TMP/origin/scripts/lovable-publish.sh" <<'EOF'
 # falso: --julgar e --decidir. $LVT/decisao (e $LVT/decisao-pos, depois que o vigia grava o cache do
 # ledger) substituem a decisão; sem eles: PUBLICAR até o "deploy", JA_NO_AR depois
 if [ "$1" = --decidir ] && [ -f "$LVT/decisao" ]; then
-  if [ -f "$LVT/decisao-pos" ] && ls "$LP_ESTADO"/pendencias-* >/dev/null 2>&1; then cat "$LVT/decisao-pos"; else cat "$LVT/decisao"; fi
+  if [ -f "$LVT/decisao-pos" ] && { ls "$LP_ESTADO"/pendencias-* || ls "$LP_ESTADO"/recibos-*; } >/dev/null 2>&1; then cat "$LVT/decisao-pos"; else cat "$LVT/decisao"; fi
   exit 0
 fi
 if [ -f "$LVT/ar-novo" ]; then echo "ar=$(cut -c1-8 "$LVT/head") x"; echo VEREDITO=JA_NO_AR
 else echo "ar=aaaaaaaa x"; echo VEREDITO=PUBLICAR; fi
 EOF
+printf '#!/usr/bin/env bash\necho "$1 $2" > "$LVT/recibos-args"\necho 0\necho "aplicada supabase/migrations/9_z.sql abcdef012345"\n' > "$TMP/origin/scripts/lovable-recibos.sh"
 git -C "$TMP/origin" add -A && git -C "$TMP/origin" -c user.email=t@t -c user.name=t commit -qm base
 git -C "$TMP/origin" rev-parse HEAD > "$TMP/head"
 
@@ -123,6 +124,16 @@ touch "$TMP/bun_anda"; roda ledger; rm -f "$TMP/bun_anda"
 git -C "$TMP/origin" reset -q --hard "$(cat "$TMP/head")"
 rm -f "$TMP/decisao" "$TMP/decisao-pos"
 
+# PR 2: migration no intervalo → o vigia lê os recibos (lovable-recibos.sh ar head), grava o cache e publica
+AR40=2222222222222222222222222222222222222222
+printf 'ar=22222222 x\nAR=%s\n  migration sem atestação\nVEREDITO=PRECISA_RECIBOS\n' "$AR40" > "$TMP/decisao"
+printf 'ar=22222222 x\nAR=%s\nLIBERADO=recibos ar=22222222\nVEREDITO=PUBLICAR\n' "$AR40" > "$TMP/decisao-pos"
+roda recibos
+{ [ "$(cat "$TMP/recibos-args")" = "$AR40 $(cat "$TMP/head")" ] && [ "$(head -1 "$TMP/est-recibos/recibos-$AR40-$(cat "$TMP/head")")" = 0 ] \
+  && tem "recibos ar=22222222" && tem "liberado: recibos" && tem "PUBLICADO" && [ ! -f "$TMP/est-recibos/piso" ]; } \
+  && ok "PRECISA_RECIBOS → recibos gravados por (ar, head), decide de novo e publica sem liberar manual" || nok "recibos: $(tail -3 "$LOGV")"
+rm -f "$TMP/decisao" "$TMP/decisao-pos"
+
 RET='ar=aaaaaaaa x
   liberar: aplique a(s) migration(s) e rode  bash scripts/lovable-publish.sh --liberar 0123
 RETIDO=migration:supabase/migrations/1_x.sql
@@ -150,5 +161,5 @@ elif ( VIGIA_SOB_TESTE="$TMP/vigia-sab.sh" episodio ) >/dev/null 2>&1; then nok 
 else ok "falsificação: vigia que re-avisa a cada tick reprova o roteiro"; fi
 rm -f "$TMP/decisao"
 
-[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (12)"; exit 0; }
+[ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK (13)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1
