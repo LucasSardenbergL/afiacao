@@ -169,6 +169,3 @@ verify_jwt = false
 
 [functions.credito-ia-avaliar]
 verify_jwt = false
-
-[functions.omie-os-sync]
-verify_jwt = false
