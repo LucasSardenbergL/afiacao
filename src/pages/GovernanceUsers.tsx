@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Shield, Users, History } from 'lucide-react';
 import { RadarEmailSemanalCard } from '@/components/governanca/RadarEmailSemanalCard';
+import { DesligarFuncionarioDialog } from '@/components/governanca/DesligarFuncionarioDialog';
 
 const ROLE_LABELS: Record<string, string> = {
   operacional: 'Operacional',
@@ -191,11 +192,12 @@ export default function GovernanceUsers() {
                       )}
                     </td>
                     <td className="text-right py-2">
+                      <div className="flex items-center justify-end gap-1">
                       <Select
                         value={emp.commercial_role || ''}
                         onValueChange={(v) => setRoleMutation.mutate({ userId: emp.user_id, role: v as CommercialRole })}
                       >
-                        <SelectTrigger className="h-7 w-[140px] text-xs ml-auto">
+                        <SelectTrigger className="h-7 w-[140px] text-xs">
                           <SelectValue placeholder="Atribuir perfil" />
                         </SelectTrigger>
                         <SelectContent>
@@ -216,6 +218,8 @@ export default function GovernanceUsers() {
                           )}
                         </SelectContent>
                       </Select>
+                      <DesligarFuncionarioDialog alvo={emp} equipe={employees ?? []} />
+                      </div>
                     </td>
                   </tr>
                 ))}
