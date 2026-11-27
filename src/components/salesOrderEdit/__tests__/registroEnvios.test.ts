@@ -92,7 +92,7 @@ describe('novoTokenDeEnvio (Codex r6)', () => {
   const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   it('sem crypto.randomUUID (HTTP pelo IP da rede): monta um UUID v4 por getRandomValues', () => {
     const original = globalThis.crypto;
-    vi.stubGlobal('crypto', { getRandomValues: (b: Uint8Array) => original.getRandomValues(b) });
+    vi.stubGlobal('crypto', { getRandomValues: (b: Uint8Array<ArrayBuffer>) => original.getRandomValues(b) });
     try {
       const a = novoTokenDeEnvio();
       const b = novoTokenDeEnvio();
