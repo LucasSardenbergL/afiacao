@@ -67,3 +67,5 @@ Prova: o mesmo harness, agora aplicando a cadeia base + nova. 64 asserts no cont
 Conferindo a tela em prod depois do Publish, a exposição mostrava os grupos **sem nome**. O PR 8 lia `fin_contas_receber.nome_cliente`, que vem **vazio do sync em 1.208/1.208 títulos abertos** (psql-ro). A fonte nova é `profiles` da **raiz** do grupo (`razao_social`, senão `name`), o mesmo COALESCE das RPCs de crédito; os 16.107 donos do mapa têm nome. Nos bloqueios recentes, o nome é o do dono do par, e par com 2 donos fica `null` (não adivinha).
 
 **Lição:** coluna de texto "nome" em espelho do Omie pode existir e vir sempre `''`. `count(col)` conta string vazia; meça `count(*) FILTER (WHERE col <> '')` antes de escolher a fonte.
+
+**Aplicado em prod (2026-11-26):** `db:aplicar` a partir da main (`64e9f65e0`, que contém o #4249), tentativa **#1514** `aplicada`, sha256 `f0238527…`. 2ª testemunha pelo psql-ro: md5 do corpo em prod = md5 do repo (`c16e8f1b…`), marca `painel-nome-grupo-v3` presente, SECURITY DEFINER, `search_path=public`, ACL `{postgres, authenticated}` (anon ✗, service_role ✗). O nome chega pela RPC com o front atual; o Publish só troca o texto do fallback.
