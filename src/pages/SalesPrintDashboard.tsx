@@ -290,7 +290,7 @@ const SalesPrintDashboard = () => {
     queryFn: async () => {
       const result: Record<string, string> = {};
       for (const userId of customersMissingAddress) {
-        let codigoCliente = omieClienteMap.get(userId);
+        const codigoCliente = omieClienteMap.get(userId);
 
         // (O fallback por documento via `buscar_por_documento` saiu na onda D 4b-2: a ação pública só
         // devolve `{existe, razao_social}`, nunca o código — era caminho morto que expunha o documento.)
