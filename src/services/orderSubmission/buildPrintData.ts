@@ -11,6 +11,7 @@ import type { DeliveryOption } from '@/types';
 import { findParcelaDesc, getToolName, precoServicoParaExibicao } from './helpers';
 // Impressão sai do app: razão de MEI sem o CPF do titular (M1, 2026-11-11). `razao_fiscal` nunca vem aqui.
 import { razaoSemCpf } from '@/lib/omie/razao-exibicao';
+import type { ContasConfirmadas } from './contasConfirmadas';
 
 interface BuildPrintDataParams {
   customer: OmieCustomer;
@@ -32,6 +33,9 @@ interface BuildPrintDataParams {
   results: string[];
   companyProfiles: Record<string, CompanyProfile>;
   getServicePrice: (item: ServiceCartItem) => number | null;
+  /** L2-b: só a conta que o Omie confirmou ganha cupom — a pendente/bloqueada sairia com
+   *  "(pendente ERP)" no lugar do PV, imprimindo como pedido o que o ERP não tem. */
+  contasConfirmadas: ContasConfirmadas;
 }
 
 export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
@@ -42,13 +46,13 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
     parcelaOben, parcelaColacor,
     formasPagamentoOben, formasPagamentoColacor,
     afiacaoMethod, deliveryOption, notes, results, companyProfiles,
-    getServicePrice,
+    getServicePrice, contasConfirmadas,
   } = params;
 
   const dateShort = new Date().toLocaleDateString('pt-BR');
   const printDataList: PrintOrderData[] = [];
 
-  if (obenProductItems.length > 0) {
+  if (contasConfirmadas.oben && obenProductItems.length > 0) {
     const obenOrderNum = results.find(r => r.startsWith('PV Oben'))?.replace('PV Oben ', '') || '';
     const obenProfile = companyProfiles.oben;
     printDataList.push({
@@ -83,7 +87,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
     });
   }
 
-  if (colacorProductItems.length > 0) {
+  if (contasConfirmadas.colacor && colacorProductItems.length > 0) {
     const colacorOrderNum = results.find(r => r.startsWith('PV Colacor'))?.replace('PV Colacor ', '') || '';
     const colacorProfile = companyProfiles.colacor;
     printDataList.push({
@@ -115,7 +119,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
     });
   }
 
-  if (serviceItems.length > 0) {
+  if (contasConfirmadas.afiacao && serviceItems.length > 0) {
     const afiacaoOrderNum = results.find(r => r.startsWith('OS'))?.replace('OS ', '') || '';
     const afiacaoProfile = companyProfiles.afiacao;
     printDataList.push({

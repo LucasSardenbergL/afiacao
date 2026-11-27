@@ -2,7 +2,8 @@
 // Extraída verbatim de src/pages/SalesOrderEdit.tsx (god-component split).
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
-import { type OmieProduct } from './types';
+import { Button } from '@/components/ui/button';
+import { type EstadoCatalogo, type OmieProduct } from './types';
 
 interface AddProductSearchProps {
   productSearch: string;
@@ -11,9 +12,14 @@ interface AddProductSearchProps {
   onAddProduct: (p: OmieProduct) => void;
   /** O preço que o clique aplica (`null` = carregando/sem preço) — a mesma decisão do `addProduct`. */
   precoPrevisto: (p: OmieProduct) => number | null;
+  /** #28: o catálogo que não carregou NÃO é "nenhum produto encontrado". */
+  estadoCatalogo: EstadoCatalogo;
+  onTentarDeNovo: () => void;
 }
 
-export function AddProductSearch({ productSearch, setProductSearch, filteredProducts, onAddProduct, precoPrevisto }: AddProductSearchProps) {
+export function AddProductSearch({
+  productSearch, setProductSearch, filteredProducts, onAddProduct, precoPrevisto, estadoCatalogo, onTentarDeNovo,
+}: AddProductSearchProps) {
   return (
     <div className="border rounded-lg p-3 bg-muted/30 space-y-2">
       <div className="relative">
@@ -49,7 +55,16 @@ export function AddProductSearch({ productSearch, setProductSearch, filteredProd
           })}
         </div>
       )}
-      {productSearch.length >= 2 && filteredProducts.length === 0 && (
+      {estadoCatalogo === 'falhou' && (
+        <div role="alert" className="text-xs text-status-error text-center py-2 space-y-1">
+          <p>Não consegui carregar o catálogo de produtos — a busca não está vendo nada.</p>
+          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onTentarDeNovo}>Tentar de novo</Button>
+        </div>
+      )}
+      {estadoCatalogo === 'carregando' && productSearch.length >= 2 && (
+        <p className="text-xs text-muted-foreground text-center py-2">Carregando o catálogo…</p>
+      )}
+      {estadoCatalogo === 'ok' && productSearch.length >= 2 && filteredProducts.length === 0 && (
         <p className="text-xs text-muted-foreground text-center py-2">Nenhum produto encontrado</p>
       )}
       {productSearch.length < 2 && (

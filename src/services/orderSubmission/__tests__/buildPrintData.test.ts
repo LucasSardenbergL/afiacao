@@ -67,6 +67,7 @@ function makeParams(over: Partial<Params> = {}): Params {
     results: [],
     companyProfiles: {} as Record<string, CompanyProfile>,
     getServicePrice: () => 25,
+    contasConfirmadas: { oben: true, colacor: true, afiacao: true },
     ...over,
   };
 }
@@ -228,5 +229,28 @@ describe('buildPrintData', () => {
     }));
     expect(bloco.items[0].descricao).toBe('FerramentaMock');
     expect(bloco.items[0].codigo).toBe('7');
+  });
+
+  it('L2-b: envio parcial — só a conta CONFIRMADA ganha cupom; a pendente não imprime "(pendente ERP)" como PV', () => {
+    const out = buildPrintData(makeParams({
+      obenProductItems: [obenItem()],
+      colacorProductItems: [colacorItem()],
+      serviceItems: [svcItem()],
+      results: ['PV Oben 123', 'PV Colacor (pendente ERP)', 'OS Afiação (pendente ERP)'],
+      contasConfirmadas: { oben: true, colacor: false, afiacao: false },
+    }));
+    expect(out.map((d) => d.orderNumber)).toEqual(['123']);
+    expect(out[0].isOben).toBe(true);
+    expect(JSON.stringify(out)).not.toContain('pendente ERP');
+  });
+
+  it('L2-b: controle — tudo confirmado imprime as três vias', () => {
+    const out = buildPrintData(makeParams({
+      obenProductItems: [obenItem()],
+      colacorProductItems: [colacorItem()],
+      serviceItems: [svcItem()],
+      results: ['PV Oben 123', 'PV Colacor 456', 'OS 789'],
+    }));
+    expect(out.map((d) => d.orderNumber)).toEqual(['123', '456', '789']);
   });
 });

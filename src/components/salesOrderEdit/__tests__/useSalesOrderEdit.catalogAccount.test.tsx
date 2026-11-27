@@ -158,4 +158,62 @@ describe('useSalesOrderEdit — catálogo "Adicionar produto" (conta + paginaç�
     expect(result.current.filteredProducts).toHaveLength(1);
     expect(result.current.filteredProducts[0]).toMatchObject({ codigo: 'PAGE2-MARKER' });
   });
+
+  it('#28: catálogo que FALHA não vira "nenhum produto" nem derruba as formas; tentar de novo recupera', async () => {
+    let falhar = true;
+    const pageFor = (): unknown[] => {
+      if (falhar) throw new Error('omie_products 503');
+      return [{ id: 'p-ok', omie_codigo_produto: 7, codigo: 'VOLTOU', descricao: 'Verniz que voltou', unidade: 'UN', valor_unitario: 5, estoque: 1, ativo: true }];
+    };
+    installMocks('oben', pageFor);
+    mockedInvoke.mockResolvedValue({ data: { formas: [{ codigo: '001', descricao: 'À vista' }] }, error: null } as never);
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.estadoCatalogo).toBe('falhou');
+    expect(result.current.cargaDoPedido.estado).toBe('ok');
+    // A fonte vizinha não caiu junto: antes, o `Promise.all` rejeitava e as formas nunca eram gravadas.
+    expect(result.current.formas).toEqual([{ codigo: '001', descricao: 'À vista' }]);
+    expect(result.current.formasErro).toBe(false);
+
+    falhar = false;
+    await act(async () => { await result.current.tentarCatalogoDeNovo(); });
+    expect(result.current.estadoCatalogo).toBe('ok');
+    act(() => { result.current.setProductSearch('VOLTOU'); });
+    expect(result.current.filteredProducts).toHaveLength(1);
+  });
+
+  it('#28 controle: catálogo e formas OK → estadoCatalogo "ok"', async () => {
+    installMocks('oben');
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.estadoCatalogo).toBe('ok');
+  });
+});
+
+describe('useSalesOrderEdit — #40 não encontrado ≠ falhou', () => {
+  function pedidoResponde(resposta: { data: unknown; error: unknown }) {
+    installMocks('oben');
+    mockedFrom.mockImplementation((table) => (table === 'sales_orders'
+      ? { select: () => ({ eq: () => ({ single: () => Promise.resolve(resposta) }) }) }
+      : chainFor(table as string, 'oben', () => [])) as never);
+  }
+
+  it('PGRST116 (a linha não existe) → nao-encontrado', async () => {
+    pedidoResponde({ data: null, error: { code: 'PGRST116', message: '0 rows' } });
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.order).toBeNull();
+    expect(result.current.cargaDoPedido.estado).toBe('nao-encontrado');
+  });
+
+  it('falha de leitura (timeout) → falhou, com o erro — nunca "não encontrado"', async () => {
+    pedidoResponde({ data: null, error: { code: '57014', message: 'statement timeout' } });
+    const { result } = renderHook(() => useSalesOrderEdit(), { wrapper: comQueryClient() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.order).toBeNull();
+    const carga = result.current.cargaDoPedido;
+    expect(carga.estado).toBe('falhou');
+    expect(carga.estado === 'falhou' && (carga.erro as { code: string }).code).toBe('57014');
+  });
 });

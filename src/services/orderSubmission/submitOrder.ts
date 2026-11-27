@@ -22,6 +22,7 @@ import {
   titularDoPedido,
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
+import { contasConfirmadasDoEnvio, todasConfirmadas } from './contasConfirmadas';
 import { ensureSalesOrderRow } from './idempotency';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
@@ -798,6 +799,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   const customerAddressFull = formatCustomerAddress(delivery.selectedAddress, customer) || undefined;
   const customerPhone = storedPhone || '';
 
+  // Uma decisão só por conta: o cupom e o `allConfirmed` leem a MESMA confirmação (L2-b).
+  const confirmacao = contasConfirmadasDoEnvio(errors);
   const printDataList = buildPrintData({
     customer,
     customerAddress: customerAddressFull,
@@ -819,6 +822,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     results,
     companyProfiles,
     getServicePrice,
+    contasConfirmadas: confirmacao,
   });
 
   const allItems: LastOrderItem[] = [
@@ -870,13 +874,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     printDataList,
     lastOrderData,
     errors,
-    allConfirmed: !errors.some(e =>
-      e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie' ||
-      e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor' ||
-      e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
-      e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
-      e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor' ||
-      e.step.startsWith('afiacao_') || e.step === 'aguardar_os_afiacao'),
+    allConfirmed: todasConfirmadas(confirmacao),
     bloqueiosCredito,
     bloqueioAtp,
   };

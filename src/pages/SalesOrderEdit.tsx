@@ -10,6 +10,7 @@ import { formatPrecoOuAusente } from '@/lib/format';
 import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentComboboxEdit';
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
+import { mensagemDaFalhaDoPedido } from '@/components/salesOrderEdit/types';
 import { OrderItemCard } from '@/components/salesOrderEdit/OrderItemCard';
 import { useParams } from 'react-router-dom';
 import {
@@ -25,6 +26,10 @@ const EditorDoPedido = () => {
     notes,
     setNotes,
     loading,
+    cargaDoPedido,
+    recarregarPedido,
+    estadoCatalogo,
+    tentarCatalogoDeNovo,
     saving,
     formas,
     selectedParcela,
@@ -76,6 +81,24 @@ const EditorDoPedido = () => {
   }
 
   if (!order) {
+    // #40: só "não encontrado" quando o banco respondeu que a linha não existe. Falha de leitura é OUTRA
+    // tela, com o motivo e "Tentar de novo" — antes as duas diziam "Pedido não encontrado".
+    if (cargaDoPedido.estado === 'falhou') {
+      return (
+        <div className="min-h-screen bg-background pb-24">
+          <div role="alert" className="flex flex-col items-center justify-center gap-3 pt-32 px-4 text-center">
+            <AlertCircle className="h-6 w-6 text-status-error" />
+            <p className="font-medium">Não consegui abrir o pedido</p>
+            <p className="text-sm text-muted-foreground">
+              {mensagemDaFalhaDoPedido(cargaDoPedido.erro, typeof navigator === 'undefined' || navigator.onLine)}
+            </p>
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => { void recarregarPedido(); }}>
+              <RefreshCw className="h-4 w-4" /> Tentar de novo
+            </Button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-background pb-24">
         <div className="flex items-center justify-center pt-32">
@@ -205,6 +228,8 @@ const EditorDoPedido = () => {
                 filteredProducts={filteredProducts}
                 onAddProduct={addProduct}
                 precoPrevisto={precoPrevisto}
+                estadoCatalogo={estadoCatalogo}
+                onTentarDeNovo={() => { void tentarCatalogoDeNovo(); }}
               />
             )}
 
