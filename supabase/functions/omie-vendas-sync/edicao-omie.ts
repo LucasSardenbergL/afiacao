@@ -343,7 +343,7 @@ export function versaoDaEdicao(input: { presente: boolean; informada: unknown })
   return { ok: false, motivo: "a versão do pedido enviada pela tela é ilegível — recarregue o pedido; nada foi alterado." };
 }
 
-export const MOTIVO_EDICAO_CONCORRENTE =
+const MOTIVO_EDICAO_CONCORRENTE =
   "o pedido mudou desde que esta tela foi aberta (outra edição, envio, exclusão ou mudança de status). " +
   "Nada foi alterado no Omie — recarregue o pedido para ver a versão atual.";
 

@@ -62,7 +62,7 @@ export const TRAVA_EM_ANDAMENTO: TravaDoEnvio = {
   mensagem: 'O Omie ainda está processando este salvamento. Recarregue o pedido em alguns minutos para ver como ele ficou — não salve de novo antes disso.',
 };
 
-export const TRAVA_POSSE_ILEGIVEL: TravaDoEnvio = {
+const TRAVA_POSSE_ILEGIVEL: TravaDoEnvio = {
   tipo: 'concorrente',
   mensagem: 'Não consegui conferir se este pedido está sendo salvo em outro lugar. Recarregue o pedido antes de editar.',
 };
