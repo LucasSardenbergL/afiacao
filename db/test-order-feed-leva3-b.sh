@@ -61,7 +61,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               invoker_off:MIG!POS_FALHOU
               total_anon:MIG!POS_FALHOU
               definer_total:MIG!POS_FALHOU"
-  falhas=0
+  falhas=0; vermelhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
     echo "❌ CONTROLE VERMELHO — sem linha de base, a falsificação não prova nada"; tail -20 "/tmp/falsif-${SLUG}-controle.log"; exit 1
@@ -92,8 +92,11 @@ if [ "${1:-}" = "--falsificar" ]; then
       grep -q "^  ✅ $a " "$log" || { echo "❌ $nome: $a (controle) devia seguir VERDE"; falhas=$((falhas+1)); }
     done
     [ "$falhas" = "$antes" ] || continue
+    vermelhas=$((vermelhas+1))
     echo "  ✅ $nome → vermelho em [$reds]${greens:+, verde em [$greens]}"
   done
+  # Recibo do núcleo de CI (db/roda-nucleo-ci.sh): exatamente um, só neste modo.
+  echo "SABOTAGENS: $vermelhas vermelhas / $falhas falhas"
   [ "$falhas" = 0 ] || { echo "❌ FALSIFICAÇÃO FALHOU ($falhas)"; exit 1; }
   echo "✅ FALSIFICAÇÃO OK — todas as sabotagens ficaram vermelhas onde deviam"
   exit 0
@@ -108,6 +111,7 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 # nome de variável) saía 0 com metade dos asserts sem rodar — o bash 3.2 do macOS com `set -e` entrega
 # `$?` = 0 dentro do trap. Sem chegar ao fim, sai 1; com erro conhecido, mantém o código dele.
 FIM=0
+# shellcheck disable=SC2154  # rc é atribuído dentro do próprio trap (aspas simples: expande no disparo)
 trap 'rc=$?; cleanup; if [ "$rc" != 0 ]; then exit "$rc"; fi; [ "$FIM" = 1 ] || { echo "ABORTOU antes do fim (exit forçado a 1)"; exit 1; }' EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c TimeZone=UTC" -l "$TMPD/pg.log" -w start >/dev/null
@@ -262,7 +266,7 @@ como() { # $1 uid, $2 sql → última linha
   Pq -c "SET ROLE authenticated; SET test.uid = '$1'; SET test.role = 'authenticated'; $2" 2>&1 | tail -1
 }
 F=00000000-0000-0000-0000-0000000000f1; A1=00000000-0000-0000-0000-0000000000a1
-C1=00000000-0000-0000-0000-0000000000c1; C3=00000000-0000-0000-0000-0000000000c3
+C3=00000000-0000-0000-0000-0000000000c3
 
 # ── catálogo ─────────────────────────────────────────────────────────────────────────────────────
 eq I1 "security_invoker da view" "$(Pq -c "SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = 'public.order_feed'::regclass")" "security_invoker=true"
@@ -350,6 +354,7 @@ eq E10 "2ª recuperação não acha nada" "$(Pq -c "SELECT private.sales_orders_
 eq C1 "cron agendado" "$(Pq -c "SELECT schedule || ' ' || active FROM cron.job WHERE jobname = 'sales-orders-exclusao-recuperar'")" "*/10 * * * * true"
 
 echo "═══ $PASS ✅ · $FAIL ❌ ═══"
+echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" = 0 ] || exit 1
 [ "$PASS" = "$TOTAL_ESPERADO" ] || { echo "❌ rodou $PASS asserts, esperado $TOTAL_ESPERADO"; exit 1; }
 FIM=1

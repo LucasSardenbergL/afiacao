@@ -1,0 +1,4 @@
+# Leva 3 /sales PR B (20261127214433): order_feed com origem_omie (procedência Omie), fim exclusivo do período
+# na RPC do valor (paridade com os filtros da lista), busca_base gerada (texto idêntico, 14 colunas antes × depois)
+# e a recuperação server-side da marca de exclusão do usuário (nunca a baixa do reconciliador). 15 sabotagens.
+db/test-order-feed-leva3-b.sh 28 falsificar=15
