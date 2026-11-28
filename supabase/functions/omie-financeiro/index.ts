@@ -1593,7 +1593,8 @@ function heuristicaDRE(desc: string, cod: string, isReceita: boolean, regime: Re
   const upper = (desc + ' ' + cod).toUpperCase();
   if (isReceita) {
     // v1.17: devolução de COMPRA (CR) reduz o CMV (linha redutora, sinal por natureza) — antes caía em
-    // `deducoes` com sinal positivo e reduzia a RECEITA. Devolução/cancelamento de venda segue em deduções.
+    // `deducoes` com sinal positivo e reduzia a RECEITA. Os demais CR com DEVOL/CANCEL seguem em `deducoes`,
+    // mas agora com sinal por natureza: um CR em `deducoes` REDUZ as deduções (zero casos em prod em 2026-11).
     if (upper.includes('DEVOL') && upper.includes('COMPRA')) return { linha: 'cmv', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('DEVOL') || upper.includes('CANCEL')) return { linha: 'deducoes', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('FINANC') || upper.includes('REND') || upper.includes('JUROS REC')) return { linha: 'receitas_financeiras', mapeado: false, viaFallback: true, impostoNaoMapeado: false };

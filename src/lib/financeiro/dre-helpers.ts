@@ -150,7 +150,8 @@ export function classificarLinhaDRE(input: {
 function heuristicaDRE(desc: string, cod: string, isReceita: boolean, regime: RegimeTributario): Omit<ResultadoClassificacao, 'mapeamentoInvalido'> {
   const upper = (desc + ' ' + cod).toUpperCase();
   if (isReceita) {
-    // v1.17: devolução de COMPRA (CR) reduz o CMV (linha redutora, sinal por natureza).
+    // v1.17: devolução de COMPRA (CR) reduz o CMV (linha redutora, sinal por natureza). Os demais CR
+    // DEVOL/CANCEL seguem em `deducoes`, onde o sinal por natureza faz o CR REDUZIR as deduções.
     if (upper.includes('DEVOL') && upper.includes('COMPRA')) return { linha: 'cmv', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('DEVOL') || upper.includes('CANCEL')) return { linha: 'deducoes', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('FINANC') || upper.includes('REND') || upper.includes('JUROS REC')) return { linha: 'receitas_financeiras', mapeado: false, viaFallback: true, impostoNaoMapeado: false };

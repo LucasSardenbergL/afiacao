@@ -12,6 +12,12 @@
 -- consumo, matéria-prima, ativo, serviços) sem uso em títulos — ficam sem decisão nova.
 -- Diário: docs/historico/dre-mapa-proprio-nao-resultado.md.
 --
+-- DEPOIS do script: RECALCULAR a DRE (calcular_dre_year) de colacor 2023–2026 e oben 2024–2026, nos DOIS
+-- regimes — snapshot antigo segue com 1.03.01 em outras_receitas até ser recalculado (série misturada:
+-- YoY, margemAnterior, TTM, forecast). Conferir: todo mês com 1.03.01 tem detalhamento.composicao_cmv.
+-- ⚠️ ROLLBACK: reverter este MAPA (1.03.01 → outras_receitas) ANTES de qualquer volta da edge para ≤ v1.16
+-- (inclusive reversão pelo sync do Lovable): motor sem sinal + mapa em cmv SOMA a devolução no CMV (~2× o erro).
+--
 -- Anti-deriva: UPDATE só onde a linha vigente é `outras_receitas` (a decisão de 2026-11-22); a
 -- POSTCONDIÇÃO exige os 2 pares em `cmv` E a descrição do Omie igual à da decisão.
 -- ⚠️ `v_fonte_esperada` = hash de `omie-financeiro` em supabase/functions/_shared/sonda-fingerprints.ts
@@ -21,7 +27,7 @@
 DO $pre$
 DECLARE
   v_versao_esperada constant text := 'v1.17-sinal-natureza-cmv-redutora';
-  v_fonte_esperada  constant text := '28f8600de5b1906d105b82d5ce4ba02e1439c88a270e3a7a97efa2649df08841';
+  v_fonte_esperada  constant text := 'ddbbae4e3ea80fdd74923092ccf3a5e7210cd21eb575c55f906d67d71a37f317';
   v record;
 BEGIN
   SELECT t.versao, t.fonte, t.via, t.observado_em INTO v
