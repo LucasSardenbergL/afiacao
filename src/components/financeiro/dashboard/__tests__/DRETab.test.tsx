@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DRETab } from '../DRETab';
 import { makeDRE } from './factories';
+import { fmtCompact } from '@/components/financeiro/dashboard/format';
 
 const row = makeDRE({
   mes: 1,
@@ -24,6 +25,24 @@ describe('DRETab', () => {
     expect(screen.getByText('= RESULTADO LÍQUIDO')).toBeTruthy();
     expect(screen.getByText('Jan')).toBeTruthy();
     expect(screen.getByText('Consolidado')).toBeTruthy();
+  });
+
+  it('linhas não-operacionais aparecem entre o Resultado Operacional e os Impostos (a conta fecha)', () => {
+    const r = makeDRE({
+      mes: 2, resultado_operacional: 3150, outras_receitas: 70_000, outras_despesas: 20_000,
+      resultado_antes_impostos: 53_150, impostos: 600, resultado_liquido: 52_550,
+    });
+    render(<DRETab data={[r]} view="colacor" ano={2026} />);
+    const labels = screen.getAllByRole('row').map((tr) => tr.querySelector('td')?.textContent ?? '');
+    const i = (l: string) => labels.indexOf(l);
+    expect(i('(+) Outras Receitas')).toBeGreaterThan(i('= Resultado Operacional'));
+    expect(i('(-) Outras Despesas')).toBeGreaterThan(i('(+) Outras Receitas'));
+    expect(i('= Resultado antes dos Impostos')).toBeGreaterThan(i('(-) Outras Despesas'));
+    expect(i('(-) Impostos')).toBeGreaterThan(i('= Resultado antes dos Impostos'));
+    const linha = (l: string) => screen.getAllByRole('row')[i(l)].querySelectorAll('td')[1]?.textContent;
+    expect(linha('(+) Outras Receitas')).toBe(fmtCompact(70_000));
+    expect(linha('(-) Outras Despesas')).toBe(fmtCompact(20_000));
+    expect(linha('= Resultado antes dos Impostos')).toBe(fmtCompact(53_150));
   });
 
   it('categorias não mapeadas → aviso de heurística', () => {

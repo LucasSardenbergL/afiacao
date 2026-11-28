@@ -1057,6 +1057,7 @@ export function exportDRECSV(data: FinDRE[]): string {
     'receita_bruta', 'deducoes', 'receita_liquida', 'cmv', 'lucro_bruto',
     'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
     'despesas_financeiras', 'receitas_financeiras', 'resultado_operacional',
+    'outras_receitas', 'outras_despesas', 'resultado_antes_impostos',
     'impostos', 'resultado_liquido'
   ];
   const header = ['Linha', ...data.map(d => `${meses[d.mes - 1]}/${d.ano}`)];
