@@ -39,7 +39,8 @@ case "$url" in
     if [ -f "$F/atraso" ] && grep -q '^POST' "$F/log"; then
       n=$(cat "$F/atraso"); if [ "$n" -le 0 ]; then cp "$F/vira" "$F/ar"; else echo $((n - 1)) > "$F/atraso"; fi
     fi
-    if [ -f "$F/sem_carimbo" ]; then emite 200 'x=1'; else emite 200 "window.__BUILD_SHA__=\"$(cut -c1-8 "$F/ar")\";"; fi ;;
+    if [ -f "$F/sem_carimbo" ]; then emite 200 'x=1'
+    elif [ -f "$F/carimbo_dev" ]; then emite 200 'window.__BUILD_SHA__="dev";'; else emite 200 "window.__BUILD_SHA__=\"$(cut -c1-8 "$F/ar")\";"; fi ;;
   https://api.test/v1/projects/P) emite 200 "{\"latest_commit_sha\":\"$(cat "$F/ws")\"}" ;;
   https://api.test/v1/projects/P/publish)
     c=$(cat "$F/post_code")
@@ -349,6 +350,34 @@ s_semv_volta() { semeia "$K2" x; vigia; rm -f "$F/vigia"/*; echo "$K1" > "$F/vig
 CENARIO=dec_semv_lib_ultrapassado; s_semv_volta; decide 10 RETIDO "$KH" && tem_dec "RETIDO=edge:supabase/functions/k/index.ts"
 # shellcheck disable=SC2016
 sabota_dec semv_ultra 's/^    \[ -n "\$L" \] \&\& ! git merge-base --is-ancestor "\$AR" "\$L" 2>\/dev\/null \&\& L=""$/    true/' s_semv_volta 10 RETIDO "$KH"
+
+# ═══ Rodada 2 — PR B: B1, carimbo ausente/inválido ═══════════════════════════════════════════════
+# o motivo diz o que o bundle traz no lugar do carimbo (27/11: o asset sumiu antes de alguém olhar)
+CENARIO=dec_fb_sem;  semeia "$BASE" x; vigia; touch "$F/sem_carimbo"; decide 6 MECANICA "$FRONT" && tem_dec "visto: nenhum __BUILD_SHA__"
+CENARIO=dec_fb_dev;  semeia "$BASE" x; vigia; touch "$F/carimbo_dev"; decide 6 MECANICA "$FRONT" && tem_dec "visto: __BUILD_SHA__=dev"
+# com o último ar MEDIDO (o vigia passa depois de N ticks): julga dele, com o gate inteiro
+# shellcheck disable=SC2329
+s_fb() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; touch "$F/sem_carimbo"; }
+CENARIO=dec_fb_ok;   s_fb; LP_AR_FALLBACK="$BASE" decide 0 PUBLICAR "$FRONT" && tem_dec "AR_FALLBACK=$BASE"
+# ar-ultimo = HEAD: o servido é desconhecido — republicar a main (não JA_NO_AR)
+CENARIO=dec_fb_head; s_fb; LP_AR_FALLBACK="$FRONT2" decide 0 PUBLICAR "$FRONT2"
+CENARIO=dec_fb_mig;  s_fb; rec "$BASE" "$FRONT2"; LP_AR_FALLBACK="$BASE" decide 10 RETIDO "$FRONT2" && tem_dec "RETIDO=migration:supabase/migrations/1_x.sql"
+CENARIO=dec_fb_naoanc; s_fb; LP_AR_FALLBACK="$FRONT2" decide 6 MECANICA "$FRONT" && tem_dec "NAO_ANCESTRAL"
+CENARIO=dec_fb_lixo; s_fb; LP_AR_FALLBACK=HEAD decide 6 MECANICA "$FRONT"
+# shellcheck disable=SC2329
+s_fb_fora() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; touch "$F/fora"; }
+CENARIO=dec_fb_fora; s_fb_fora; LP_AR_FALLBACK="$BASE" decide 6 MECANICA "$FRONT"
+CENARIO=julgar_fb;   s_fb; LP_AR_FALLBACK="$BASE" julga 6 MECANICA "$FRONT"   # só o --decidir aceita o fallback
+# falsificação: sem a guarda, o fallback igual a HEAD vira JA_NO_AR (o carimbo nunca se conserta)
+# shellcheck disable=SC2329
+s_fb_head() { s_fb; export LP_AR_FALLBACK="$FRONT2"; }
+# shellcheck disable=SC2016
+( s_fb_head; sabota_dec fb_head 's/ \&\& \[ "\$FALLBACK" = 0 \] \&\& fim 0 JA_NO_AR/ \&\& fim 0 JA_NO_AR/' s_fb_head 0 PUBLICAR "$FRONT2"; exit "$fail" ) || fail=1
+# falsificação: fallback para qualquer falha de leitura (site fora) publicaria às cegas
+# shellcheck disable=SC2329
+s_fb_fora_e() { s_fb_fora; export LP_AR_FALLBACK="$BASE"; }
+( s_fb_fora_e; sabota_dec fb_fora 's/^    CARIMBO_INVALIDO\*)$/    *)/' s_fb_fora_e 6 MECANICA "$FRONT"; exit "$fail" ) || fail=1
+unset LP_AR_FALLBACK
 
 # Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
 # numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.

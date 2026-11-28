@@ -143,9 +143,10 @@ abre_issue() {  # [tick] — no início do tick, no máx. 1 tentativa a cada 15 
 grava() { printf '%s\n' "$2" > "$1.tmp.$$" && mv -f "$1.tmp.$$" "$1"; }
 julgar() { (cd "$WT" && LP_LIBERAR_SHA='' bash scripts/lovable-publish.sh --julgar "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
 # a DECISÃO ÚNICA (a mesma do `--esperar`): ar, piso, liberar e o cache do ledger, tudo em $EST
-decidir() { (cd "$WT" && LP_LIBERAR_SHA='' LP_ESTADO="$EST" bash scripts/lovable-publish.sh --decidir "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
+decidir() { (cd "$WT" && LP_LIBERAR_SHA='' LP_AR_FALLBACK="${AR_FB:-}" LP_ESTADO="$EST" bash scripts/lovable-publish.sh --decidir "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
 veredito() { tail -1 "$EST/julgar.txt" | sed -n 's/^VEREDITO=//p'; }
-ar_curto() { sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' "$EST/julgar.txt" | head -1; }
+# o ar MEDIDO: numa decisão por fallback (B1) o `ar=` é o ar-ultimo, não o servido — para intenção/prova vale vazio
+ar_curto() { grep -q '^AR_FALLBACK=' "$EST/julgar.txt" 2>/dev/null && return 0; sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' "$EST/julgar.txt" | head -1; }
 linha() { sed -n "s/^$1=//p" "$EST/julgar.txt" | head -1; }
 
 # ── episódio (RETIDO ou MECANICA): 1 aviso quando começa, lembrete com a idade, fim logado ──────────
@@ -169,17 +170,48 @@ episodio() {  # <retido|mecanica> <motivo> — RETIDO lembra a cada LV_RELEMBRA_
     else avisa "RETIDO ($2) até ${HEAD_SHA:0:8}. $dica"; fi
   fi
 }
-retido_episodio() { episodio retido "$1"; }
+retido_episodio() {
+  episodio retido "$1"
+  # as camadas que seguram o episódio (rodada 2, B5): se ele acabar com o ar na main, alguém publicou por fora
+  sed -n 's/^  - \(supabase\/.*\)$/\1/p' "$EST/julgar.txt" | sort -u > "$EST/retido-camadas.tmp.$$" && mv -f "$EST/retido-camadas.tmp.$$" "$EST/retido-camadas"
+  [ -s "$EST/retido-camadas" ] || printf '%s\n' "${1#*:}" > "$EST/retido-camadas"
+}
 fim_episodio() {  # <veredito> [retido|mecanica] — default retido
   local ini t=${2:-retido} rot=RETIDO; [ "$t" = mecanica ] && rot=MECANICA
   { read -r ini _ < "$EST/$t-episodio"; } 2>/dev/null || return 0
   log "fim do episódio $rot após $(( ($(date +%s) - ini) / 60 )) min (veredito $1, ar=$(ar_curto) main=${HEAD_SHA:0:8})"
+  # B5 (rodada 2): RETIDO que acaba em JA_NO_AR = o ar foi à main SEM o vigia liberar — com a camada que segurava
+  # o episódio não atestada por ele. Só ALERTA (nunca bloqueia): aviso + linha em divida-camadas.
+  if [ "$t" = retido ] && [ "$1" = JA_NO_AR ] && [ -s "$EST/retido-camadas" ]; then
+    local cam; cam=$(paste -sd, - < "$EST/retido-camadas" | cut -c1-300)
+    printf '%s ar=%s main=%s camadas=%s\n' "$(date '+%F %T')" "$(ar_curto)" "${HEAD_SHA:0:8}" "$cam" >> "$EST/divida-camadas"
+    avisa "publicado por fora com camada não atestada: $cam — conferir migration/edge (registro em $EST/divida-camadas)"
+  fi
+  [ "$t" = retido ] && rm -f "$EST/retido-camadas"
   rm -f "$EST/$t-episodio" "$EST/$t-chave"
 }
 
 abre_issue tick
 decidir
 VER=$(veredito)
+# ── carimbo ausente/inválido por N ticks seguidos (rodada 2, B1): 27/11 07:25, `__BUILD_SHA__` sumiu do bundle
+# (Publish por fora logo antes do commit "Work in progress" do bot, 04a04a22f) e o vigia ficaria em MECANICA para
+# sempre — só um Publish conserta o carimbo, e o vigia não publicava sem ele. Agora: julga a partir do último ar
+# MEDIDO (ar-ultimo), com o gate inteiro, e publica. Sem ar-ultimo = fail-closed (segue MECANICA).
+if [ "$VER" = MECANICA ] && grep -q '^  motivo: CARIMBO_INVALIDO' "$EST/julgar.txt"; then
+  NCI=$(( $(head -1 "$EST/carimbo-invalido" 2>/dev/null | tr -cd '0-9' | sed 's/^$/0/') + 1 )); grava "$EST/carimbo-invalido" "$NCI"
+  if [ "$NCI" -ge "${LV_CARIMBO_TICKS:-5}" ]; then
+    AR_FB=$(head -1 "$EST/ar-ultimo" 2>/dev/null)
+    if [[ "$AR_FB" =~ ^[0-9a-f]{40}$ ]]; then
+      [ "$NCI" = "${LV_CARIMBO_TICKS:-5}" ] && log "carimbo inválido há $NCI ticks — julgo a partir do ar-ultimo ${AR_FB:0:8} (republicar conserta o carimbo)"
+      decidir; VER=$(veredito)
+    else
+      AR_FB=""; [ "$NCI" = "${LV_CARIMBO_TICKS:-5}" ] && log "carimbo inválido há $NCI ticks e sem ar-ultimo — fail-closed, sigo em MECANICA"
+    fi
+  fi
+else
+  rm -f "$EST/carimbo-invalido"
+fi
 # o --decidir só LÊ caches; quem os renova é este tick, e decide de novo (recibos → ledger)
 for _ in 1 2 3; do
   case "$VER" in
@@ -327,8 +359,8 @@ if case "$LIBERADO" in *recibos*) true ;; *) false ;; esac; then
   RR=$( (cd "$WT" && timeout 120 bash scripts/lovable-recibos.sh "$RB" "$HEAD_SHA") 2>>"$LOG" | head -1)
   [ "$RR" = 0 ] || { log "recibos relidos antes do disparo: veredito ${RR:-vazio} — não disparo ${HEAD_SHA:0:8}"; rm -f "$EST"/recibos-[0-9a-f]*; exit 0; }
 fi
-AR_ANTES=$(ar_curto)
-log "PUBLICAR ${AR_ANTES}..${HEAD_SHA:0:8} (tentativa $((N + 1)))${LIBERADO:+ liberado: $LIBERADO}"
+AR_ANTES=$(ar_curto)   # vazio numa decisão por fallback (B1): qualquer carimbo válido depois do deploy conta
+log "PUBLICAR ${AR_ANTES:-sem-carimbo}..${HEAD_SHA:0:8} (tentativa $((N + 1)))${LIBERADO:+ liberado: $LIBERADO}"
 [ "${LV_SECO:-0}" = 1 ] && { log "LV_SECO=1 — não chamei o claude"; exit 0; }
 
 # Store PRÓPRIO obrigatório (PR 3). Antes, sem `.vigia-pronto` o vigia caía no store padrão — o blob

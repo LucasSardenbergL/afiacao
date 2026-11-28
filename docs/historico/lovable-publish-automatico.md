@@ -440,3 +440,27 @@ terminaram todos com alguém publicando por fora. Uma varredura (Fable), conferi
 Prova: `test-lovable-vigia.sh` e `test-lovable-publish.sh`. Cada correção tem roteiro próprio e falsificação com
 controle verde na mesma invocação (o real passa, a cópia sabotada na linha da correção reprova), em `LC_ALL=C` e
 `pt_BR.UTF-8`.
+
+### PR B — B1 (carimbo ausente) e B5 (dívida de camada)
+
+- **B1, causa investigada.** Em 27/11, das 07:25 às 07:51, o entry servido `index-Bueh8PF1.js` não trazia nenhum
+  `__BUILD_SHA__="<hex>"`: 25 linhas `CARIMBO_INVALIDO: 0 carimbos`, todas com o mesmo entry. Às 07:25:26 o bot do
+  Lovable commitou `04a04a22f` "Work in progress" (`.env` + `types.ts`). Ou seja, houve um Publish **por fora**, do
+  workspace sujo, segundos antes do commit. A causa provável é o `vite.config.ts` `resolveCommitSha()`: sem
+  variável de commit e sem `.git`, ele cai em `"dev"`, e o regex hex de `sha_no_ar` não casa. Não deu para confirmar
+  os bytes, porque o asset já respondia 404 quando fui olhar. Daí a 1ª correção: o motivo agora traz o que o
+  bundle mostra no lugar, `CARIMBO_INVALIDO: 0 carimbos em <entry> (visto: __BUILD_SHA__=dev)` ou
+  `(visto: nenhum __BUILD_SHA__)`.
+  O "5 h de MECANICA" era quase todo um buraco do launchd: de 07:51 a 12:16 não houve tick, e o M6 agora loga isso.
+- **B1, correção.** O vigia conta os ticks seguidos com `CARIMBO_INVALIDO` (`$EST/carimbo-invalido`). No 5º
+  (`LV_CARIMBO_TICKS`), decide de novo com `LP_AR_FALLBACK=$(cat ar-ultimo)`, o último ar **medido**, gravado a cada
+  leitura boa desde o PR A. O `--decidir` então julga as camadas a partir dele, com o gate inteiro (migration sem
+  recibo e edge sem ledger seguem RETIDO). Nesse modo ele não aceita `JA_NO_AR` nem `NADA_A_PUBLICAR`, porque o
+  servido é desconhecido e republicar a main é o que conserta o carimbo. Só `CARIMBO_INVALIDO` aciona o fallback:
+  site fora ou entry que não baixa seguem `MECANICA`. Sem `ar-ultimo` é **fail-closed**: segue MECANICA e loga
+  `sem ar-ultimo — fail-closed`. Na prova pelo ar, qualquer carimbo válido depois do deploy conta (`AR_ANTES`
+  vazio); republicar sem o carimbo voltar cai no backoff 5/15/60 min e na Issue, como qualquer falha.
+- **B5, dívida de camada.** Quando um episódio RETIDO termina em `JA_NO_AR`, o ar foi à main sem o vigia liberar.
+  As camadas que seguravam o episódio (`$EST/retido-camadas`) viram um aviso "publicado por fora com camada não
+  atestada: X" e uma linha em `$EST/divida-camadas`. Só alerta, nunca bloqueia. Terminar em `NADA_A_PUBLICAR`
+  não gera dívida.

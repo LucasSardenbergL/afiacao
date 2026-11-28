@@ -54,7 +54,7 @@ fim()  { printf '{"type":"result","subtype":"success","result":"%s","total_cost_
 gp()   { printf '{\\"id\\":\\"p\\",\\"latest_commit_sha\\":\\"%s\\"}' "$1"; }
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project
   res t2 '{\"status\":\"pending\",\"deployment_id\":\"dep-123\"}'; fim "VIGIA=DISPARADO dep-123"; } > "$TMP/stream-ok.jsonl"
-for c in ledger recibos sem_ar adiante_limpo adiante_camada ar_divergente lock store intencao buraco caches; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
+for c in ledger recibos sem_ar adiante_limpo adiante_camada ar_divergente lock store intencao buraco caches carimbo; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
 DEPR='{\"status\":\"pending\",\"deployment_id\":\"dep-9\"}'
 # PR 3 — controle do protocolo: cada stream tem deploy aceito (deployment_id lido), mas FORA do roteiro
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project "{\"project_id\":\"$PROJ\",\"name\":\"outro\"}"; res t2 "$DEPR"; } > "$TMP/stream-viol_nome.jsonl"
@@ -87,6 +87,9 @@ cat > "$TMP/origin/scripts/lovable-publish.sh" <<'EOF'
 #!/usr/bin/env bash
 # falso: --julgar e --decidir. $LVT/decisao (e $LVT/decisao-pos, depois que o vigia grava o cache do
 # ledger) substituem a decisão; sem eles: PUBLICAR até o "deploy", JA_NO_AR depois
+if [ "$1" = --decidir ] && [ -n "${LP_AR_FALLBACK:-}" ] && [ -f "$LVT/decisao-fb" ]; then
+  echo "$LP_AR_FALLBACK" >> "$LVT/fb-visto"; cat "$LVT/decisao-fb"; exit 0
+fi
 if [ "$1" = --decidir ] && [ -f "$LVT/decisao" ]; then
   if [ -f "$LVT/decisao-pos" ] && { ls "$LP_ESTADO"/pendencias-* || ls "$LP_ESTADO"/recibos-[0-9a-f]*; } >/dev/null 2>&1; then cat "$LVT/decisao-pos"; else cat "$LVT/decisao"; fi
   exit 0
@@ -384,6 +387,52 @@ r_m4() {
 }
 r_m4 && ok "M4: db:aplicar com recibo aplicada → caches de recibo do vigia apagados (recibos-ultimo fica)" || nok "m4"
 
+# ═══ Rodada 2 — PR B ════════════════════════════════════════════════════════════════════════════
+# B1: carimbo inválido por N ticks → julga do ar-ultimo (gate inteiro) e publica; sem ar-ultimo, fail-closed
+r_carimbo() {
+  local e="$TMP/est-carimbo"; rm -rf "$e"; mkdir -p "$e"; rm -f "$TMP/fb-visto"
+  echo "$A1" > "$e/ar-ultimo"; echo 4 > "$e/carimbo-invalido"; printf '%s\n' "$MEC" > "$TMP/decisao"
+  printf '  ar sem carimbo válido (x)\nAR_FALLBACK=%s\nar=%s x\nAR=%s\nVEREDITO=PUBLICAR\n' "$A1" "${A1:0:8}" "$A1" > "$TMP/decisao-fb"
+  LVT_MANTEM=1 roda carimbo; rm -f "$TMP/decisao" "$TMP/decisao-fb"
+  [ "$(cat "$TMP/fb-visto" 2>/dev/null)" = "$A1" ] && tem "carimbo inválido há 5 ticks — julgo a partir do ar-ultimo ${A1:0:8}" \
+    && tem "PUBLICAR sem-carimbo.." && [ "$CHAMADAS" = 1 ] && tem "PUBLICADO"
+}
+r_carimbo && ok "B1: 5 ticks sem carimbo → decide do ar-ultimo e publica (o carimbo volta)" || nok "carimbo: $(tail -3 "$LOGV")"
+r_carimbo_sem() {
+  local e="$TMP/est-carimbo"; rm -rf "$e"; mkdir -p "$e"; rm -f "$TMP/fb-visto"
+  echo 4 > "$e/carimbo-invalido"; printf '%s\n' "$MEC" > "$TMP/decisao"
+  printf 'AR_FALLBACK=x\nVEREDITO=PUBLICAR\n' > "$TMP/decisao-fb"
+  LVT_MANTEM=1 roda carimbo; rm -f "$TMP/decisao" "$TMP/decisao-fb"
+  tem "sem ar-ultimo — fail-closed" && [ "$CHAMADAS" = "" ] && [ ! -f "$TMP/fb-visto" ]
+}
+r_carimbo_sem && ok "B1: sem ar-ultimo → fail-closed (MECANICA, sem disparo)" || nok "carimbo_sem: $(tail -3 "$LOGV")"
+r_carimbo_cedo() {
+  local e="$TMP/est-carimbo"; rm -rf "$e"; mkdir -p "$e"; rm -f "$TMP/fb-visto"
+  echo "$A1" > "$e/ar-ultimo"; printf '%s\n' "$MEC" > "$TMP/decisao"; printf 'VEREDITO=PUBLICAR\n' > "$TMP/decisao-fb"
+  LVT_MANTEM=1 roda carimbo; rm -f "$TMP/decisao" "$TMP/decisao-fb"
+  [ "$(cat "$e/carimbo-invalido")" = 1 ] && [ "$CHAMADAS" = "" ] && [ ! -f "$TMP/fb-visto" ]
+}
+r_carimbo_cedo && ok "B1: 1º tick sem carimbo → só conta (nada de fallback antes de N)" || nok "carimbo_cedo: $(tail -2 "$LOGV")"
+# B5: RETIDO que acaba em JA_NO_AR → aviso de camada não atestada + divida-camadas; acabar em NADA não é dívida
+RET5='ar=aaaaaaaa x
+Camadas pendentes até x (ar=aaaaaaaa; aplicar ANTES do Publish — DDL → edges):
+  - supabase/functions/_shared/x.ts
+Commits:
+  - abc1234 feat x
+RETIDO=edge:supabase/functions/_shared/x.ts
+VEREDITO=RETIDO'
+r_divida() {
+  local e="$TMP/est-divida"; rm -rf "$e"
+  printf '%s\n' "$RET5" > "$TMP/decisao"; roda divida
+  printf 'ar=%s x\nVEREDITO=JA_NO_AR\n' "$(cut -c1-8 "$TMP/head")" > "$TMP/decisao"; LVT_MANTEM=1 roda divida
+  tem "AVISO: publicado por fora com camada não atestada: supabase/functions/_shared/x.ts" \
+    && grep -q 'camadas=supabase/functions/_shared/x.ts$' "$e/divida-camadas" || { rm -f "$TMP/decisao"; return 1; }
+  printf '%s\n' "$RET5" > "$TMP/decisao"; LVT_MANTEM=1 roda divida
+  printf 'ar=aaaaaaaa x\nVEREDITO=NADA_A_PUBLICAR\n' > "$TMP/decisao"; LVT_MANTEM=1 roda divida; rm -f "$TMP/decisao"
+  [ "$(wc -l < "$e/divida-camadas" | tr -d ' ')" = 1 ] && [ ! -f "$e/retido-camadas" ]
+}
+r_divida && ok "B5: RETIDO → JA_NO_AR registra a dívida e avisa; → NADA_A_PUBLICAR não" || nok "divida: $(tail -3 "$LOGV")"
+
 # lock vinculado ao processo: dono vivo (vigia) segura; dono morto ou PID reciclado (não-vigia) libera
 mkdir -p "$TMP/dono"; printf 'sleep 30\n' > "$TMP/dono/vigia.sh"
 r_lock() {
@@ -507,6 +556,16 @@ if ! ( r_m4 ) >/dev/null 2>&1; then nok "controle: r_m4 reprovou o db-aplicar RE
 elif cmp -s "$RAIZ/scripts/db-aplicar.sh" "$TMP/dba-sab.sh"; then nok "sabotagem m4 não casou"
 elif ( DBA_SOB_TESTE="$TMP/dba-sab.sh" r_m4 ) >/dev/null 2>&1; then nok "db-aplicar sabotado (m4) passou"
 else ok "falsificação m4: real verde, sabotado vermelho"; fi
+
+# rodada 2 — PR B
+# shellcheck disable=SC2016
+falsifica b1_fallback 's/^      decidir; VER=\$(veredito)$/      true/' r_carimbo
+# shellcheck disable=SC2016
+falsifica b1_failclosed 's/^    if \[\[ "\$AR_FB" =~ \^\[0-9a-f\]{40}\$ \]\]; then$/    if true; then/' r_carimbo_sem
+# shellcheck disable=SC2016
+falsifica b1_n_ticks 's/-ge "\${LV_CARIMBO_TICKS:-5}"/-ge 1/' r_carimbo_cedo
+# shellcheck disable=SC2016
+falsifica b5_divida 's/\[ "\$1" = JA_NO_AR \] \&\& \[ -s "\$EST\/retido-camadas" \]/false/' r_divida
 
 [ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK ($OKS)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1
