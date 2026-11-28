@@ -82,10 +82,12 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
     // da proposta davam "permission denied" para o staff (docs/historico/provas-canal-revividas.md).
     // omie_payload/omie_response NUNCA entram no SELECT — eram o motivo do fecho. omie_reconciliado_em entrou pela
     // 20261010210000: o motor de compras (INVOKER) a lê, e o botão "Recalcular" roda como o staff.
+    // busca_base entrou pela 20261127214433 (leva 3 /sales #35): coluna GERADA que a view order_feed
+    // (security_invoker) lê — sem o SELECT, toda leitura de /sales daria 42501. Só SELECT: gerada não se escreve.
     colunasPermitidas: {
       authenticated: {
         SELECT: [
-          'account', 'atendimento_id', 'checkout_id', 'created_at', 'created_by', 'customer_address',
+          'account', 'atendimento_id', 'busca_base', 'checkout_id', 'created_at', 'created_by', 'customer_address',
           'customer_document', 'customer_phone', 'customer_user_id', 'deleted_at', 'discount',
           'hash_payload', 'id', 'items', 'notes', 'omie_numero_pedido', 'omie_pedido_id', 'omie_reconciliado_em',
           'order_date_kpi', 'origem', 'pedido_programado_envio_id', 'ready_by_date', 'status',
