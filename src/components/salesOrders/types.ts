@@ -59,6 +59,8 @@ export interface SalesOrder {
   notes: string | null;
   account?: string;
   _source?: 'sales' | 'afiacao';
+  /** Procedência Omie (hash_payload `omie_*`): nunca editável nem excluível pelo app (revisão /sales #5). */
+  origem_omie?: boolean;
   /**
    * `true` = o jsonb `items` não é uma lista (não se leu). `items` fica `[]` só para a tela não quebrar —
    * NÃO é "pedido sem itens": o painel diz que não leu e cupom/WhatsApp não saem (revisão /sales #27).
@@ -84,7 +86,7 @@ export type LinhaOrderFeed = Omit<Tables<'order_feed'>, 'busca'>;
  */
 export const COLUNAS_FEED_EXIGIDAS = [
   'origin', 'id', 'created_at', 'account', 'customer_user_id',
-  'item_names', 'item_quantity', 'status',
+  'item_names', 'item_quantity', 'status', 'origem_omie',
 ] as const satisfies readonly (keyof LinhaOrderFeed)[];
 
 /** Linha da view `order_feed` com as colunas-chave exigidas e `origin` estreitado (`feedRowDaLinha`). */
@@ -205,20 +207,22 @@ export function rotuloEmpresa(account: string | null | undefined): string {
  * que segue sendo a AUTORIDADE — aqui só se evita oferecer uma ação que a edge sempre recusa:
  *  - o app NÃO cancela nem exclui nada no Omie; só tira o registro do app;
  *  - só contas `oben` e `colacor` (Colacor SC é recusada);
- *  - registro importado do Omie nunca sai (o app espelha o Omie, inclusive os cancelados);
+ *  - registro importado do Omie nunca sai (o app espelha o Omie, inclusive os cancelados). Quem diz
+ *    isso é a PROCEDÊNCIA (`origem_omie`, o hash_payload `omie_*` que a edge confere), não o status:
+ *    o importado muda de etapa (cancelado, separação) e segue sendo do Omie (revisão /sales #5);
  *  - pedido do app que já está no Omie só sai depois que o cancelamento FEITO NO OMIE chegou pelo sync.
  */
 /** Chave estável da linha (a MESMA do `key` React na listagem): o teclado e o retorno de foco a usam. */
 export const chaveDaLinha = (o: Pick<OrderFeedRow, 'origin' | 'id'>) => `${o.origin}-${o.id}`;
 
 export function podeExcluirPedido(
-  order: Pick<OrderFeedRow, 'origin' | 'account' | 'status' | 'omie_pedido_id'>,
+  order: Pick<OrderFeedRow, 'origin' | 'account' | 'status' | 'omie_pedido_id' | 'origem_omie'>,
 ): { ok: true } | { ok: false; motivo: string } {
   if (order.origin !== 'sales') return { ok: false, motivo: 'Ordem de afiação não é excluída por aqui.' };
   if (order.account !== 'oben' && order.account !== 'colacor') {
     return { ok: false, motivo: `Pedidos da ${rotuloEmpresa(order.account)} não são excluídos pelo app.` };
   }
-  if (order.status === 'importado') {
+  if (order.origem_omie || order.status === 'importado') {
     return { ok: false, motivo: 'Importado do Omie: fica no app espelhando o Omie. Para cancelar, cancele no Omie.' };
   }
   if (order.omie_pedido_id != null && order.status !== 'cancelado') {
@@ -259,9 +263,12 @@ export function agruparPorDia(pedidos: OrderFeedRow[], hoje?: string): GrupoDia[
  * Pedido de venda editável: a MESMA lista que a tela de edição usa para bloquear
  * (`BLOCKED_STATUSES`). Antes havia três cópias (card, painel, edição), e mudar uma só
  * deixava a lista oferecer "Editar" onde a edição recusa. Afiação não se edita por aqui.
+ * Pedido de origem Omie (`origem_omie`) nunca é editável, em qualquer status (revisão /sales #5):
+ * a tela de edição o recusa pela mesma procedência.
  */
-export function podeEditarPedido(order: { status: string; _source?: string; origin?: string }): boolean {
+export function podeEditarPedido(order: { status: string; _source?: string; origin?: string; origem_omie?: boolean | null }): boolean {
   if (order.origin === 'afiacao' || order._source === 'afiacao') return false;
+  if (order.origem_omie) return false;
   return !BLOCKED_STATUSES.includes(order.status);
 }
 

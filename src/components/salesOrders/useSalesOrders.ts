@@ -194,6 +194,8 @@ export function useSalesOrders() {
       for (const f of filtrosDoRecorte(recorte)) {
         if (f.op === 'eq') query = query.eq(f.coluna, f.valor);
         else if (f.op === 'in') query = query.in(f.coluna, [...f.valores]);
+        else if (f.op === 'lt') query = query.lt(f.coluna, f.valor);
+        else if (f.op === 'neq') query = query.neq(f.coluna, f.valor);
         else query = query.ilike(f.coluna, f.padrao);
       }
       // Corte do período e/ou "depois da última linha lida" (keyset) — um `.or()` só.

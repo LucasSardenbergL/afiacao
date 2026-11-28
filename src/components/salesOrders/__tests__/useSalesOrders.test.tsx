@@ -11,7 +11,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 type Linha = {
   origin: string; id: string; created_at: string; account: string; order_number: string | null;
   omie_pedido_id: number | null; customer_user_id: string; customer_name: string | null;
-  item_names: string[]; item_quantity: number; status: string; subtotal: number; total: number | null; busca: string;
+  item_names: string[]; item_quantity: number; status: string; subtotal: number; total: number | null; busca: string; origem_omie: boolean;
   /** Só o fake sabe (a view não expõe): a "fonte" de `order_feed_do_vendedor`. */
   vendedor_user_id?: string | null;
 };
@@ -93,6 +93,8 @@ vi.mock('@/integrations/supabase/client', () => {
       select(cols: string, opts?: { count?: string }) { p.select = cols; p.count = opts?.count; return b; },
       eq(col: string, v: string) { p.filtros.push(['eq', col, v]); return b; },
       ilike(col: string, v: string) { p.filtros.push(['ilike', col, v]); return b; },
+      lt(col: string, v: string) { p.filtros.push(['lt', col, v]); return b; },
+      neq(col: string, v: string) { p.filtros.push(['neq', col, v]); return b; },
       order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) { p.ordens.push([col, opts]); return b; },
       or(f: string) { p.or = f; return b; },
       range(a: number, z: number) { p.range = [a, z]; return b; },
@@ -133,6 +135,9 @@ vi.mock('@/integrations/supabase/client', () => {
         const fonte = p.vendedor ? fake.linhas.filter((l) => l.origin === 'sales' && l.vendedor_user_id === p.vendedor) : fake.linhas;
         let rs = fonte.filter((l) => p.filtros.every(([op, col, v]) => {
           const valor = String(l[col as keyof Linha] ?? '');
+          // lt/neq só no fim do período (created_at), comparados como INSTANTE — como o Postgres.
+          if (op === 'lt') return Date.parse(valor) < Date.parse(v);
+          if (op === 'neq') return Date.parse(valor) !== Date.parse(v);
           return op === 'eq' ? valor === v : valor.toLowerCase().includes(v.replace(/^%|%$/g, '').toLowerCase());
         }));
         if (p.in && p.in[0] === 'status') rs = rs.filter((l) => p.in![1].includes(l.status));
@@ -149,6 +154,8 @@ vi.mock('@/integrations/supabase/client', () => {
       && (a.p_status == null || (a.p_status as string[]).includes(l.status))
       && (a.p_desde == null || Date.parse(l.created_at) >= Date.parse(String(a.p_desde))
           || ((a.p_puros as string[] | null) ?? []).some((x) => Date.parse(x) === Date.parse(l.created_at)))
+      && (a.p_ate == null || (Date.parse(l.created_at) < Date.parse(String(a.p_ate))
+          && !((a.p_puros_fim as string[] | null) ?? []).some((x) => Date.parse(x) === Date.parse(l.created_at))))
       && (a.p_customer == null || l.customer_user_id === a.p_customer)
       && (a.p_busca == null || l.busca.includes(String(a.p_busca).replace(/^%|%$/g, ''))));
     const conhecidos = rs.filter((l) => l.total !== null);
@@ -212,6 +219,7 @@ function gerarLinhas(): Linha[] {
       customer_name: 'Cliente Genérico',
       item_names: ['Lixa 120'],
       item_quantity: 1,
+      origem_omie: false,
       status: 'enviado',
       subtotal: 10,
       total: 10,
@@ -642,6 +650,25 @@ describe('useSalesOrders — filtros de status, período e ordem (no servidor)',
     const esperado = fake.linhas.filter((l) => diaDoPedido(l.created_at)! >= hoje).map((l) => l.id).sort();
     expect(esperado.length).toBeGreaterThan(0);
     expect(result.current.orders.map((o) => o.id).sort()).toEqual(esperado);
+  });
+
+  it('#31: "Hoje" tem FIM — pedido de amanhã (data-pura ou hora local) não entra, na lista nem no valor', async () => {
+    const hoje = format(new Date(), 'yyyy-MM-dd');
+    const [a, m, d] = hoje.split('-').map(Number);
+    const fimLocal = new Date(a, m - 1, d + 1).getTime();
+    // Hoje às 12:00Z (entra) · amanhã 00:00Z e 12:00Z (data-pura de AMANHÃ) · 1 min antes e 1 min
+    // depois da meia-noite local de amanhã.
+    const instantes = [Date.UTC(a, m - 1, d, 12), Date.UTC(a, m - 1, d + 1, 0), Date.UTC(a, m - 1, d + 1, 12), fimLocal - 60_000, fimLocal + 60_000];
+    fake.linhas = instantes.map((t, i) => ({ ...fake.linhas[i], created_at: new Date(t).toISOString() }));
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await aplicar(result, () => result.current.setPeriodo('hoje'));
+
+    const esperado = fake.linhas.filter((l) => diaDoPedido(l.created_at) === hoje).map((l) => l.id).sort();
+    expect(esperado.length).toBeGreaterThan(0);
+    expect(esperado.length).toBeLessThan(fake.linhas.length);
+    expect(result.current.orders.map((o) => o.id).sort()).toEqual(esperado);
+    await waitFor(() => expect(result.current.valorRecorte).toMatchObject({ estado: 'ok', pedidos: esperado.length }));
   });
 
   it('"Limpar filtros" zera busca, empresa, status, período e ordem numa escrita só', async () => {

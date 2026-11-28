@@ -27,7 +27,7 @@ const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0
  * O `select` tipado do supabase-js deriva daqui o tipo da linha (`LinhaOrderFeed`).
  */
 const COLUNAS_LISTAGEM_FEED =
-  'origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,item_names,item_quantity,status,subtotal,total' as const;
+  'origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,item_names,item_quantity,status,subtotal,total,origem_omie' as const;
 
 /**
  * Padrão do `.ilike('busca', …)` da listagem, ou `null` quando não há o que buscar.
@@ -104,21 +104,34 @@ export function filtroDoPeriodo(periodo: PeriodoFeed, agora: Date = new Date()):
  * O corte do período ESTRUTURADO: `created_at >= desde` OU `created_at` = um dos `puros` (ISO com
  * `Z`). É daqui que saem os DOIS consumidores — o `.or()` da listagem (`orDoCorte`) e os parâmetros
  * da RPC do valor do recorte (`paramsTotalDoRecorte`): calculado uma vez, nos mesmos instantes.
+ *
+ * FIM exclusivo (revisão /sales #31): `created_at < ate` (meia-noite local de amanhã) E fora de
+ * `purosFim` — as datas-puras do Omie de AMANHÃ (dia UTC) que caem antes da meia-noite local (em
+ * São Paulo, 00:00Z de amanhã = 21h de hoje). Sem o fim, um pedido com data futura entrava em
+ * "Hoje"/"7 dias"/"30 dias". A listagem aplica `.lt` + `.neq`; a RPC recebe `p_ate`/`p_puros_fim`.
  */
 export interface CortePeriodo {
   desde: string;
   puros: string[];
+  ate: string;
+  purosFim: string[];
+}
+
+/** Os instantes de data-pura do Omie (00:00Z e 12:00Z do dia UTC de `dia`) que caem antes de `dia` local. */
+function purosAntesDe(dia: Date): string[] {
+  const puros: string[] = [];
+  for (const hora of [0, 12]) {
+    const puro = Date.UTC(dia.getFullYear(), dia.getMonth(), dia.getDate(), hora);
+    if (puro < dia.getTime()) puros.push(new Date(puro).toISOString());
+  }
+  return puros;
 }
 
 export function corteDoPeriodo(periodo: PeriodoFeed, agora: Date = new Date()): CortePeriodo | null {
   if (periodo === 'tudo') return null;
   const inicio = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() - DIAS_ANTES[periodo]);
-  const puros: string[] = [];
-  for (const hora of [0, 12]) {
-    const puro = Date.UTC(inicio.getFullYear(), inicio.getMonth(), inicio.getDate(), hora);
-    if (puro < inicio.getTime()) puros.push(new Date(puro).toISOString());
-  }
-  return { desde: inicio.toISOString(), puros };
+  const fim = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1);
+  return { desde: inicio.toISOString(), puros: purosAntesDe(inicio), ate: fim.toISOString(), purosFim: purosAntesDe(fim) };
 }
 
 export function orDoCorte(corte: CortePeriodo | null): string | null {
@@ -146,7 +159,9 @@ export interface RecorteFeed {
 export type FiltroRecorte =
   | { op: 'eq'; coluna: 'account' | 'status' | 'customer_user_id'; valor: string }
   | { op: 'in'; coluna: 'status'; valores: readonly string[] }
-  | { op: 'ilike'; coluna: 'busca'; padrao: string };
+  | { op: 'ilike'; coluna: 'busca'; padrao: string }
+  | { op: 'lt'; coluna: 'created_at'; valor: string }
+  | { op: 'neq'; coluna: 'created_at'; valor: string };
 
 export function filtrosDoRecorte(r: RecorteFeed): FiltroRecorte[] {
   const f: FiltroRecorte[] = [];
@@ -156,6 +171,11 @@ export function filtrosDoRecorte(r: RecorteFeed): FiltroRecorte[] {
   if (padrao) f.push({ op: 'ilike', coluna: 'busca', padrao });
   if (r.status === 'rascunhos') f.push({ op: 'eq', coluna: 'status', valor: 'rascunho' });
   else if (r.status !== 'todos') f.push({ op: 'in', coluna: 'status', valores: STATUS_DO_FILTRO[r.status] });
+  // Fim do período (#31) — o início vai no `.or()` (orDoCorte), que não comporta um AND de topo.
+  if (r.corte) {
+    f.push({ op: 'lt', coluna: 'created_at', valor: r.corte.ate });
+    for (const puro of r.corte.purosFim) f.push({ op: 'neq', coluna: 'created_at', valor: puro });
+  }
   return f;
 }
 
@@ -177,6 +197,8 @@ export function paramsTotalDoRecorte(r: RecorteFeed) {
     p_customer: r.cliente ?? undefined,
     p_busca: r.busca ?? undefined,
     p_vendedor: r.vendedor ?? undefined,
+    p_ate: r.corte?.ate ?? undefined,
+    p_puros_fim: r.corte ? [...r.corte.purosFim] : undefined,
   };
 }
 
@@ -328,17 +350,21 @@ export type LinhaDetalheVenda = Pick<
   SalesOrderRow,
   | 'id' | 'customer_user_id' | 'items' | 'subtotal' | 'discount' | 'total' | 'status' | 'notes' | 'account'
   | 'omie_pedido_id' | 'omie_numero_pedido' | 'created_at' | 'customer_address' | 'customer_phone'
->;
+> & Partial<Pick<SalesOrderRow, 'hash_payload'>>;
 
 // sales_orders → SalesOrder: marca a origem e lê `items` por forma. jsonb que NÃO é array (objeto no
 // lugar da lista) vira `[]` para o painel/impressão não crasharem (achado do codex) — MARCADO
 // `itensIlegiveis`: não é "sem itens", e o documento ao cliente não sai (revisão /sales #27).
-export function mapSalesDetail(row: LinhaDetalheVenda): SalesOrder {
+export function mapSalesDetail({ hash_payload, ...row }: LinhaDetalheVenda): SalesOrder {
+  // Procedência Omie: o MESMO teste da view (`origem_omie`) e da edge — hash_payload `omie_*`.
+  // `hash_payload` não lido (undefined) fica sem a marca: quem decide o "Editar" é o status, e a
+  // tela de edição recusa a procedência por conta própria.
+  const origem = hash_payload === undefined ? {} : { origem_omie: typeof hash_payload === 'string' && hash_payload.startsWith('omie_') };
   if (!Array.isArray(row.items)) {
-    return { ...row, discount: row.discount ?? undefined, items: [], itensIlegiveis: true, _source: 'sales' };
+    return { ...row, ...origem, discount: row.discount ?? undefined, items: [], itensIlegiveis: true, _source: 'sales' };
   }
   const items = row.items.map((it, i) => itemDetalheDoJson(it, `sales_orders ${row.id} item ${i}`));
-  return { ...row, discount: row.discount ?? undefined, items, _source: 'sales' };
+  return { ...row, ...origem, discount: row.discount ?? undefined, items, _source: 'sales' };
 }
 
 const ehTextoOuNulo = (v: Json): v is string | null => v === null || typeof v === 'string';

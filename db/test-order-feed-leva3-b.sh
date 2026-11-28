@@ -234,7 +234,7 @@ fi
 # shellcheck disable=SC2016  # $1 nas expressões é do PERL (grupo capturado), não do shell
 case "${SABOTAGEM:-}" in
   "") ;;
-  origem_sem_escape)    sabotar "s/so\\.hash_payload LIKE 'omie\\\\_%'/so.hash_payload LIKE 'omie_%'/" ;;
+  origem_sem_escape)    sabotar "s/so\\.hash_payload LIKE 'omie\\\\_%'/so.hash_payload LIKE 'omie_%'/; s/IS DISTINCT FROM .7f74d95f5205b25fa9e35c64f20bb44e. THEN/IS DISTINCT FROM NULL AND false THEN/" ;;
   busca_sem_base)       sabotar 's/\) \|\| f\.busca_base\)::text AS busca/) || \x27\x27)::text AS busca/' ;;
   busca_base_vazia)     sabotar 's/so\.busca_base               AS busca_base,/(E\x27\\n\x27 || COALESCE(so.omie_numero_pedido, \x27\x27) || E\x27\\n\\n\x27 || round(COALESCE(so.total, 0), 2)::text || E\x27\\n\x27 || replace(round(COALESCE(so.total, 0), 2)::text, \x27.\x27, \x27,\x27)) AS busca_base,/; s/IF v_div <> 0 THEN/IF false THEN/; s/IS DISTINCT FROM .7f74d95f5205b25fa9e35c64f20bb44e. THEN/IS DISTINCT FROM NULL AND false THEN/' ;;
   fim_sem_puros)        sabotar 's/ AND NOT \(f\.created_at = ANY \(COALESCE\(p_puros_fim, .\{\}.::timestamptz\[\]\)\)\)//g' ;;

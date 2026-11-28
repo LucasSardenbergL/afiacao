@@ -21,6 +21,7 @@ function order(p: Partial<OrderFeedRow> = {}): OrderFeedRow {
     customer_name: 'ACME Ltda',
     item_names: ['Verniz'],
     item_quantity: 2,
+    origem_omie: false,
     status: 'enviado',
     subtotal: 100,
     total: 100,
