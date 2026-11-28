@@ -73,7 +73,8 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // medido). Os títulos saem de cp_fornecedor: o TOTAL `ncg` não muda (sem recorrente de folha em prod), mas
 // `saldo_tesouraria` (saldo − folha_30d) passa a descontar a folha medida. Lê fin_categoria_fluxo_mapping
 // (service_role); deixa de ler fin_config_cashflow.folha_categorias_codigos. Sem migration.
-export const VERSAO = "v2.7-ncg-mapa-fluxo";
+// v2.7 → v2.8: linhas cr_omie/cp_omie ganham `fluxo_linha` do mapa do DFC (./linha-fluxo.ts) — só rótulo; valores idênticos.
+export const VERSAO = "v2.8-projecao-linha-fluxo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
