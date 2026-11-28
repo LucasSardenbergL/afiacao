@@ -15,6 +15,7 @@ import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
 import { resolveCallParty, shouldAutoRecord, type ResolvedCallParty } from '@/lib/call-log/recording-policy';
 import { logCallStart, logAnswered, logClosed, enrichCallLog, markRecorded } from '@/lib/call-log/record';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
+import { track } from '@/lib/analytics';
 // O context OBJECT + hooks + types vivem no módulo LEVE webrtc-call-context.ts
 // (sem jssip). Este .tsx é o Provider PESADO — só o ConditionalWebRTCProvider
 // pode importá-lo (via dynamic import); consumidores usam o módulo leve.
@@ -38,9 +39,21 @@ const SIP_TO_PUBLIC: Record<SipCallState, WebRTCCallState> = {
   failed: 'failed',
 };
 
+const AVISO_REGISTRO_FALHOU = 'A conversa não foi salva no histórico. Registre pelo /farmer/calls e avise o gestor.';
+
+/**
+ * Falha ao gravar a conversa NUNCA fica só no console (design, anti-meta "erro engolido"): a vendedora
+ * precisa saber na hora para registrar à mão, e o track mede a taxa de perda.
+ */
+function avisarRegistroFalhou(motivo: 'insert' | 'excecao', codigo: string, detalhe: unknown): void {
+  console.error(`[WebRTCCallContext] persistCallSession ${motivo}:`, detalhe);
+  toast.error(AVISO_REGISTRO_FALHOU);
+  track('telefonia.registro_falhou', { motivo, codigo });
+}
+
 /**
  * Persiste a sessão de chamada em `farmer_calls` ao final.
- * Fire-and-forget: erros logam apenas, não interrompem o cleanup da chamada.
+ * Fire-and-forget: não interrompe o cleanup da chamada, mas a falha é visível (toast + track).
  * Definido fora do Provider pra não ser recriado a cada render.
  */
 async function persistCallSession(opts: {
@@ -76,10 +89,9 @@ async function persistCallSession(opts: {
       atendimentoId: opts.atendimentoId,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: inserted, error } = await supabase.from('farmer_calls').insert(payload as any).select('id').single();
+    const { data: inserted, error } = await supabase.from('farmer_calls').insert(payload).select('id').single();
     if (error || !inserted) {
-      console.error('[WebRTCCallContext] persistCallSession insert failed:', error);
+      avisarRegistroFalhou('insert', error?.code || 'sem_linha', error);
       return;
     }
 
@@ -91,7 +103,7 @@ async function persistCallSession(opts: {
       }).catch((e) => console.error('[WebRTCCallContext] dispatch extração falhou (varredura pega depois):', e));
     }
   } catch (err) {
-    console.error('[WebRTCCallContext] persistCallSession error:', err);
+    avisarRegistroFalhou('excecao', err instanceof Error ? err.name : 'desconhecido', err);
   }
 }
 

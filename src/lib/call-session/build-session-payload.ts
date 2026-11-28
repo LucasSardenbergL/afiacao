@@ -1,6 +1,10 @@
 import type { SpinAnalysis } from '@/lib/call/spin/types';
 import type { TranscriptTurn } from '@/lib/transcription/types';
+import type { Database, Json } from '@/integrations/supabase/types';
 import { aggregateEntities } from './aggregate-entities';
+
+type FarmerCallType = Database['public']['Enums']['farmer_call_type'];
+type FarmerCallResult = Database['public']['Enums']['farmer_call_result'];
 
 export interface BuildSessionPayloadInput {
   farmerId: string;
@@ -24,19 +28,20 @@ export interface SessionPayload {
   started_at: string;
   ended_at: string;
   duration_seconds: number;
-  transcript: unknown;          // jsonb
-  analyses: unknown;            // jsonb
-  entities_extracted: unknown;  // jsonb
-  // defaults pra campos que vendedor edita depois
-  call_type: string;
-  call_result: string;
+  transcript: Json;
+  analyses: Json;
+  entities_extracted: Json;
+  // defaults pra campos que vendedor edita depois — tipados pelo ENUM do banco: com `string`
+  // o payload aceitou 'venda'/'atendeu', o Postgres recusou todo insert e farmer_calls ficou com 0 linhas.
+  call_type: FarmerCallType;
+  call_result: FarmerCallResult;
   /** Reverse-link ligação ↔ pedidos (best-effort). Mesmo uuid de sales_orders.atendimento_id. */
   atendimento_id: string | null;
 }
 
 /**
  * Monta o payload pronto pra `supabase.from('farmer_calls').insert(payload)`.
- * Defaults conservadores em call_type e call_result — vendedor edita pelo form.
+ * Defaults de conversa em call_type/call_result (valores do enum) — vendedor edita depois.
  */
 export function buildSessionPayload(input: BuildSessionPayloadInput): SessionPayload {
   const durationMs = input.endedAt.getTime() - input.startedAt.getTime();
@@ -61,11 +66,14 @@ export function buildSessionPayload(input: BuildSessionPayloadInput): SessionPay
     ended_at: input.endedAt.toISOString(),
     duration_seconds: durationSeconds,
     transcript: transcriptLite,
-    analyses: input.analyses,
-    entities_extracted: entities,
-    // Defaults — vendedor edita depois no form
-    call_type: 'venda',
-    call_result: 'atendeu',
+    // Interfaces TS não têm index signature, então não casam com `Json` mesmo sendo JSON puro.
+    // O cast fica nos 2 campos jsonb — call_type/call_result seguem checados contra o enum.
+    analyses: input.analyses as unknown as Json,
+    entities_extracted: entities as unknown as Json,
+    // Defaults de CONVERSA (design 6.1: farmer_calls só nasce de ligação conectada e com conteúdo).
+    // O card de fim (fase 2, item 10) sobrescreve o resultado.
+    call_type: 'follow_up',
+    call_result: 'contato_sucesso',
     atendimento_id: input.atendimentoId ?? null,
   };
 }
