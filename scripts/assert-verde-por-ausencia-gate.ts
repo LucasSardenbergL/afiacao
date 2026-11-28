@@ -128,6 +128,7 @@ export const CATRACA_SQL: Readonly<Record<string, number>> = {
   'db/aplicar-sync-reprocess-degradado-vigiadas.sql': 1,
   'db/reparo-15o-pedido-11701.sql': 7,
   'db/reparo-passivo-coerencia-pedido-venda.sql': 3,
+  'db/2026-11-28-aplicar-migration-20261127214433-order-feed.sql': 2,   // aplicado (db:aplicar, recibo #1564) — cópia sem envelope da migration do #4301; corpo = bytes do recibo
 };
 
 const PROVA = /^db\/test-[^/]*\.sh$/;
