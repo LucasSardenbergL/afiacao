@@ -55,6 +55,25 @@ describe('caixaDaA1 (transporte A1 → A4, plano v6 C1)', () => {
     expect(r.confianca).toBe('baixa');
     expect(r.motivos).toEqual(['Folha dos próximos 30 dias sem fonte na A1 — o saldo de tesouraria não descontou a folha.']);
   });
+  it('folha sem fonte + saldo datado: baixa com UM haircut (não dois) e os dois motivos', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: 'Saldo datado.' }, ncg: { fontes: { folha: false } } }, 21);
+    expect(r.disponivel).toBeCloseTo(32500, 6);
+    expect(r.confianca).toBe('baixa');
+    expect(r.motivos).toHaveLength(2);
+  });
+  it('folha não-booleana ("true" string) não atesta → média', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: { fontes: { folha: 'true' as unknown as boolean } } }, 21);
+    expect(r.confianca).toBe('media');
+  });
+  it('folha sem fonte: crescer que caberia no caixa estimado cai em falta_dado (não financiar_ja)', () => {
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: { fontes: { folha: false } } }, 21);
+    const r = montarFilaAcoes({
+      candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 1000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
+      caixaPorEmpresa: { oben: caixa },
+      hurdlePorEmpresa: { oben: 0.15 },
+    });
+    expect(r.fila.find((a) => a.tipo === 'crescer')!.status).toBe('falta_dado');
+  });
   it('A1 sem ncg.fontes.folha → média, desconto da folha não atestado', () => {
     const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null } }, 21);
     expect(r).toMatchObject({ disponivel: 65000, confianca: 'media' });

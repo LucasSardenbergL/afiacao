@@ -33,6 +33,7 @@ describe('NcgDecomposicao — folha/tributos sem fonte ≠ zero', () => {
     projMock.mockReturnValue(comFontes({ folha: false, tributos: true }));
     render(<NcgDecomposicao />);
     expect(screen.getByText('⚠ Parcial — sem fonte: folha')).toBeInTheDocument();
+    expect(screen.getByText('⚠ NCG parcial — PCO sem todas as fontes')).toBeInTheDocument();
   });
 
   it('as duas sem fonte: nomeia folha e tributos', () => {
@@ -46,6 +47,7 @@ describe('NcgDecomposicao — folha/tributos sem fonte ≠ zero', () => {
     render(<NcgDecomposicao />);
     expect(screen.queryByText(/Parcial — sem fonte/)).not.toBeInTheDocument();
     expect(screen.getByText('CP fornecedor + Folha + Tributos')).toBeInTheDocument();
+    expect(screen.queryByText(/NCG parcial — PCO/)).not.toBeInTheDocument();
   });
 
   it('engine anterior (sem `fontes`): mantém o rótulo de sempre', () => {

@@ -105,6 +105,9 @@ export function NcgDecomposicao() {
             <div className="text-xs text-muted-foreground mt-1">
               {data.ncg.valor > data.indicadores.liquidez_operacional_liquida ? '⚠ Excede liquidez operacional' : 'Dentro da liquidez'}
             </div>
+            {pcoParcial && (
+              <div className="text-xs text-status-warning mt-1">⚠ NCG parcial — PCO sem todas as fontes</div>
+            )}
           </CardContent>
         </Card>
       </div>

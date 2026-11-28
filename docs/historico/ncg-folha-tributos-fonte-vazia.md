@@ -109,3 +109,6 @@ Também está fora deste PR a resposta ao vivo, que ainda devolve `folha_30d = 0
 - **`NcgDecomposicao.tsx`:** com `fontes.x === false`, a barra da parcela some (`null`, não R$ 0), o rótulo passa a dizer "(sem fonte)" e o card de PCO vira "⚠ Parcial — sem fonte: …". O motivo já chegava em `confianca_dados.motivos`.
 - **`src/lib/financeiro/ncg-helpers.ts` removido** (ainda com a regra `3.99`). Só o próprio teste o importava.
 - **Ficam com o founder, não com código:** tirar o parcelamento da NCG, que muda o total, e saber por que os títulos de folha da colacor_sc não são baixados no Omie desde julho.
+- **Revisão adversarial** (subagente independente; o Codex ficou sem cota até 02/12, exit 79): **sem P0**. Neste PR também entraram a marca "NCG parcial" no card da NCG e os testes de folha sem fonte com saldo datado, de valor não-booleano e de `montarFilaAcoes` no vitest.
+- **Próximo passo (P1, não confirmado):** `fin-funding/index.ts` (~527-613) classifica sobra e déficit pelas `semanas` da A1 sem ler `ncg.fontes`. Se não houver recorrente, a folha pode ficar fora das saídas semanais. É preciso rastrear antes de mexer.
+- **P2 aceitos:** folha vencida há mais de 30 dias fica em `cp_fornecedor` com `fontes.folha = true` (por desenho, com motivo). O `caixa_livre` do `fin-funding` e o snapshot gravam o saldo sem o rótulo de confiança.
