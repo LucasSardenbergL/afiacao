@@ -408,6 +408,35 @@ CENARIO=dec_acao_edge; s_edge_nomes; decide 10 RETIDO "$EDGE" && tem_dec "ACAO=d
 # falsificação: sem acoes no retido() o RETIDO volta a não dizer o comando nem as edges
 sabota_msg acao_edge 's/^  acoes$/  true/' s_edge_nomes "ACAO=deployar edge(s): f outra-edge" 10 RETIDO "$EDGE"
 
+# ═══ Rodada 2 — PR F: --atraso (o sensor M8) ══════════════════════════════════════════════════════
+# atrasa <rc> <head> [alvo] → ATR_OUT; LP_AGORA = 2 h no futuro (os commits do teste são de agora)
+atrasa() { local esp="$1" head="$2" alvo="${3:-$ALVO}" rc; : > "$F/log"
+  ATR_OUT=$(PATH="$BIN:$PATH" LP_FAKE="$F" APP_URL=https://app.test LOVABLE_API_BASE=https://api.test LP_AGORA=$(( $(date +%s) + 7200 )) \
+    env -u LOVABLE_API_KEY bash "$alvo" --atraso "$head" 2>&1); rc=$?
+  grep -q 'api.test' "$F/log" && { echo "FALHOU [$CENARIO]: --atraso tocou a API"; fail=1; return 1; }
+  [ "$rc" = "$esp" ] && return 0
+  echo "FALHOU [$CENARIO]: --atraso rc=$rc (esperado $esp)"; printf '%s\n' "$ATR_OUT" | sed 's/^/    /'; fail=1; return 1; }
+tem_atr() { printf '%s' "$ATR_OUT" | grep -qE -- "$1" || { echo "FALHOU [$CENARIO]: faltou /$1/"; printf '%s\n' "$ATR_OUT" | sed 's/^/    /'; fail=1; }; }
+CENARIO=atraso_publicar; semeia "$BASE" x; atrasa 0 "$FRONT" && { tem_atr '^ATRASO_MIN=1(19|20)$'; tem_atr "^ATRASO_DE=${FRONT:0:8} "; tem_atr '^VEREDITO=PUBLICAR$'; }
+# shellcheck disable=SC2329
+s_atr_retido() { semeia "$BASE" x; }
+CENARIO=atraso_retido;   s_atr_retido; atrasa 0 "$FRONT2" && { tem_atr "^ATRASO_DE=${FRONT:0:8} "; tem_atr '^VEREDITO=RETIDO$'; tem_atr '^ACAO=bun run db:aplicar'; }
+CENARIO=atraso_ja;       semeia "$FRONT2" x; atrasa 0 "$FRONT2" && tem_atr '^ATRASO_MIN=0$'
+CENARIO=atraso_nada;     semeia "$FRONT" x; atrasa 0 "$DOC" && tem_atr '^ATRASO_MIN=0$'
+CENARIO=atraso_mecanica; semeia "$BASE" x; touch "$F/sem_carimbo"; atrasa 6 "$FRONT" \
+  && { printf '%s' "$ATR_OUT" | grep -q '^ATRASO_MIN=' && { echo "FALHOU [$CENARIO]: MECANICA com número"; fail=1; }; }
+# falsificação: o mais NOVO em vez do mais velho → a idade mente (subestima o atraso)
+# shellcheck disable=SC2016
+sed 's/for c in \$(git rev-list --reverse "\$A\.\.\$H"); do/for c in $(git rev-list "$A..$H"); do/' "$ALVO" > "$base/sab-atr.sh"
+if cmp -s "$ALVO" "$base/sab-atr.sh"; then echo "FALHOU [sab-atr]: o sed não casou"; fail=1
+else s_atr_retido; ( atrasa 0 "$FRONT2" "$base/sab-atr.sh"; printf '%s' "$ATR_OUT" | grep -q "^ATRASO_DE=${FRONT:0:8} " ) >/dev/null 2>&1 \
+  && { echo "FALHOU [sab-atr]: o sabotado achou o mesmo commit"; fail=1; }; fi
+# falsificação: MECANICA vira "em dia" → o sensor calaria o vigia quebrado
+# shellcheck disable=SC2016
+sed 's/^    \*) printf .%s\\n. "\$J" | grep -E .\^  motivo:. || true; echo "VEREDITO=\${V:-MECANICA}"; exit 6 ;;$/    *) echo ATRASO_MIN=0; exit 0 ;;/' "$ALVO" > "$base/sab-atr2.sh"
+if cmp -s "$ALVO" "$base/sab-atr2.sh"; then echo "FALHOU [sab-atr2]: o sed não casou"; fail=1
+else semeia "$BASE" x; touch "$F/sem_carimbo"; ( atrasa 6 "$FRONT" "$base/sab-atr2.sh" ) >/dev/null 2>&1 && { echo "FALHOU [sab-atr2]: o sabotado reportou MECANICA"; fail=1; }; fi
+
 # Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
 # numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.
 sabota() { # sabota <nome> <sed> <semeador> <rc> <regex> <sha> — o semeador roda antes de CADA lado

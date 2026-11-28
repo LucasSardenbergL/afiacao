@@ -1,0 +1,68 @@
+name: Lovable ar atrasado
+
+# SENSOR (rodada 2 do vigia do Publish, M8 — docs/historico/lovable-publish-automatico.md): só MEDE e avisa.
+# Quem publica é o vigia do Mac (scripts/lovable-vigia.sh); quando ele para (Mac dormindo, launchd fora, store
+# sem token) ou o front fica RETIDO por camada, nada fora do Mac notava — 5 de 5 episódios RETIDO de 22–27/11
+# acabaram com alguém publicando por fora, e o #3106 ficou fora do ar até o clique. Aqui: a cada 30 min, se o
+# front publicável da main espera o ar há mais de LIMITE_MIN, abre UMA Issue `lovable-ar-atrasado`; quando o ar
+# volta a estar em dia, fecha. Sem LOVABLE_API_KEY, sem Publish, sem escrita fora das Issues.
+# MECANICA (não medi) não abre Issue: só um notice no run — ausência de medida não é atraso.
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: lovable-ar-atrasado
+  cancel-in-progress: false
+
+jobs:
+  medir:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      LIMITE_MIN: '90'
+      ROTULO: lovable-ar-atrasado
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Medir o atraso do ar
+        id: medir
+        run: |
+          set +e
+          out=$(bash scripts/lovable-publish.sh --atraso origin/main 2>&1); rc=$?
+          set -e
+          printf '%s\n' "$out"
+          min=$(printf '%s\n' "$out" | sed -n 's/^ATRASO_MIN=\([0-9]*\)$/\1/p' | tail -1)
+          { echo "rc=$rc"; echo "min=${min:-}"; } >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$out" > "$RUNNER_TEMP/atraso.txt"
+      - name: Issue
+        env:
+          RC: ${{ steps.medir.outputs.rc }}
+          MIN: ${{ steps.medir.outputs.min }}
+        run: |
+          aberta=$(gh issue list --label "$ROTULO" --state open --json number --jq '.[0].number // empty')
+          if [ "$RC" != 0 ] || [ -z "$MIN" ]; then
+            echo "::notice::não medi o atraso (rc=$RC) — sem Issue: ausência de medida não é atraso"; exit 0
+          fi
+          if [ "$MIN" -gt "$LIMITE_MIN" ]; then
+            if [ -n "$aberta" ]; then echo "Issue #$aberta já aberta (atraso ${MIN} min)"; exit 0; fi
+            gh label create "$ROTULO" --color B60205 --description "front publicável esperando o ar (sensor M8)" 2>/dev/null || true
+            {
+              echo "O front publicável da main espera o ar há **${MIN} min** (limite ${LIMITE_MIN})."
+              echo
+              echo 'Medida do `scripts/lovable-publish.sh --atraso origin/main`:'
+              echo '```'; head -c 3000 "$RUNNER_TEMP/atraso.txt"; echo '```'
+              echo
+              echo 'RETIDO → aplique a camada (linhas `ACAO=`). PUBLICAR → o vigia do Mac não publicou: confira `~/.local/state/afiacao/lovable-vigia/vigia.log` (batimento, MECANICA, needs-auth). Esta Issue fecha sozinha quando o ar estiver em dia.'
+            } > "$RUNNER_TEMP/corpo.md"
+            gh issue create --title "Publish atrasado: o ar espera há ${MIN} min" --label "$ROTULO" --body-file "$RUNNER_TEMP/corpo.md"
+          elif [ -n "$aberta" ] && [ "$MIN" = 0 ]; then
+            gh issue close "$aberta" --comment "Ar em dia (ATRASO_MIN=0) — fechada pelo sensor."
+          fi

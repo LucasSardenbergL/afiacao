@@ -474,7 +474,7 @@ r_m7() {
   local e="$TMP/est-m7"; rm -rf "$e"; rm -f "$TMP/gh"; printf '%s\n' "$RET7" > "$TMP/decisao"
   roda m7; LVT_MANTEM=1 roda m7; rm -f "$TMP/decisao"
   [ "$(grep -c '^pr comment 4242 ' "$TMP/gh")" = 1 ] && ! grep -q 'pr comment ?' "$TMP/gh" && tem "comentei no PR #4242" \
-    && tem "AVISO: RETIDO (migration:supabase/migrations/1_x.sql) até $(cut -c1-8 "$TMP/head"). bun run db:aplicar supabase/migrations/1_x.sql"
+    && tem "AVISO: RETIDO (migration:supabase/migrations/1_x.sql) até $(cut -c1-8 "$TMP/head"). PR #4242 (fulano): bun run db:aplicar supabase/migrations/1_x.sql"
 }
 r_m7 && ok "M7: RETIDO comenta 1x no PR dono (#4242, do título do squash) e o aviso traz o comando db:aplicar" || nok "m7: $(cat "$TMP/gh" 2>&1 | head -c 300) | $(tail -2 "$LOGV")"
 # M7: 1º lembrete com 45 min (não 4 h)
@@ -629,6 +629,10 @@ falsifica m5_nomes "s/^      NOMES=\$(awk .*\$/      NOMES=''/" r_m5
 falsifica m7_comenta 's/^  comenta_donos$/  true/' r_m7
 # shellcheck disable=SC2016
 falsifica m7_primeiro 's/^    \[ "\$1" = retido \] \&\& \[ "\$ini" = "\$ult" \] \&\& rel=.*$/    true/' r_primeiro
+
+# rodada 2 — PR F (M3 fase 1): o aviso do RETIDO por migration traz o PR e o autor
+# shellcheck disable=SC2016
+falsifica m3_dono 's/dica="PR #\${dn%%|\*} (\${dn#\*|}): \$dica"/true/' r_m7
 
 [ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK ($OKS)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1
