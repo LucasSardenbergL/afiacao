@@ -1,6 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { mapeamentosComMesmaDescricao } from "./sugestao-cruzada.ts";
+import { fetchAll } from "../_shared/paginate.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -106,6 +108,43 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // PostgREST capa em 1.000 linhas SILENCIOSO: lista truncada viraria "sem mapeamento" calado.
+  // Hoje são ~270 mapeamentos; no teto, falha fechada.
+  const TETO_POSTGREST = 1000;
+  if (mappings.length >= TETO_POSTGREST) {
+    return new Response(JSON.stringify({ error: `fin_categoria_dre_mapping: ${mappings.length} linhas — no teto do PostgREST, leitura possivelmente truncada` }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // v1.3 — descrição da categoria em CADA empresa-fonte: sugestão cruzada exige mesmo código E
+  // mesma descrição (o código é reusado para naturezas distintas entre as empresas).
+  const codigosPendentes = [...new Set(((pendentes ?? []) as Array<{ omie_codigo: string }>).map(p => p.omie_codigo))];
+  const descricaoPorEmpresaCodigo = new Map<string, string | null>();
+  if (codigosPendentes.length > 0) {
+    let cats: Array<{ company: string; omie_codigo: string; descricao: string | null }>;
+    try {
+      cats = await fetchAll<{ company: string; omie_codigo: string; descricao: string | null }>(
+        (from, to) => supabase
+          .from('fin_categorias')
+          .select('company, omie_codigo, descricao')
+          .neq('company', company)
+          .in('omie_codigo', codigosPendentes)
+          .order('company').order('omie_codigo')
+          .range(from, to),
+        'fin_categorias (descrição por empresa)',
+      );
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    for (const c of cats) {
+      descricaoPorEmpresaCodigo.set(`${c.company}|${c.omie_codigo}`, c.descricao);
+    }
+  }
+  const descricaoDe = (c: string, codigo: string) => descricaoPorEmpresaCodigo.get(`${c}|${codigo}`);
+
   const byCodigo = new Map<string, { dre_linha: DreLinha; company: string }[]>();
   for (const m of (mappings ?? []) as Array<{ company: string; omie_codigo: string; dre_linha: DreLinha }>) {
     if (!byCodigo.has(m.omie_codigo)) byCodigo.set(m.omie_codigo, []);
@@ -115,15 +154,16 @@ Deno.serve(async (req: Request) => {
   const suggestions: Suggestion[] = ((pendentes ?? []) as Array<{
     omie_codigo: string; categoria_nome: string; valor_periodo: number;
   }>).map(p => {
-    const matchesByCode = byCodigo.get(p.omie_codigo)?.filter(m => m.company !== company && sugerivelPara(m.dre_linha, company));
-    if (matchesByCode && matchesByCode.length > 0) {
+    const candidatos = byCodigo.get(p.omie_codigo)?.filter(m => m.company !== company && sugerivelPara(m.dre_linha, company)) ?? [];
+    const matchesByCode = mapeamentosComMesmaDescricao(p.categoria_nome, candidatos, p.omie_codigo, descricaoDe) as Array<{ dre_linha: DreLinha; company: string }>;
+    if (matchesByCode.length > 0) {
       const top = matchesByCode[0];
       return {
         ...p,
         sugestao: {
           linha_dre: top.dre_linha,
           confianca: 'alta',
-          razao: `Empresa ${top.company} mapeou esta categoria como ${top.dre_linha}`,
+          razao: `Empresa ${top.company} mapeou a mesma categoria (código e descrição) como ${top.dre_linha}`,
         },
       };
     }

@@ -17,7 +17,9 @@ export const respostaSonda = criarRespostaSonda("fin-suggest-mapping");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 // v1.2 (2026-11-22): `nao_resultado` nunca é sugerido entre empresas (decisão por empresa, como fora_dre).
-export const VERSAO = "v1.2-nao-resultado-nao-sugerivel";
+// v1.3 (2026-11-27): sugestão cruzada exige mesma DESCRIÇÃO além do código (código é reusado
+//   para naturezas distintas entre as empresas); guarda do teto de 1.000 linhas do PostgREST.
+export const VERSAO = "v1.3-sugestao-exige-descricao-igual";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
