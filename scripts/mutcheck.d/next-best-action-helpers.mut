@@ -15,8 +15,12 @@ PEGA | C1b classificarStatus sem guarda de caixa null    | s/if \(input\.caixa_d
 PEGA | C1c fila volta a ?? 0                            | s/cx != null && cx\.confianca === 'alta' \? cx\.disponivel : null/cx?.disponivel ?? 0/
 PEGA | C1d motivo de PMR rebaixa o caixa               | s/const saldoDatado = typeof motivoSaldo/const saldoDatado = (resp.confianca_dados?.motivos?.length ?? 0) > 0 || typeof motivoSaldo/
 PEGA | C1e transporte: cobertura null vira 0            | s/const dias = finito\(diasRaw\) \? diasRaw : null;/const dias = finito(diasRaw) ? diasRaw : 0;/
-PEGA | C1f caixa null com confiança alta                | s/disponivel == null \|\| saldoDatado \? 'baixa'/saldoDatado ? 'baixa'/
+PEGA | C1f caixa null com confiança alta                | s/disponivel == null \|\| rebaixa \? 'baixa'/rebaixa ? 'baixa'/
 PEGA | C1g rollup ignora o caixa da empresa            | s/if \(cx\.confianca === 'alta'\) continue;/continue;/
-PEGA | C1h saldo datado sem haircut                    | s/confianca_baixa: saldoDatado \}/confianca_baixa: false }/
+PEGA | C1h saldo datado sem haircut                    | s/const rebaixa = saldoDatado \|\| folhaSemFonte;/const rebaixa = folhaSemFonte;/
 PEGA | C1i caixa ESTIMADO (saldo datado) decide financiar | s/cx != null && cx\.confianca === 'alta' \? cx\.disponivel : null/cx?.disponivel ?? null/
 PEGA | C1j bloco parcial da A1 atesta frescor (Codex)  | s/const semAtestado = motivoSaldo !== null && !saldoDatado;/const semAtestado = resp.confianca_dados == null;/
+# A1 v2.7 fora de escopo: saldo_tesouraria = saldo_cc − folha_30d; folha sem fonte não pode decidir financiar_ja.
+PEGA | F1 folha sem fonte deixa de rebaixar           | s/const folhaSemFonte = folhaRaw === false;/const folhaSemFonte = false;/
+PEGA | F2 folha sem fonte sem haircut                 | s/const rebaixa = saldoDatado \|\| folhaSemFonte;/const rebaixa = saldoDatado;/
+PEGA | F3 fontes ausente atesta a folha              | s/const folhaSemAtestado = folhaRaw !== true && !folhaSemFonte;/const folhaSemAtestado = false;/
