@@ -226,6 +226,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/ponto-equilibrio-folha-ambigua.test.ts",
       "src/services/__tests__/getAnaliseDimensional.test.ts",
       "src/services/__tests__/exportContasCSV.baixa-indisponivel.test.ts",
+      "src/services/__tests__/exportDRECSV.test.ts",
       "src/services/__tests__/contas-aging.single-shot.test.ts",
       "src/services/__tests__/getCapitalDeGiro.test.ts",
       "src/services/__tests__/getFluxoCaixa.test.ts",
