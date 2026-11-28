@@ -539,3 +539,24 @@ recibo (#4278):
 - `scripts/db-atestar-poscondicao.test.ts`: 18 testes do parser.
 - Codex: cota esgotada até 02/12 10:54. Caminho B (PG17 falsificável) e **REVISÃO INDEPENDENTE PENDENTE**: o
   PR fica DRAFT até o Codex rodar.
+
+
+### PR E — M7, M10, M11, M5 (mínimo)
+
+- **M10, o comando certo.** Todo RETIDO imprime linhas `ACAO=`:
+  - migration: `bun run db:aplicar <arq>`, ou `--atestar` se ela já foi aplicada fora do envelope (PR D);
+  - edge: a lista INTEIRA a deployar, que junta o diff, as consumidoras da prova do `_shared/` (PR C) e as edges
+    que o ledger nomeia.
+
+  O aviso do Mac usa a 1ª `ACAO=` no lugar do `--liberar`. O `--esperar <sha> --ate-o-ar` não encerra no RETIDO:
+  imprime as `ACAO=` uma vez e segue esperando o ar, porque quem aplica a camada é a própria sessão.
+- **M11.** O `--esperar` lê o `batimento` do vigia (PR A) a cada volta. Com mais de `LP_ESPERAR_PARADO_S` (600 s)
+  ele sai na hora com `TIMEOUT=vigia parado há N min`, em vez de dormir até o prazo de 30 min. Um tick vivo com o
+  lock não envelhece o batimento: toda invocação do launchd o renova.
+- **M5 mínimo.** O cache `pendencias-<head>` passa a guardar, a partir da 2ª linha, as edges que o
+  `pendencias:deploy` nomeia nas seções pendentes (≠ ✅). O RETIDO por edge lista todas, e não só a 1ª do diff.
+- **M7, dono da camada.** As linhas `DONO=<pr>|<autor>|<arquivo>` saem do commit mais novo que tocou a camada no
+  intervalo. O PR vem do `(#NNNN)` do título do squash, sem rede. O vigia comenta no PR dono (`gh pr comment`)
+  uma vez por PR por episódio; falha do `gh` vira log, sem laço. O 1º lembrete do RETIDO vem aos
+  `LV_PRIMEIRO_LEMBRETE_MIN` (45), e os seguintes a cada `LV_RELEMBRA_H` (4 h). MECANICA não comenta em PR:
+  não há camada nem dono.

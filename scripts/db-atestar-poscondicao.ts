@@ -33,6 +33,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export type Checagem = { objeto: string; sql: string };
 export type Acl = { tipo: 'acl'; grant: boolean; kind: 'f' | 'r'; obj: string; roles: string[]; privs: string[] };
@@ -383,14 +384,14 @@ export function main(argv: string[]): number {
   try {
     fonte = readFileSync(arq, 'utf8');
   } catch (e) {
-    console.error(`MECANICA: não li ${arq}: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`MECANICA: não li ${arq}: ${mensagemDeErro(e) ?? 'erro sem mensagem'}`);
     return 2;
   }
   let p: Plano;
   try {
     p = planejar(fonte);
   } catch (e) {
-    console.error(`MECANICA: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`MECANICA: ${mensagemDeErro(e) ?? 'erro sem mensagem'}`);
     return 2;
   }
   process.stdout.write(p.sql);
