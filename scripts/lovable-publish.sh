@@ -38,7 +38,7 @@
 #   --julgar: roda SÓ os passos 1-3 (sem API, sem chave) e sai `VEREDITO=PUBLICAR` (exit 0) quando
 #   haveria Publish — é o tick barato do vigia local (scripts/lovable-vigia.sh), que publica pelo MCP.
 #
-#   --esperar <sha>: NÃO publica. Loop barato (shell, sem LLM, sem chave) para a sessão que acabou
+#   --esperar <sha> [--ate-o-ar]: NÃO publica. Loop barato (shell, sem LLM, sem chave) para a sessão que acabou
 #   de mergear: a cada LP_ESPERAR_INTERVALO s (45) lê o carimbo servido e sai quando o ar CONTÉM
 #   <sha> (`git merge-base --is-ancestor <sha> <servido>`; `git fetch` se o servido não for local).
 #   Entre leituras, re-julga `--julgar origin/main` e lê o estado do vigia ($LP_VIGIA_ESTADO,
@@ -48,7 +48,8 @@
 #     0  NO_AR=<sha servido>          — o ar contém <sha>
 #     0  NADA_A_PUBLICAR=<sha servido> — ar..main só tem inerte (docs/scripts/db): não haverá Publish,
 #                                        e o front de <sha> já é o do ar
-#     10 RETIDO=<migration|edge>:<arquivo> — migration sem `liberar` no vigia, ou edge que o ledger
+#     10 RETIDO=<migration|edge>:<arquivo> — (sem --ate-o-ar; com ele, imprime as linhas ACAO= e segue esperando)
+#                                        migration sem recibo/`liberar` no vigia, ou edge que o ledger
 #                                        diz não servida (pendencias:deploy=1): aplicar a camada
 #     30 TIMEOUT                       — prazo estourou sem o ar conter <sha> (fila? Mac dormindo?)
 #     30 TIMEOUT=vigia parado há N min — idem, e o `batimento` do vigia está velho (> LP_BATIMENTO_VELHO_S, 300)
@@ -103,11 +104,12 @@ trap 'rm -rf "$TMP"' EXIT
 fim() { echo "VEREDITO=$2"; exit "$1"; }
 mecanica() { echo "  motivo: $1"; fim 6 MECANICA; }
 
-JULGAR=0; DECIDIR=0; ESPERAR=""; LIBERAR=""
+JULGAR=0; DECIDIR=0; ESPERAR=""; LIBERAR=""; ATE_O_AR=0
 case "${1:-}" in
   --julgar) JULGAR=1; shift ;;
   --decidir) JULGAR=1; DECIDIR=1; shift ;;
-  --esperar) [ -n "${2:-}" ] || { echo "MECANICA=uso: --esperar <sha>"; exit 6; }; ESPERAR=$2; shift 2 ;;
+  --esperar) [ -n "${2:-}" ] || { echo "MECANICA=uso: --esperar <sha> [--ate-o-ar]"; exit 6; }; ESPERAR=$2; shift 2
+             [ "${1:-}" = --ate-o-ar ] && { ATE_O_AR=1; shift; } ;;
   --liberar) LIBERAR=${2:-}; [ -n "$LIBERAR" ] || LIBERAR=vazio; shift; shift 2>/dev/null || true ;;
 esac
 
@@ -200,8 +202,16 @@ if [ -n "$ESPERAR" ]; then
         VER=$(printf '%s\n' "$J" | tail -1 | sed -n 's/^VEREDITO=//p')
         case "$jrc:$VER" in
           10:RETIDO)
-            printf '%s\n' "$J" | grep -E '^  (liberar:|liberado para SHA antigo|liberar .* (ignorado|ultrapassado))' || true
-            sai 10 "$(printf '%s\n' "$J" | grep -m1 '^RETIDO=' || echo RETIDO=?)" ;;
+            # rodada 2, M10: o comando CERTO por camada (ACAO=) e, com --ate-o-ar, segue esperando — quem aplica a
+            # camada é a própria sessão, e o ar ainda tem de chegar depois
+            R=$(printf '%s\n' "$J" | grep -m1 '^RETIDO=' || echo RETIDO=?)
+            if [ "$ATE_O_AR" = 1 ]; then
+              [ "$R" = "${ret_dito:-}" ] || { printf '%s\n' "$J" | grep -E '^(ACAO=|  liberar:)' | sed 's/^/  /'; ret_dito=$R; }
+              diz "$R — aplique a camada (ACAO acima); sigo esperando o ar (--ate-o-ar)"
+            else
+              printf '%s\n' "$J" | grep -E '^(ACAO=|  (liberar:|liberado para SHA antigo|liberar .* (ignorado|ultrapassado)))' || true
+              sai 10 "$R"
+            fi ;;
           0:NADA_A_PUBLICAR)
             [ -n "$ARF" ] || ARF=$AR
             git merge-base --is-ancestor "$PEDIDO" "$ARF" 2>/dev/null && sai 0 "NO_AR=$ARF"
@@ -218,6 +228,12 @@ if [ -n "$ESPERAR" ]; then
     else
       falha=$AR; diz "leitura do ar falhou: $AR"
     fi
+    # rodada 2, M11: vigia parado (batimento velho > LP_ESPERAR_PARADO_S, 600) não publica nunca — sai já, sem esperar o prazo
+    B=$(head -1 "$VIGIA/batimento" 2>/dev/null)
+    case "$B" in ''|*[!0-9]*) ;; *)
+      P=$(( $(date +%s) - B ))
+      [ "$P" -gt "${LP_ESPERAR_PARADO_S:-600}" ] && sai 30 "TIMEOUT=vigia parado há $((P / 60)) min (sem batimento em $VIGIA/batimento)" ;;
+    esac
     if [ "$t" -ge "$PRAZO" ]; then
       [ "$mediu" = 1 ] || sai 6 "MECANICA=AR_ILEGIVEL:$falha"
       # batimento do vigia (rodada 2, M6): velho = o vigia não está rodando, não é "só demora"
@@ -300,6 +316,29 @@ if [ "$FALLBACK" = 0 ] && ! grep -qvE "$INERTE" "$TMP/diff"; then
   fim 0 NADA_A_PUBLICAR
 fi
 
+# dono <arquivo> → `DONO=<pr>|<autor>|<arquivo>` do commit mais novo de ar..HEAD que o tocou (rodada 2, M7/M3: o PR
+# sai do "(#NNNN)" do título do squash — sem rede, sem gh; `?` quando o título não traz o número)
+dono() {
+  local l pr; l=$(git log -1 --format='%an|%s' "$AR..$HEAD_SHA" -- "$1" 2>/dev/null)
+  [ -n "$l" ] || return 0
+  pr=$(printf '%s' "${l#*|}" | grep -oE '\(#[0-9]+\)' | tail -1 | tr -cd '0-9')
+  printf 'DONO=%s|%s|%s\n' "${pr:-?}" "${l%%|*}" "$1"
+}
+# acoes → o COMANDO certo por camada pendente (rodada 2, M10/M5): migration = db:aplicar (ou --atestar, se já foi
+# aplicada fora do envelope); edge = a lista INTEIRA a deployar — do diff, da prova do _shared e do que o ledger nomeia
+acoes() {
+  local m e nomes
+  while read -r m; do
+    [ -n "$m" ] || continue
+    echo "ACAO=bun run db:aplicar $m   (já aplicada fora do envelope? bun run db:aplicar $m --atestar)"; dono "$m"
+  done <<< "$(printf '%s\n' "$PEND" | grep '^supabase/migrations/' || true)"
+  nomes=$( { printf '%s\n' "$PEND" | sed -n 's|^supabase/functions/\([^/]*\)/.*|\1|p' | grep -vx '_shared'
+             sed -n 's/^\(LEDGER\|FORA_DO_MAPA\) \([^ ]*\) .*/\2/p' "$ESTADO/shared-$BASE_E-$HEAD_SHA" 2>/dev/null
+             sed -n '2,$p' "$ESTADO/pendencias-$HEAD_SHA" 2>/dev/null; } | grep -E '^[a-z0-9][a-z0-9_-]*$' | sort -u | paste -sd' ' -)
+  [ -n "$nomes" ] && echo "ACAO=deployar edge(s): $nomes — pelo MCP do Lovable (docs/agent/deploy.md); o ledger libera sozinho"
+  while read -r e; do [ -n "$e" ] && dono "$e"; done <<< "$(printf '%s\n' "$PEND" | grep '^supabase/functions/' || true)"
+  return 0
+}
 retido() {  # retido <tipo> <arquivo>
   echo "Camadas pendentes até ${HEAD_SHA:0:8} (ar=${AR:0:8}; aplicar ANTES do Publish — DDL → edges):"
   printf '%s\n' "$PEND" | sed 's/^/  - /'
@@ -318,6 +357,7 @@ retido() {  # retido <tipo> <arquivo>
     fi
     echo "  liberar: aplique a(s) migration(s) e rode  bash scripts/lovable-publish.sh --liberar $HEAD_SHA"
   fi
+  acoes
   echo "RETIDO=$1:$2"
   fim 10 RETIDO
 }
@@ -400,6 +440,7 @@ if [ -n "$PEND" ]; then
       echo "  edge que o ledger não prova (sem versao.ts ou _shared) — deploy dela e liberação humana:"
       printf '%s\n' "$SEMV" | sed 's/^/      /'
       echo "  liberar: faça o deploy e rode  bash scripts/lovable-publish.sh --liberar $HEAD_SHA"
+      acoes
       echo "RETIDO=edge:$(printf '%s\n' "$SEMV" | head -1)"
       fim 10 RETIDO
     fi

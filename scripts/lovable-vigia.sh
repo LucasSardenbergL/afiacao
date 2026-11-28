@@ -158,9 +158,13 @@ idade() { [ "$1" -ge 7200 ] && echo "$(( $1 / 3600 ))h" || echo "$(( $1 / 60 )) 
 episodio() {  # <retido|mecanica> <motivo> — RETIDO lembra a cada LV_RELEMBRA_H h; MECANICA a cada LV_RELEMBRA_MEC_MIN
   local agora ini ult chave rot rel dica; agora=$(date +%s)
   if [ "$1" = mecanica ]; then rot=MECANICA; rel=$RELEMBRA_MEC; chave="$2"; dica="ver $LOG"
-  else rot=RETIDO; rel=$RELEMBRA; chave="ar=$(ar_curto) main=${HEAD_SHA:0:8} $2"; dica=$(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //'); fi
+  else rot=RETIDO; rel=$RELEMBRA; chave="ar=$(ar_curto) main=${HEAD_SHA:0:8} $2"
+    # o comando CERTO (rodada 2, M10): a 1ª linha ACAO= da decisão; sem ela, o `liberar:` de antes
+    dica=$(sed -n 's/^ACAO=//p' "$EST/julgar.txt" | head -1); [ -n "$dica" ] || dica=$(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //'); fi
   [ "$(cat "$EST/$1-chave" 2>/dev/null)" = "$chave" ] || { log "$rot $chave"; grava "$EST/$1-chave" "$chave"; }
   if { read -r ini ult < "$EST/$1-episodio"; } 2>/dev/null && [ -n "${ult:-}" ]; then
+    # 1º lembrete do RETIDO cedo (rodada 2, M7): LV_PRIMEIRO_LEMBRETE_MIN (45) — o de 4 h vinha tarde demais
+    [ "$1" = retido ] && [ "$ini" = "$ult" ] && rel=$(( ${LV_PRIMEIRO_LEMBRETE_MIN:-45} * 60 ))
     [ $((agora - ult)) -ge "$rel" ] || return 0
     grava "$EST/$1-episodio" "$ini $agora"
     avisa "AINDA $rot há $(idade $((agora - ini))) ($2). $dica"
@@ -170,8 +174,27 @@ episodio() {  # <retido|mecanica> <motivo> — RETIDO lembra a cada LV_RELEMBRA_
     else avisa "RETIDO ($2) até ${HEAD_SHA:0:8}. $dica"; fi
   fi
 }
+# comenta_donos — RETIDO avisa também no PR DONO da camada (rodada 2, M7), 1 comentário por PR por episódio.
+# O PR vem das linhas DONO=<pr>|<autor>|<arquivo> da decisão (título do squash, sem rede). Falha do gh = log, sem
+# laço: o PR fica marcado e o aviso do Mac segue valendo.
+comenta_donos() {
+  local pr autor arq acao
+  sed -n 's/^DONO=//p' "$EST/julgar.txt" | while IFS='|' read -r pr autor arq; do
+    case "$pr" in ''|*[!0-9]*) continue ;; esac
+    grep -qxF "$pr" "$EST/retido-comentados" 2>/dev/null && continue
+    echo "$pr" >> "$EST/retido-comentados"
+    acao=$(sed -n 's/^ACAO=//p' "$EST/julgar.txt" | grep -F -- "${arq#supabase/functions/}" | head -1)
+    [ -n "$acao" ] || acao=$(sed -n 's/^ACAO=//p' "$EST/julgar.txt" | head -1)
+    if (cd "$WT" && gh pr comment "$pr" --body "Vigia do Publish: o front de \`${HEAD_SHA:0:8}\` está **RETIDO** esperando a camada deste PR (\`$arq\`). Comando: \`${acao:-ver vigia.log}\`. Aviso automático do \`scripts/lovable-vigia.sh\` (1 por episódio); o vigia publica sozinho assim que a camada estiver atestada.") >>"$LOG" 2>&1; then
+      log "comentei no PR #$pr (dono de $arq, autor $autor)"
+    else
+      log "NÃO comentei no PR #$pr (gh falhou) — o aviso do Mac segue"
+    fi
+  done
+}
 retido_episodio() {
   episodio retido "$1"
+  comenta_donos
   # as camadas que seguram o episódio (rodada 2, B5): se ele acabar com o ar na main, alguém publicou por fora
   sed -n 's/^  - \(supabase\/.*\)$/\1/p' "$EST/julgar.txt" | sort -u > "$EST/retido-camadas.tmp.$$" && mv -f "$EST/retido-camadas.tmp.$$" "$EST/retido-camadas"
   [ -s "$EST/retido-camadas" ] || printf '%s\n' "${1#*:}" > "$EST/retido-camadas"
@@ -187,7 +210,7 @@ fim_episodio() {  # <veredito> [retido|mecanica] — default retido
     printf '%s ar=%s main=%s camadas=%s\n' "$(date '+%F %T')" "$(ar_curto)" "${HEAD_SHA:0:8}" "$cam" >> "$EST/divida-camadas"
     avisa "publicado por fora com camada não atestada: $cam — conferir migration/edge (registro em $EST/divida-camadas)"
   fi
-  [ "$t" = retido ] && rm -f "$EST/retido-camadas"
+  [ "$t" = retido ] && rm -f "$EST/retido-camadas" "$EST/retido-comentados"
   rm -f "$EST/$t-episodio" "$EST/$t-chave"
 }
 
@@ -246,7 +269,9 @@ for _ in 1 2 3; do
       # o ledger mede a main que ELE buscou: se ela andou durante a consulta, a prova não é deste SHA
       REMOTA=$(timeout 60 git -C "$WT" ls-remote origin "refs/heads/$RAMO" 2>/dev/null | cut -f1)
       [ "$REMOTA" = "$HEAD_SHA" ] || { log "ledger descartado: a main foi a ${REMOTA:0:8} durante a consulta de ${HEAD_SHA:0:8}"; exit 0; }
-      grava "$EST/pendencias-$HEAD_SHA" "$PRC"
+      # rodada 2, M5: além do exit, as edges que o ledger NOMEIA como pendentes (seções ≠ ✅) — o RETIDO lista todas
+      NOMES=$(awk '/^[^ ]/{p = ($0 !~ /^✅/)} p && /^   [a-z0-9][a-z0-9_-]* /{print $1}' "$EST/pendencias.txt" | sort -u)
+      grava "$EST/pendencias-$HEAD_SHA" "$(printf '%s\n%s' "$PRC" "$NOMES" | sed '/^$/d')"
       log "ledger consultado para ${HEAD_SHA:0:8}: pendencias:deploy exit $(cat "$EST/pendencias-$HEAD_SHA")"
       decidir; VER=$(veredito) ;;
     *) break ;;
