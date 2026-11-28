@@ -65,7 +65,7 @@ Deno.test("divergência com fonte NÃO sugerível ainda conta (filtro só depois
   const d2 = (c: string, _k: string) => (c === "colacor" || c === "colacor_sc" ? "Outros" : undefined);
   const naoFora = (l: string) => l !== "fora_dre" && l !== "nao_resultado";
   assertEquals(
-    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "fora_dre" }, { company: "colacor_sc", dre_linha: "despesas_administrativas" }], "2.99", d2, naoFora),
+    decidirSugestaoCruzada("Outros", [{ company: "colacor_sc", dre_linha: "despesas_administrativas" }, { company: "colacor", dre_linha: "fora_dre" }], "2.99", d2, naoFora),
     null,
   );
   assertEquals(decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "fora_dre" }], "2.99", d2, naoFora), null);
