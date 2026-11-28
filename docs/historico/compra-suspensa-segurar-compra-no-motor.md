@@ -123,3 +123,18 @@ irmãos do motor (teto, embalagem, gate, em-trânsito) re-rodados com a fixture 
   reposicao_motor_run WHERE empresa='OBEN' ORDER BY criado_em DESC LIMIT 3;` + `SELECT count(*) FROM pedido_compra_item i JOIN
   pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.empresa='OBEN' AND p.data_ciclo=current_date AND i.sku_codigo_omie::text IN
   (SELECT sku_codigo_omie::text FROM reposicao_compra_suspensa WHERE reativado_em IS NULL)` — tem de ser 0.
+
+## 27 dias depois (2026-11-28): efeito medido e 5 reativações por risco de falta
+
+- **Motor:** 201 runs Oben desde o apply, 886 itens em 125 pedidos, **0 SKU suspenso vazou**; 4 SKUs distintos segurados.
+- **Estoque dos 156:** foto R$ 122.201 → R$ 118.814 (−R$ 3.387). 28 baixaram, 2 subiram por compra fora do motor
+  (FUNDO PU FLA.6673 5→14, PRIMER PU FL.6264 2→3 — a lacuna "compra manual não vê a suspensão" medida), 3 zeraram.
+- **Risco de falta:** a coorte entrou por cobertura ≥ 180d pelo consumo de 12 meses; em 5 SKUs a venda recente subiu.
+  Três zeraram vendendo (TINGIDOR CEDRO 100ML, F ACAB FL20.6468, BASE BRIL 40 ACETINADO WF — este com o motor querendo
+  4 un em 161 runs) e dois ficaram com cobertura recente < 60d (FAPIX 423 SPRAY 14KG, VERNIZ PU BRIL FB.6120).
+  O painel já sinalizava "cobertura < 60d pela venda recente"; ninguém olhou.
+- **Reativação (founder: "Sim, reative os 5"):** envelope `db/reativar-compra-suspensa-oben-risco-falta.sql`, ensaio
+  verde, recibo **#1558**; psql-ro: 5 reativados com o motivo, 151 seguem suspensos. **FAPIX 423 SPRAY volta com
+  `fora_do_motor`** (`habilitado_reposicao_automatica = false`): reativar não o recompra — compra manual ou habilitar.
+- **Lição para a revisão de 30/01/2027:** cobertura por 12 meses esconde item cuja venda acelerou; o critério de
+  saída do lote deveria exigir também cobertura pela venda de 90d acima de um piso (o sensor já existe no painel).
