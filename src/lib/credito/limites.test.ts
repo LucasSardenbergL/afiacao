@@ -44,10 +44,14 @@ describe("valor real do campo citado pela IA", () => {
 });
 
 describe("lote", () => {
-  it("blocos de até 50, deduplicados", () => {
+  it("blocos de até 50 quando pedido, deduplicados", () => {
     const ids = Array.from({ length: 120 }, (_, i) => `id${i % 101}`);
-    const b = emBlocos(ids);
+    const b = emBlocos(ids, 50);
     expect(b.map((x) => x.length)).toEqual([50, 50, 1]);
+  });
+  it("padrão: blocos de 3 (cabe no statement_timeout — blocos de 13+ estouravam em prod)", () => {
+    const ids = Array.from({ length: 7 }, (_, i) => `id${i}`);
+    expect(emBlocos(ids).map((x) => x.length)).toEqual([3, 3, 1]);
   });
   it("lê a resposta por id e recusa forma estranha", () => {
     const r = lerResultadoLote({ aprovadas: 1, resultados: [
