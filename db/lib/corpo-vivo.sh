@@ -187,6 +187,11 @@ CV_PREDECESSORAS=(
 #     coluna em sales_orders, mas a PÓS exige v_pedido_snapshot_proprio (20261126160000) e v_cliente_contatos (fatia 2,
 #     20261124180000, que traz o contrato de carteira inteiro da onda D) — nada disso está no snapshot de 10-15. Prova
 #     que cobre: db/test-clientes-pii-fatia4a-corte.sh (ACL de prod medido, 23 sabotagens, nos dois locales).
+#   · 20261127214433 (leva 3 /sales PR B · order_feed com origem_omie, fim do período, busca_base gerada e a
+#     recuperação da exclusão) entra pela coluna gerada de sales_orders, mas a PRE exige o corpo de PROD da view
+#     order_feed (md5 dee24dde…, de 20261102160821). O snapshot de 10-15 traz essa view pelo dump, com as barras do
+#     literal de regex perdidas (md5 083e23c3…), e a 20261102160821 está antes de CV_INICIO. Prova que cobre:
+#     db/test-order-feed-leva3-b.sh (corpo de prod com md5 conferido, 15 sabotagens, nos dois locales).
 CV_FORA=(
   "20261111100000_radar_acompanhamento_pacote_g.sql"
   "20261111134000_radar_posse_pacote_l.sql"
@@ -194,6 +199,7 @@ CV_FORA=(
   "20261113110200_venda_resumo_email_controle.sql"
   "20261113213317_venda_sistema_completo.sql"
   "20261126170000_clientes_pii_fatia4a_corte.sql"
+  "20261127214433_order_feed_origem_fim_busca_exclusao.sql"
 )
 _cv_fora() {
   local x

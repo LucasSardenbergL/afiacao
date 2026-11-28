@@ -65,6 +65,7 @@ const ORDERS: OrderFeedRow[] = Array.from({ length: N }, (_, i) => ({
   customer_name: `Cliente ${i}`,
   item_names: ['Verniz'],
   item_quantity: 1,
+  origem_omie: false,
   status: 'rascunho',
   subtotal: 10,
   total: 10 + i,

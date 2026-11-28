@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   feedRowDaLinha, mensagemDoErroDaLista, padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows, corteDoPeriodo, filtroDoPeriodo, orDoCorte,
-  paramsTotalDoRecorte, termoBuscaFeed, textoValorRecorte, valorDaResposta, type RecorteFeed,
+  filtrosDoRecorte, paramsTotalDoRecorte, termoBuscaFeed, textoValorRecorte, valorDaResposta, type RecorteFeed,
 } from '../feed';
 import type { OrderFeedRow } from '../types';
 
@@ -16,6 +16,7 @@ const row = (p: Partial<OrderFeedRow> = {}): OrderFeedRow => ({
   customer_name: 'ACME LTDA',
   item_names: ['Verniz PU', 'Catalisador'],
   item_quantity: 3,
+  origem_omie: false,
   status: 'enviado',
   subtotal: 100,
   total: 100,
@@ -109,6 +110,17 @@ describe('mapAfiacaoDetail', () => {
   });
 });
 
+describe('mapSalesDetail — procedência Omie no painel (revisão /sales #5)', () => {
+  const base = { id: 's9', customer_user_id: 'u1', account: 'oben', items: [], subtotal: 0, total: 0, status: 'separacao', created_at: 'd', notes: null };
+  it('hash omie_* = origem Omie; hash do app/nulo = não; hash não lido = sem marca', () => {
+    expect(mapSalesDetail({ ...base, hash_payload: 'omie_oben_1' } as never).origem_omie).toBe(true);
+    expect(mapSalesDetail({ ...base, hash_payload: 'abc123' } as never).origem_omie).toBe(false);
+    expect(mapSalesDetail({ ...base, hash_payload: null } as never).origem_omie).toBe(false);
+    expect(mapSalesDetail(base as never).origem_omie).toBeUndefined();
+    expect('hash_payload' in mapSalesDetail({ ...base, hash_payload: 'omie_oben_1' } as never)).toBe(false);
+  });
+});
+
 describe('dedupeFeedRows', () => {
   it('remove duplicata por (origin,id) preservando a 1ª ocorrência e a ordem', () => {
     const a = row({ id: 'x', origin: 'sales', total: 1 });
@@ -134,6 +146,27 @@ describe('valor do recorte — params, resposta e texto (ausente ≠ zero)', () 
     expect(filtroDoPeriodo('7d', agora)).toBe(orDoCorte(corte));
     expect(paramsTotalDoRecorte(recorte({ corte }))).toMatchObject({ p_desde: corte.desde, p_puros: corte.puros });
     expect(corteDoPeriodo('tudo', agora)).toBeNull();
+  });
+
+  it('#31: o período tem FIM exclusivo — meia-noite local de amanhã e as datas-puras de amanhã fora', () => {
+    const agora = new Date(2026, 10, 10, 15);
+    const amanha = new Date(2026, 10, 11).getTime();
+    for (const periodo of ['hoje', '7d', '30d'] as const) {
+      const corte = corteDoPeriodo(periodo, agora)!;
+      expect(new Date(corte.ate).getTime()).toBe(amanha);
+      // Cada data-pura do fim é 00:00Z/12:00Z do dia 11 E cai antes do fim (em SP: só a 00:00Z = 21h do dia 10).
+      for (const p of corte.purosFim) {
+        expect([Date.UTC(2026, 10, 11, 0), Date.UTC(2026, 10, 11, 12)]).toContain(new Date(p).getTime());
+        expect(new Date(p).getTime()).toBeLessThan(amanha);
+      }
+      const filtros = filtrosDoRecorte(recorte({ corte }));
+      expect(filtros).toContainEqual({ op: 'lt', coluna: 'created_at', valor: corte.ate });
+      expect(filtros.filter((f) => f.op === 'neq')).toEqual(corte.purosFim.map((valor) => ({ op: 'neq', coluna: 'created_at', valor })));
+      expect(paramsTotalDoRecorte(recorte({ corte }))).toMatchObject({ p_ate: corte.ate, p_puros_fim: corte.purosFim });
+    }
+    // Sem período não há fim: nada de .lt/.neq e os parâmetros somem do JSON.
+    expect(filtrosDoRecorte(recorte()).some((f) => f.op === 'lt' || f.op === 'neq')).toBe(false);
+    expect(paramsTotalDoRecorte(recorte()).p_ate).toBeUndefined();
   });
 
   it('"Todos" vai OMITIDO (DEFAULT NULL; = ANY(\'{}\') não acharia nada); chips viram a lista do filtro', () => {
@@ -182,7 +215,7 @@ describe('leva 3 da revisão /sales', () => {
   it('#33: linha com total/subtotal ausentes é aceita (vira "—" na tela), não derruba a página', () => {
     const linha = {
       origin: 'sales', id: 'x', created_at: '2026-11-20T10:00:00Z', account: 'oben', order_number: null,
-      omie_pedido_id: null, customer_user_id: 'u', customer_name: 'C', item_names: [], item_quantity: 0,
+      omie_pedido_id: null, customer_user_id: 'u', customer_name: 'C', item_names: [], origem_omie: false, item_quantity: 0,
       status: 'rascunho', subtotal: null, total: null,
     };
     expect(feedRowDaLinha(linha).total).toBeNull();

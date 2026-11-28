@@ -40,7 +40,7 @@ export async function fetchOrderDetail(
     // `authenticated` — um `.select('*')` daria 42501 (o * inteiro cai).
     const { data, error } = await supabase
       .from('sales_orders')
-      .select('id, customer_user_id, items, subtotal, discount, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at')
+      .select('id, customer_user_id, items, subtotal, discount, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, hash_payload')
       .eq('id', id)
       .maybeSingle();
     if (error) throw error;

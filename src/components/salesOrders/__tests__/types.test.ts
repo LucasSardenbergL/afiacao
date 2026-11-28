@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agruparPorDia, decodeHtml, EFEITO_DA_EXCLUSAO, podeExcluirPedido, statusDoPedido, statusLabels, type OrderFeedRow } from '../types';
+import { agruparPorDia, decodeHtml, EFEITO_DA_EXCLUSAO, podeEditarPedido, podeExcluirPedido, statusDoPedido, statusLabels, type OrderFeedRow } from '../types';
 
 describe('decodeHtml', () => {
   it('decodifica entidades HTML comuns', () => {
@@ -44,7 +44,7 @@ describe('statusDoPedido', () => {
 });
 
 describe('podeExcluirPedido (espelho do contrato da edge excluir_pedido)', () => {
-  const base = { origin: 'sales' as const, account: 'oben', status: 'rascunho', omie_pedido_id: null as number | null };
+  const base = { origin: 'sales' as const, account: 'oben', status: 'rascunho', omie_pedido_id: null as number | null, origem_omie: false };
   it('rascunho do app sem PV: pode', () => expect(podeExcluirPedido(base)).toEqual({ ok: true }));
   it('já no Omie e cancelado lá (sync trouxe): pode', () =>
     expect(podeExcluirPedido({ ...base, status: 'cancelado', omie_pedido_id: 9 })).toEqual({ ok: true }));
@@ -57,7 +57,26 @@ describe('podeExcluirPedido (espelho do contrato da edge excluir_pedido)', () =>
     expect(podeExcluirPedido({ ...base, account: 'xpto' }).ok).toBe(false);
   });
   it('afiação: não', () => expect(podeExcluirPedido({ ...base, origin: 'afiacao' }).ok).toBe(false));
+  // #5: a procedência decide, não o status — o importado que o Omie cancelou segue sendo do Omie.
+  it('origem Omie cancelada no Omie: NÃO (a edge recusa pela procedência)', () => {
+    const r = podeExcluirPedido({ ...base, status: 'cancelado', omie_pedido_id: 9, origem_omie: true });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.motivo).toMatch(/^Importado do Omie/);
+  });
+  it('origem Omie em qualquer etapa: não', () => {
+    for (const status of ['separacao', 'enviado', 'rascunho']) {
+      expect(podeExcluirPedido({ ...base, status, omie_pedido_id: 9, origem_omie: true }).ok).toBe(false);
+    }
+  });
   it('o texto do efeito não promete mexer no Omie', () => expect(EFEITO_DA_EXCLUSAO).toMatch(/Nada é alterado no Omie/));
+});
+
+describe('podeEditarPedido (procedência × status, revisão /sales #5)', () => {
+  it('pedido do app em separação: pode', () => expect(podeEditarPedido({ status: 'separacao', origin: 'sales', origem_omie: false })).toBe(true));
+  it('origem Omie em separação: NÃO (a edição recusa a procedência)', () =>
+    expect(podeEditarPedido({ status: 'separacao', origin: 'sales', origem_omie: true })).toBe(false));
+  it('procedência não lida (painel sem hash): o status decide', () => expect(podeEditarPedido({ status: 'separacao', origin: 'sales' })).toBe(true));
+  it('afiação: não', () => expect(podeEditarPedido({ status: 'rascunho', origin: 'afiacao', origem_omie: false })).toBe(false));
 });
 
 describe('agruparPorDia', () => {

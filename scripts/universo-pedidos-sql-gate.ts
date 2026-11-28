@@ -86,6 +86,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.omie_pv_proxima_consulta': { tipo: 'lookup', motivo: 'PV excluído no Omie: claim de envio das linhas do PID candidato (por conta, PID)' },
   'public.omie_pv_consulta_registrar': { tipo: 'lookup', motivo: 'PV excluído no Omie: releitura do sync (omie_reconciliado_em) das linhas do PID consultado' },
   'private.omie_pv_aplicar_baixa': { tipo: 'escritor', motivo: 'PV excluído no Omie: a BAIXA — trava e oculta (deleted_at) TODAS as linhas do PID, inclusive terminal para recusar' },
+  'private.sales_orders_exclusao_recuperar': { tipo: 'escritor', motivo: 'Leva 3 /sales #19: devolve à lista (deleted_at → NULL) o pedido OCULTO cuja marca de exclusão do usuário ficou para trás — lê justamente os ocultos, por id da marca' },
   'public.aplicar_edicao_pedido_omie': { tipo: 'escritor', motivo: 'edição de UM pedido (lê e regrava por id)' },
   'public.criar_pedidos_com_itens': { tipo: 'escritor', motivo: 'importador Omie: insere/deduplica por hash' },
   'public.sales_orders_registrar_vendedor_omie': { tipo: 'escritor', motivo: 'atribuição: grava o codVend em TODO importado da conta, cancelado inclusive (quem vendeu não depende do status)' },

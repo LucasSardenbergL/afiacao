@@ -34,6 +34,7 @@ function pedido(p: Partial<OrderFeedRow>): OrderFeedRow {
     customer_name: 'Cliente',
     item_names: ['Verniz'],
     item_quantity: 1,
+    origem_omie: false,
     status: 'rascunho',
     subtotal: 10,
     total: 10,
