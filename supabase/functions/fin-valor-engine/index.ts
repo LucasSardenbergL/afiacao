@@ -57,8 +57,9 @@ function calcularNOPAT(input: NopatInput) {
   const ebit = input.resultado_operacional_ttm - input.receitas_financeiras_ttm + input.despesas_financeiras_ttm;
   const imposto_operacional_nopat = input.regime === "presumido" ? input.irpj_ttm + input.csll_ttm : 0;
   const nopat = ebit - imposto_operacional_nopat;
+  // Simples: DAS + tributos pagos FORA dele (ded_* só existe no Simples por mapeamento explícito).
   const carga_tributaria_regime_total = input.regime === "simples"
-    ? input.das_ttm
+    ? input.das_ttm + input.icms_ttm + input.iss_ttm + input.ipi_ttm + input.pis_ttm + input.cofins_ttm
     : input.irpj_ttm + input.csll_ttm + input.pis_ttm + input.cofins_ttm + input.icms_ttm + input.iss_ttm + input.ipi_ttm;
   return { ebit, imposto_operacional_nopat, nopat, carga_tributaria_regime_total };
 }

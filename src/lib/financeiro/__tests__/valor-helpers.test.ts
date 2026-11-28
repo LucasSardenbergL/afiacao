@@ -52,6 +52,18 @@ describe('calcularNOPAT', () => {
     expect(r.carga_tributaria_regime_total).toBe(80); // DAS, informacional
   });
 
+  it('simples: carga soma o ICMS (e demais) pago FORA do DAS — NOPAT não muda', () => {
+    const base = {
+      regime: 'simples' as const, resultado_operacional_ttm: 500, receitas_financeiras_ttm: 20, despesas_financeiras_ttm: 10,
+      irpj_ttm: 0, csll_ttm: 0, das_ttm: 9_076.61, pis_ttm: 1, cofins_ttm: 2, icms_ttm: 10_305.58, iss_ttm: 3, ipi_ttm: 4,
+    };
+    const r = calcularNOPAT(base);
+    expect(r.carga_tributaria_regime_total).toBeCloseTo(9_076.61 + 10_305.58 + 1 + 2 + 3 + 4, 2);
+    expect(r.nopat).toBe(490); // informacional: nunca re-subtraída
+    // IRPJ/CSLL no Simples estão DENTRO do DAS — não entram na carga.
+    expect(calcularNOPAT({ ...base, irpj_ttm: 100, csll_ttm: 50 }).carga_tributaria_regime_total).toBeCloseTo(r.carga_tributaria_regime_total, 2);
+  });
+
   it('EBIT negativo → NOPAT negativo (sem clamp, sem multiplicador)', () => {
     const r = calcularNOPAT({
       regime: 'presumido', resultado_operacional_ttm: -200,
@@ -478,5 +490,17 @@ describe('capitalInvestido — giro nullable', () => {
     const r = capitalInvestido({ capital_giro: 0, ativo_fixo: { valor: 500000, data_ref: null, fonte: 'reposicao', base: 'reposicao', operacional: true } });
     expect(r.capital_investido).toBe(500000);
     expect(r.giro_indisponivel).toBe(false);
+  });
+});
+
+describe('espelho verbatim na edge fin-valor-engine', () => {
+  it('a carga do Simples da edge soma os mesmos tributos fora do DAS que o helper', async () => {
+    const { readFileSync } = await import('node:fs');
+    const norm = (s: string) => s.replace(/\s+/g, '').replace(/"/g, "'");
+    const edge = norm(readFileSync('supabase/functions/fin-valor-engine/index.ts', 'utf8'));
+    const helper = norm(readFileSync('src/lib/financeiro/valor-helpers.ts', 'utf8'));
+    const expr = norm("input.regime === 'simples' ? input.das_ttm + input.icms_ttm + input.iss_ttm + input.ipi_ttm + input.pis_ttm + input.cofins_ttm :");
+    expect(helper).toContain(expr);
+    expect(edge).toContain(expr);
   });
 });
