@@ -511,3 +511,28 @@ Os dois teriam ido ao ledger em vez de esperar 74 min por um `liberar`.
   uma vez por PR por episódio; falha do `gh` vira log, sem laço. O 1º lembrete do RETIDO vem aos
   `LV_PRIMEIRO_LEMBRETE_MIN` (45), e os seguintes a cada `LV_RELEMBRA_H` (4 h). MECANICA não comenta em PR:
   não há camada nem dono.
+
+### PR F — M8 (sensor de ar atrasado) e M3 fase 1
+
+- **M8.** O workflow `.github/workflows/lovable-ar-atrasado.yml` roda a cada 30 min (`7,37 * * * *`) e só
+  **mede**: `scripts/lovable-publish.sh --atraso origin/main`.
+  - Sem chave, sem API: é o `--julgar` + a idade do commit **mais velho** de ar..main que muda algo publicável.
+  - Com o front publicável esperando há mais de `LIMITE_MIN` (90), abre **uma** Issue `lovable-ar-atrasado` com a
+    medida e as `ACAO=`. Quando o ar volta a estar em dia (`ATRASO_MIN=0`), fecha.
+  - MECANICA (não medi) não abre Issue, só um notice: ausência de medida não é atraso.
+
+  Máquina meta nova, com incidentes citados: os 5 episódios RETIDO de 22–27/11 acabaram com Publish por fora; o
+  vigia ficou sem tick de 07:51 a 12:16 em 27/11 e ninguém fora do Mac viu; o #3106 ficou fora do ar até o
+  clique. É o único sensor que não depende do Mac estar acordado.
+- **M3 fase 1.** O aviso de RETIDO por migration traz o PR e o autor da camada que segura, a partir do `DONO=`
+  (título do squash), e o comando `db:aplicar` exato. Exemplo:
+  `RETIDO (migration:…) até X. PR #4242 (fulano): bun run db:aplicar … (já aplicada fora do envelope? … --atestar)`.
+
+### Fora do escopo agora (⏸️, com gatilho para reabrir)
+
+- ⏸️ **M3 fase 2, o vigia aplicar migrations sozinho.** Reabre depois do **1º `LIBERADO=recibos`** no
+  `vigia.log` (`grep LIBERADO=recibos ~/.local/state/afiacao/lovable-vigia/vigia.log`) **e** do M2 (PR D) no ar,
+  com a revisão Codex feita.
+- ⏸️ **M5 completo, o vigia deployar edges.** Reabre depois que o M1 (PR C) mostrar sinal: um episódio de
+  `_shared/` liberado pelo ledger (`prova do _shared …: PROVA_LEDGER=0` seguido de `PUBLICAR … liberado: ledger`).
+- **M12 (testes):** entrou em cada PR acima. **M14 (custo):** sem ação (US$ 0,01–0,04 por disparo).
