@@ -23,8 +23,10 @@ export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; 
         resultado_operacional: acc.resultado_operacional + (r.resultado_operacional || 0),
         resultado_liquido: acc.resultado_liquido + (r.resultado_liquido || 0),
         impostos: acc.impostos + (r.impostos || 0),
+        // Não-operacional líquido: sem ele, Resultado Operacional − Impostos ≠ Resultado Líquido.
+        outras_liquido: acc.outras_liquido + (r.outras_receitas || 0) - (r.outras_despesas || 0),
       }),
-      { receita_liquida: 0, lucro_bruto: 0, resultado_operacional: 0, resultado_liquido: 0, impostos: 0 }
+      { receita_liquida: 0, lucro_bruto: 0, resultado_operacional: 0, resultado_liquido: 0, impostos: 0, outras_liquido: 0 }
     );
     const margemBruta = total.receita_liquida > 0 ? (total.lucro_bruto / total.receita_liquida) * 100 : 0;
     const margemLiquida = total.receita_liquida > 0 ? (total.resultado_liquido / total.receita_liquida) * 100 : 0;
@@ -33,11 +35,12 @@ export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; 
     return { company: co, ...total, margemBruta, margemLiquida, provisorio };
   });
 
-  const lines: { label: string; field: 'receita_liquida' | 'lucro_bruto' | 'margemBruta' | 'resultado_operacional' | 'impostos' | 'resultado_liquido' | 'margemLiquida'; format: 'currency' | 'pct' }[] = [
+  const lines: { label: string; field: 'receita_liquida' | 'lucro_bruto' | 'margemBruta' | 'resultado_operacional' | 'outras_liquido' | 'impostos' | 'resultado_liquido' | 'margemLiquida'; format: 'currency' | 'pct' }[] = [
     { label: 'Receita Líquida', field: 'receita_liquida', format: 'currency' },
     { label: 'Lucro Bruto', field: 'lucro_bruto', format: 'currency' },
     { label: 'Margem Bruta', field: 'margemBruta', format: 'pct' },
     { label: 'Resultado Operacional', field: 'resultado_operacional', format: 'currency' },
+    { label: 'Outras Receitas − Outras Despesas', field: 'outras_liquido', format: 'currency' },
     { label: 'Impostos', field: 'impostos', format: 'currency' },
     { label: 'Resultado Líquido', field: 'resultado_liquido', format: 'currency' },
     { label: 'Margem Líquida', field: 'margemLiquida', format: 'pct' },
