@@ -160,7 +160,10 @@ episodio() {  # <retido|mecanica> <motivo> — RETIDO lembra a cada LV_RELEMBRA_
   if [ "$1" = mecanica ]; then rot=MECANICA; rel=$RELEMBRA_MEC; chave="$2"; dica="ver $LOG"
   else rot=RETIDO; rel=$RELEMBRA; chave="ar=$(ar_curto) main=${HEAD_SHA:0:8} $2"
     # o comando CERTO (rodada 2, M10): a 1ª linha ACAO= da decisão; sem ela, o `liberar:` de antes
-    dica=$(sed -n 's/^ACAO=//p' "$EST/julgar.txt" | head -1); [ -n "$dica" ] || dica=$(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //'); fi
+    dica=$(sed -n 's/^ACAO=//p' "$EST/julgar.txt" | head -1); [ -n "$dica" ] || dica=$(grep -m1 '^  liberar:' "$EST/julgar.txt" | sed 's/^  //')
+    # rodada 2, M3 fase 1: o PR e o autor da camada que segura (DONO= do arquivo do RETIDO), antes do comando
+    local dn; dn=$(sed -n 's/^DONO=//p' "$EST/julgar.txt" | awk -F'|' -v a="${2#*:}" '$3 == a {print $1 "|" $2; exit}')
+    case "${dn%%|*}" in ''|'?') [ -n "$dn" ] && dica="autor ${dn#*|}: $dica" ;; *) dica="PR #${dn%%|*} (${dn#*|}): $dica" ;; esac; fi
   [ "$(cat "$EST/$1-chave" 2>/dev/null)" = "$chave" ] || { log "$rot $chave"; grava "$EST/$1-chave" "$chave"; }
   if { read -r ini ult < "$EST/$1-episodio"; } 2>/dev/null && [ -n "${ult:-}" ]; then
     # 1º lembrete do RETIDO cedo (rodada 2, M7): LV_PRIMEIRO_LEMBRETE_MIN (45) — o de 4 h vinha tarde demais

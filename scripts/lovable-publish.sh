@@ -68,6 +68,8 @@
 #       LP_CACHE_RECIBO_MIN=5 min): todas aplicada/adiada = liberado · sem_recibo/desconhecido =
 #       RETIDO · ausente/vencido = PRECISA_RECIBOS (exit 12);
 #     - camadas atestadas até <sha> → imprime `PISO=<sha>` (o vigia grava; o próximo PR não re-trava).
+#   --atraso <sha>: só MEDE há quantos min o front publicável de <sha> espera o ar (`ATRASO_MIN=`); o sensor do
+#   workflow lovable-ar-atrasado.yml (rodada 2, M8). Sem chave, sem API, nunca publica.
 #   --liberar <sha>: grava a atestação humana ($LP_ESTADO/liberar, atômico). Exige 40 hex e ancestral
 #   da origin/main; mostra a main medida e as migrations que a liberação cobre. Vale para todo
 #   descendente sem migration nova depois dele (`git diff <sha> <main> -- supabase/migrations` vazio).
@@ -104,13 +106,14 @@ trap 'rm -rf "$TMP"' EXIT
 fim() { echo "VEREDITO=$2"; exit "$1"; }
 mecanica() { echo "  motivo: $1"; fim 6 MECANICA; }
 
-JULGAR=0; DECIDIR=0; ESPERAR=""; LIBERAR=""; ATE_O_AR=0
+JULGAR=0; DECIDIR=0; ESPERAR=""; LIBERAR=""; ATE_O_AR=0; ATRASO=""
 case "${1:-}" in
   --julgar) JULGAR=1; shift ;;
   --decidir) JULGAR=1; DECIDIR=1; shift ;;
   --esperar) [ -n "${2:-}" ] || { echo "MECANICA=uso: --esperar <sha> [--ate-o-ar]"; exit 6; }; ESPERAR=$2; shift 2
              [ "${1:-}" = --ate-o-ar ] && { ATE_O_AR=1; shift; } ;;
   --liberar) LIBERAR=${2:-}; [ -n "$LIBERAR" ] || LIBERAR=vazio; shift; shift 2>/dev/null || true ;;
+  --atraso) [ -n "${2:-}" ] || { echo "MECANICA=uso: --atraso <sha>"; exit 6; }; ATRASO=$2; shift 2 ;;
 esac
 
 # api <método> <caminho> [corpo] → grava o corpo em $TMP/resp, ecoa o HTTP code (000 = sem resposta)
@@ -165,6 +168,34 @@ if [ -n "$LIBERAR" ]; then
     echo "MECANICA: não gravei $ESTADO/liberar"; exit 6
   fi
   echo "LIBERAR=$L gravado em $ESTADO/liberar"; exit 0
+fi
+
+# ── --atraso <sha>: há quanto tempo o front publicável de <sha> espera o ar (rodada 2, M8) ────────────────
+# Só MEDE (sem chave, sem API): o `--julgar` decide se há algo publicável fora do ar (PUBLICAR ou RETIDO); a idade
+# é a do commit MAIS VELHO de ar..<sha> que muda algo publicável (o squash do merge: `%ct` = quando entrou na main).
+# Saída: `ATRASO_MIN=<n>` (0 = em dia) + `ATRASO_DE=<sha8>` e `VEREDITO=<o do --julgar>`. MECANICA = exit 6, sem número.
+# É o sensor do workflow `lovable-ar-atrasado.yml` (Issue quando passa do limite) — nunca publica.
+if [ -n "$ATRASO" ]; then
+  J=$(LP_LIBERAR_SHA='' bash "$0" --julgar "$ATRASO" 2>&1); jrc=$?
+  V=$(printf '%s\n' "$J" | tail -1 | sed -n 's/^VEREDITO=//p')
+  printf '%s\n' "$J" | grep -E '^(ar=|RETIDO=|ACAO=|DONO=)' || true
+  case "$V" in
+    PUBLICAR|RETIDO) ;;
+    JA_NO_AR|NADA_A_PUBLICAR) echo "ATRASO_MIN=0"; echo "VEREDITO=$V"; exit 0 ;;
+    *) printf '%s\n' "$J" | grep -E '^  motivo:' || true; echo "VEREDITO=${V:-MECANICA}"; exit 6 ;;
+  esac
+  A8=$(printf '%s\n' "$J" | sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' | head -1)
+  A=$(git rev-parse --verify --quiet "$A8^{commit}" 2>/dev/null) || { echo "  motivo: ar $A8 não resolve"; echo "VEREDITO=MECANICA"; exit 6; }
+  H=$(git rev-parse --verify --quiet "$ATRASO^{commit}" 2>/dev/null) || { echo "VEREDITO=MECANICA"; exit 6; }
+  VELHO=""
+  for c in $(git rev-list --reverse "$A..$H"); do
+    git diff-tree --no-commit-id --name-only -r "$c" | grep -qvE "$INERTE" && { VELHO=$c; break; }
+  done
+  [ -n "$VELHO" ] || { echo "  motivo: veredito $V sem commit publicável em ${A:0:8}..${H:0:8}"; echo "VEREDITO=MECANICA"; exit 6; }
+  CT=$(git show -s --format=%ct "$VELHO")
+  echo "ATRASO_MIN=$(( ( ${LP_AGORA:-$(date +%s)} - CT ) / 60 ))"
+  echo "ATRASO_DE=${VELHO:0:8} $(git show -s --format='%s' "$VELHO" | cut -c1-100)"
+  echo "VEREDITO=$V"; exit 0
 fi
 
 # ── --esperar <sha>: só OBSERVA o ar (nunca publica) ───────────────────────────────────────────
