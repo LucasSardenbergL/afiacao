@@ -33,7 +33,10 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
-import { decidirEnvelopeDoCliente, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import {
+  decidirEnvelopeDoCliente, carrinhoEhEnvioPendente, itensDaFingerprintDoCarrinho, type CheckoutEnvelope,
+  lerEnvelopeDoDisco as loadCheckoutEnv, gravarEnvelopeNoDisco as persistCheckoutEnv, envioJaProtegidoNoDisco,
+} from '@/services/orderSubmission/checkout-envelope';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -50,17 +53,6 @@ import {
 // A5 (rodada 2): aviso único quando algo tenta mudar o carrinho com envio em voo.
 function avisarCarrinhoTravado() {
   toast.info('Aguarde o envio terminar para mudar o carrinho.');
-}
-
-const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
-function loadCheckoutEnv(): CheckoutEnvelope | null {
-  if (typeof localStorage === 'undefined') return null;
-  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
-}
-/** true = gravado (ou não há storage — então também não há envelope velho para ressuscitar). */
-function persistCheckoutEnv(e: CheckoutEnvelope | null): boolean {
-  if (typeof localStorage === 'undefined') return true;
-  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); return true; } catch { return false; /* quota */ }
 }
 
 // Re-export shared types for backwards compatibility
@@ -271,7 +263,7 @@ export function useUnifiedOrder() {
     vendedorDivergencias, validatingVendedor, estadoVendedor,
     estadoCadastro,
     selectCustomer, clearCustomer: clearCustomerInternal,
-    waitForAccountEnsure,
+    waitForAccountEnsure, tokenDaSelecao,
   } = customerSel;
 
   // User tools (afiação) — react-query, 2min stale; auto-loads quando customerUserId muda
@@ -381,6 +373,10 @@ export function useUnifiedOrder() {
   useEffect(() => {
     if (precoPartidaLoading) return;
     setCart(prev => {
+      // P0-5 (follow-up Codex do #4271): o carrinho do envio pendente é CONGELADO — o reenvio tem de
+      // sair idêntico (mesma fp → mesmo checkoutId → o servidor deduplica). Reprecificar viraria
+      // `conflict`, e a saída (limpar o cliente) apagaria o envelope → 2º PV.
+      if (carrinhoEhEnvioPendente(checkoutEnvRef.current, itensDaFingerprintDoCarrinho(prev))) return prev;
       let mudou = false;
       const next = prev.map(c => {
         if (c.type !== 'product') return c;
@@ -784,6 +780,10 @@ export function useUnifiedOrder() {
   const handleStaffAddTool = async () => {
     if (!selectedCustomer) return;
     if (customerUserId) { setAddToolDialogOpen(true); return; }
+    // P0-4 (follow-up Codex do #4271): cada `await` abaixo é uma janela em que o vendedor pode trocar
+    // de cliente. A resposta atrasada do cliente A não pode gravar o user de A sobre a seleção de B.
+    const tokenInicial = tokenDaSelecao();
+    const seTrocou = () => tokenDaSelecao() !== tokenInicial;
     setCreatingLocalProfile(true);
     try {
       // #11 (P0-B-bis PR-4): resolve codigo->user_id pela view fresca account=oben. selectedCustomer.codigo_cliente
@@ -793,6 +793,7 @@ export function useUnifiedOrder() {
       const { data: existingMapping } = await supabase
         .from('omie_customer_account_map_fresco').select('user_id')
         .eq('omie_codigo_cliente', selectedCustomer.codigo_cliente).eq('account', 'oben').maybeSingle();
+      if (seTrocou()) return;
       // user_id da view é string|null (view nulável); null → trata como miss e cai no fallback por documento.
       if (existingMapping?.user_id) {
         setCustomerUserId(existingMapping.user_id);
@@ -807,6 +808,7 @@ export function useUnifiedOrder() {
           // `criar_perfil_local`, que refaz a busca por documento no servidor (sem perfil duplicado).
           const { data: profile } = await supabase
             .from('v_perfil_contato').select('user_id').eq('document', docClean).maybeSingle();
+          if (seTrocou()) return;
           if (profile?.user_id) {
             setCustomerUserId(profile.user_id);
             loadUserTools(profile.user_id);
@@ -827,6 +829,7 @@ export function useUnifiedOrder() {
           },
         },
       });
+      if (seTrocou()) return; // o perfil criado fica no servidor (idempotente por documento); só não carimba B
       if (error) throw error;
       const localUserId = result?.user_id;
       if (!localUserId) throw new Error('Falha ao criar perfil');
@@ -835,6 +838,7 @@ export function useUnifiedOrder() {
       toast.success('Perfil criado', { description: 'Agora cadastre as ferramentas.' });
       setAddToolDialogOpen(true);
     } catch (e) {
+      if (seTrocou()) return; // erro do cliente anterior não vira toast na tela do cliente novo
       logger.error('Failed to prepare local profile for staff add-tool flow', {
         mode: 'staff',
         stage: 'create_local_profile',
@@ -1015,10 +1019,7 @@ export function useUnifiedOrder() {
       // Impressão digital do pedido de produto (oben+colacor) + cliente.
       // Chave ESTÁVEL do cliente (Codex r5 do #4236): o usuário confirmado, com o código Oben e o
       // vínculo da busca como aliases do formato antigo — a mesma seleção não vira `conflict`.
-      const fpItems = [
-        ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-        ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-      ];
+      const fpItems = itensDaFingerprintDoCarrinho([...obenProductItems, ...colacorProductItems]);
       const { decision, fingerprint } = decidirEnvelopeDoCliente(checkoutEnvRef.current, {
         customerUserId,
         localUserId: selectedCustomer.local_user_id,
@@ -1031,6 +1032,10 @@ export function useUnifiedOrder() {
         });
         return;
       }
+      // P0-7 (follow-up Codex do #4271): o envelope só protege se estiver no DISCO. Sem a gravação
+      // (localStorage cheio/bloqueado), uma recarga no meio do envio perde o checkoutId e o
+      // reenvio nasce com outro — 2º PV. Fail-closed: nada sai; a memória volta ao que era.
+      const envelopeAnterior = checkoutEnvRef.current;
       if (decision === 'new') {
         // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
         // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
@@ -1058,7 +1063,17 @@ export function useUnifiedOrder() {
         // mesmo pedido, só a forma da chave muda; o checkoutId é o que dá a idempotência.
         checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true } as CheckoutEnvelope;
       }
-      persistCheckoutEnv(checkoutEnvRef.current);
+      // Reenvio do MESMO envelope que já está no disco (mesmo checkoutId, comprometido): a proteção
+      // já existe — barrar aqui só travaria o vendedor (revisão adversarial do PR). Só o envelope
+      // NOVO (ou um que o disco não tem) exige a gravação.
+      if (!persistCheckoutEnv(checkoutEnvRef.current) && !envioJaProtegidoNoDisco(checkoutEnvRef.current.checkoutId)) {
+        checkoutEnvRef.current = envelopeAnterior;
+        falhouLocal('envelope_nao_gravado');
+        toast.error('Não foi possível proteger o envio contra duplicidade', {
+          description: 'O navegador recusou gravar os dados do envio (armazenamento cheio ou bloqueado). Libere espaço ou saia da janela anônima e tente de novo — nada foi enviado.',
+        });
+        return;
+      }
       cicloRascunhoRef.current.aoComprometer?.();
       const checkoutId = checkoutEnvRef.current.checkoutId;
       try {

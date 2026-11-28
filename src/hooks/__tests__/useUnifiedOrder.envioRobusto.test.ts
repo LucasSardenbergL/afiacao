@@ -148,8 +148,11 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
 
   it('envio: rascunho gravado no commit do envelope e apagado no sucesso TOTAL dentro do hook', () => {
     const corpo = corpoDo('submitOrder');
-    const commit = corpo.indexOf('persistCheckoutEnv(checkoutEnvRef.current);\n      cicloRascunhoRef.current.aoComprometer?.();');
-    expect(commit).toBeGreaterThan(-1);
+    // P0-7 (#4271): a gravação do envelope é conferida — o commit do rascunho só vem DEPOIS dela.
+    const persist = corpo.indexOf('if (!persistCheckoutEnv(checkoutEnvRef.current) && !envioJaProtegidoNoDisco(checkoutEnvRef.current.checkoutId)) {');
+    const commit = corpo.indexOf('\n      }\n      cicloRascunhoRef.current.aoComprometer?.();', persist);
+    expect(persist).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(persist);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
     expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; persistCheckoutEnv\(null\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
     expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora(draftPayload),');
