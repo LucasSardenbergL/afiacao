@@ -90,8 +90,14 @@ export function valorCitado(ficha: Record<string, unknown>, campo: string): stri
   return String(v);
 }
 
-/** Lotes de ≤ 50 ids (o teto da RPC), deduplicados, na ordem recebida. */
-export function emBlocos(ids: string[], tamanho = 50): string[][] {
+/**
+ * Lotes pequenos, deduplicados, na ordem recebida. A RPC aceita até 50, mas cada aprovação
+ * recalcula a ficha do grupo: em prod (2026-11-27) blocos de 13+ estouraram o `statement_timeout`
+ * do `authenticated` e NADA do bloco era aprovado; blocos de 2–3 passaram. Bloco menor = mais
+ * chamadas, mas cada uma cabe no timeout e uma falha isola só 3 propostas.
+ */
+export const TAMANHO_BLOCO_APROVACAO = 3;
+export function emBlocos(ids: string[], tamanho = TAMANHO_BLOCO_APROVACAO): string[][] {
   const unicos = [...new Set(ids)];
   const blocos: string[][] = [];
   for (let i = 0; i < unicos.length; i += tamanho) blocos.push(unicos.slice(i, i + tamanho));
