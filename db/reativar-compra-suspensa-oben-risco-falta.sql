@@ -13,6 +13,8 @@
 --
 -- Como rodar: bun run db:aplicar db/reativar-compra-suspensa-oben-risco-falta.sql [--ensaio]
 --   (sem BEGIN/COMMIT: a transação é do executor). Re-aplicar aborta na PRE (os 5 já não estão ativos).
+-- APLICADO em 2026-11-28, recibo #1558 (sha 368798dd…, commit df47ead82). Depois, as 3 comparações `<>` viraram
+-- `IS DISTINCT FROM` (gate verde-por-ausência); com operandos count()/cardinality() não-nulos o efeito é idêntico.
 DO $env$
 DECLARE
   v_alvo   constant bigint[] := ARRAY[8689966291, 11921548964, 12098385775, 8689717622, 8689966887]::bigint[];
@@ -21,7 +23,7 @@ DECLARE
 BEGIN
   SELECT count(*) INTO v_ativas_alvo FROM public.reposicao_compra_suspensa
    WHERE empresa = 'OBEN' AND reativado_em IS NULL AND sku_codigo_omie = ANY (v_alvo);
-  IF v_ativas_alvo <> cardinality(v_alvo) THEN
+  IF v_ativas_alvo IS DISTINCT FROM cardinality(v_alvo) THEN
     RAISE EXCEPTION 'PRE FALHOU: esperava % suspensões ATIVAS no alvo, achei % — algo já mudou (reativado na tela?)', cardinality(v_alvo), v_ativas_alvo;
   END IF;
   SELECT count(*) INTO v_outras_antes FROM public.reposicao_compra_suspensa
@@ -35,7 +37,7 @@ BEGIN
   -- PÓS: os 5 reativados com ESTE motivo, nenhum do alvo ainda ativo, e as outras suspensões intactas.
   SELECT count(*) INTO v_reativados FROM public.reposicao_compra_suspensa
    WHERE empresa = 'OBEN' AND sku_codigo_omie = ANY (v_alvo) AND reativado_em IS NOT NULL AND motivo_reativacao = v_motivo;
-  IF v_ok <> cardinality(v_alvo) OR v_reativados <> cardinality(v_alvo) THEN
+  IF v_ok IS DISTINCT FROM cardinality(v_alvo) OR v_reativados IS DISTINCT FROM cardinality(v_alvo) THEN
     RAISE EXCEPTION 'POS FALHOU: RPC reativou %, banco mostra % com o motivo, esperado %', v_ok, v_reativados, cardinality(v_alvo);
   END IF;
   IF EXISTS (SELECT 1 FROM public.reposicao_compra_suspensa WHERE empresa = 'OBEN' AND reativado_em IS NULL AND sku_codigo_omie = ANY (v_alvo)) THEN
@@ -43,7 +45,7 @@ BEGIN
   END IF;
   SELECT count(*) INTO v_outras_depois FROM public.reposicao_compra_suspensa
    WHERE empresa = 'OBEN' AND reativado_em IS NULL AND NOT (sku_codigo_omie = ANY (v_alvo));
-  IF v_outras_depois <> v_outras_antes THEN
+  IF v_outras_depois IS DISTINCT FROM v_outras_antes THEN
     RAISE EXCEPTION 'POS FALHOU: suspensões fora do alvo mudaram (% -> %)', v_outras_antes, v_outras_depois;
   END IF;
   RAISE NOTICE 'COMPRA-SUSPENSA-REATIVAR-OK % reativados; % seguem suspensos', v_reativados, v_outras_depois;
