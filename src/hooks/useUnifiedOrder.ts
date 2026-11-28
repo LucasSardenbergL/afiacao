@@ -33,7 +33,9 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
-import { decidirEnvelopeDoCliente, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import {
+  decidirEnvelopeDoCliente, carrinhoEhEnvioPendente, itensDaFingerprintDoCarrinho, type CheckoutEnvelope,
+} from '@/services/orderSubmission/checkout-envelope';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -381,6 +383,10 @@ export function useUnifiedOrder() {
   useEffect(() => {
     if (precoPartidaLoading) return;
     setCart(prev => {
+      // P0-5 (follow-up Codex do #4271): o carrinho do envio pendente é CONGELADO — o reenvio tem de
+      // sair idêntico (mesma fp → mesmo checkoutId → o servidor deduplica). Reprecificar viraria
+      // `conflict`, e a saída (limpar o cliente) apagaria o envelope → 2º PV.
+      if (carrinhoEhEnvioPendente(checkoutEnvRef.current, itensDaFingerprintDoCarrinho(prev))) return prev;
       let mudou = false;
       const next = prev.map(c => {
         if (c.type !== 'product') return c;
@@ -1023,10 +1029,7 @@ export function useUnifiedOrder() {
       // Impressão digital do pedido de produto (oben+colacor) + cliente.
       // Chave ESTÁVEL do cliente (Codex r5 do #4236): o usuário confirmado, com o código Oben e o
       // vínculo da busca como aliases do formato antigo — a mesma seleção não vira `conflict`.
-      const fpItems = [
-        ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-        ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-      ];
+      const fpItems = itensDaFingerprintDoCarrinho([...obenProductItems, ...colacorProductItems]);
       const { decision, fingerprint } = decidirEnvelopeDoCliente(checkoutEnvRef.current, {
         customerUserId,
         localUserId: selectedCustomer.local_user_id,

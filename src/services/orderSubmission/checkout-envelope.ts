@@ -160,6 +160,47 @@ export function decidirEnvelopeDoCliente(
  * próximo pedido IDÊNTICO sai como 'reuse' ("já enviado") e não é criado. Então o descarte com
  * envelope presente pede confirmação e zera os dois; sem envelope, descarta direto.
  */
+/** Item do carrinho como a fingerprint o enxerga (estrutural — o service não importa tipos do hook). */
+export type ItemCarrinhoParaFingerprint = {
+  type: string;
+  account?: string;
+  quantity?: number;
+  unit_price?: number;
+  product?: { omie_codigo_produto?: number | string | null };
+};
+
+/** A MESMA montagem dos itens da fp no envio e na trava de reprecificação (P0-5 do #4271): só produto
+ *  Oben/Colacor entra. A fp é ordem-independente (computeCheckoutFingerprint ordena). */
+export function itensDaFingerprintDoCarrinho(
+  cart: ReadonlyArray<ItemCarrinhoParaFingerprint>,
+): Array<{ account: string; omie_codigo_produto: number | string; quantity: number; unit_price: number }> {
+  return cart
+    .filter(c => c.type === 'product' && (c.account === 'oben' || c.account === 'colacor'))
+    .map(c => ({
+      account: c.account as string,
+      omie_codigo_produto: c.product?.omie_codigo_produto as number | string,
+      quantity: c.quantity as number,
+      unit_price: c.unit_price as number,
+    }));
+}
+
+/**
+ * P0-5 (follow-up Codex do #4271): o carrinho na tela É o envio pendente — o envelope está comprometido
+ * e os itens (produto, quantidade, preço) batem com os que foram enviados. Então nada automático pode
+ * mexer no preço: a reprecificação mudaria a fp, o reenvio viraria `conflict` e a saída oferecida
+ * (limpar o cliente) apagaria o envelope → 2º PV. Compara só os ITENS, não a chave do cliente: durante
+ * a (re)seleção o usuário fica nulo por um instante e o preço de tabela já chega — a trava não pode
+ * piscar ali. Carrinho vazio nunca é envio pendente.
+ */
+export function carrinhoEhEnvioPendente(
+  stored: CheckoutEnvelope | null,
+  items: Parameters<typeof computeCheckoutFingerprint>[1],
+): boolean {
+  if (!stored?.committed || items.length === 0) return false;
+  const doEnvelope = itensDaFingerprint(stored.fingerprint);
+  return doEnvelope !== null && doEnvelope === itensDaFingerprint(computeCheckoutFingerprint('', items));
+}
+
 export type DescarteRascunho = 'descartar' | 'confirmar';
 export function decidirDescarteRascunho(stored: CheckoutEnvelope | null): DescarteRascunho {
   return stored ? 'confirmar' : 'descartar';
