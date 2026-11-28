@@ -30,6 +30,7 @@ import {
 import { colunasResumo, type ColunasResumo, idOmie } from "./resumo-movimento.ts";
 import { aplicarChaves, type ItemChave, SensorColapso } from "./chave-movimento.ts";
 import { colunasCmvHeuristica } from "./cmv-heuristica.ts";
+import { acumularComposicaoCmv, novaComposicaoCmv, valorComSinal } from "./sinal-natureza.ts";
 import { chamarOmieComPolitica } from "./omie-chamada.ts";
 import {
   decidirModoCR,
@@ -1591,6 +1592,9 @@ function classificarLinhaDRE(input: {
 function heuristicaDRE(desc: string, cod: string, isReceita: boolean, regime: RegimeTributario): Omit<ResultadoClassificacao, 'mapeamentoInvalido'> {
   const upper = (desc + ' ' + cod).toUpperCase();
   if (isReceita) {
+    // v1.17: devolução de COMPRA (CR) reduz o CMV (linha redutora, sinal por natureza) — antes caía em
+    // `deducoes` com sinal positivo e reduzia a RECEITA. Devolução/cancelamento de venda segue em deduções.
+    if (upper.includes('DEVOL') && upper.includes('COMPRA')) return { linha: 'cmv', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('DEVOL') || upper.includes('CANCEL')) return { linha: 'deducoes', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('FINANC') || upper.includes('REND') || upper.includes('JUROS REC')) return { linha: 'receitas_financeiras', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     return { linha: 'receita_bruta', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
@@ -2048,6 +2052,8 @@ async function calcularDRE(
   // Confiança do CMV (v1.14): R$ do CMV classificado pela heurística de descrição (viaFallback), inclusive
   // lançamento sem código de categoria. Vai a colunas dedicadas via `colunasCmvHeuristica`.
   let cmvHeuristicaValor = 0;
+  // v1.17: composição VERSIONADA do CMV (compras − devoluções de compra), no detalhamento.
+  const composicaoCmv = novaComposicaoCmv();
   const GENERICOS = ["OUTROS", "DIVERSOS", "AJUSTE", "TRANSFER"];
 
   function processar(rows: Array<Record<string, unknown>>, isReceita: boolean) {
@@ -2081,13 +2087,23 @@ async function calcularDRE(
       const c = classificarLinhaDRE({ categoria_codigo: cod, categoria_descricao: desc, isReceita, regime: regimeTrib, mapping });
       const comp = isReceita ? composicaoReceitas : composicaoDespesas;
       const porLinha = comp[desc] ?? (comp[desc] = {});
-      porLinha[c.linha] = (porLinha[c.linha] ?? 0) + val;
       // fora_dre NÃO vai para totais (nenhuma linha do resultado), mas segue no detalhamento,
       // em valorTotal/valorMapeado e no caixa/fallback: o desembolso é real.
-      if (c.linha === "fora_dre") acumularForaDRE(foraDRE, cod, val, isReceita);
-      else if (c.linha === "nao_resultado") acumularNaoResultado(naoResultado, cod, val, isReceita);
-      else totais[c.linha] = (totais[c.linha] ?? 0) + val;
-      if (c.linha === "cmv" && c.viaFallback) cmvHeuristicaValor += val;
+      if (c.linha === "fora_dre" || c.linha === "nao_resultado") {
+        porLinha[c.linha] = (porLinha[c.linha] ?? 0) + val;
+        if (c.linha === "fora_dre") acumularForaDRE(foraDRE, cod, val, isReceita);
+        else acumularNaoResultado(naoResultado, cod, val, isReceita);
+      } else {
+        // v1.17 — sinal por NATUREZA da linha: título do lado oposto SUBTRAI (CR em cmv = devolução
+        // de compra reduz o CMV). Confiança (valorTotal/valorMapeado) segue em valor absoluto.
+        const assinado = valorComSinal(val, isReceita, c.linha);
+        porLinha[c.linha] = (porLinha[c.linha] ?? 0) + assinado;
+        totais[c.linha] = (totais[c.linha] ?? 0) + assinado;
+        if (c.linha === "cmv") {
+          acumularComposicaoCmv(composicaoCmv, val, isReceita);
+          if (c.viaFallback) cmvHeuristicaValor += assinado;
+        }
+      }
       if (c.mapeamentoInvalido) {
         const k = `${isReceita ? "CR" : "CP"}|${cod}`;
         const prev = mapeamentosInvalidos.get(k);
@@ -2194,6 +2210,8 @@ async function calcularDRE(
       regime_tributario: regimeTrib,
       caixa_estimado,
       confianca: confiancaDRE,
+      // v1.17 — contrato versionado: cmv (coluna) = composicao_cmv.liquido.
+      composicao_cmv: composicaoCmv,
       composicao_receitas: composicaoReceitas,
       composicao_despesas: composicaoDespesas,
       fora_dre: foraDRE,

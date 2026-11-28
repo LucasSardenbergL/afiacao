@@ -518,7 +518,8 @@ describe('v1.13 — a EDGE de fato roteia nao_resultado (gate textual: o helper 
   // Codex adversarial 2026-11-22: remover a chamada real no laço `processar` mantinha esta suíte verde.
   const fonte = readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-financeiro/index.ts'), 'utf8');
   it('o laço desvia nao_resultado para o acumulador (antes do else que soma em totais)', () => {
-    expect(fonte).toMatch(/else if \(c\.linha === "nao_resultado"\) acumularNaoResultado\(naoResultado, cod, val, isReceita\);\n\s*else totais\[c\.linha\]/);
+    // v1.17: fora_dre/nao_resultado num ramo próprio; `totais` só no else (com sinal por natureza).
+    expect(fonte).toMatch(/if \(c\.linha === "fora_dre" \|\| c\.linha === "nao_resultado"\) \{[^}]*else acumularNaoResultado\(naoResultado, cod, val, isReceita\);\n\s*\} else \{[^}]*totais\[c\.linha\] = \(totais\[c\.linha\] \?\? 0\) \+ assinado;/);
   });
   it('o snapshot publica detalhamento.nao_resultado', () => {
     expect(fonte).toMatch(/\n\s*nao_resultado: naoResultado,\n/);
