@@ -102,7 +102,11 @@ fi
 TMPD="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")"
 DATA="$TMPD/data"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
-trap cleanup EXIT
+# Marcador de FIM: um aborto por `set -u` no meio (visto em pt_BR.UTF-8, onde o bash lê "$X·" como
+# nome de variável) saía 0 com metade dos asserts sem rodar — o bash 3.2 do macOS com `set -e` entrega
+# `$?` = 0 dentro do trap. Sem chegar ao fim, sai 1; com erro conhecido, mantém o código dele.
+FIM=0
+trap 'rc=$?; cleanup; if [ "$rc" != 0 ]; then exit "$rc"; fi; [ "$FIM" = 1 ] || { echo "ABORTOU antes do fim (exit forçado a 1)"; exit 1; }' EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c TimeZone=UTC" -l "$TMPD/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
@@ -224,15 +228,15 @@ if [ "${IMPRIMIR_MD5:-}" = "1" ]; then
   sabotar 's/IS DISTINCT FROM .__MD5_VIEW_NOVA__. THEN/IS DISTINCT FROM NULL AND false THEN/'
   P -q -f "$MIG" >/dev/null
   echo "MD5_VIEW_NOVA=$(Pq -c "SELECT md5(pg_get_viewdef('public.order_feed'::regclass, true))")"
-  exit 0
+  FIM=1; exit 0
 fi
 # A PÓS pega as sabotagens de catálogo; as de comportamento só os asserts de execução pegam.
 # shellcheck disable=SC2016  # $1 nas expressões é do PERL (grupo capturado), não do shell
 case "${SABOTAGEM:-}" in
   "") ;;
-  origem_sem_escape)    sabotar "s/LIKE 'omie\\\\_%'/LIKE 'omie_%'/" ;;
+  origem_sem_escape)    sabotar "s/so\\.hash_payload LIKE 'omie\\\\_%'/so.hash_payload LIKE 'omie_%'/" ;;
   busca_sem_base)       sabotar 's/\) \|\| f\.busca_base\)::text AS busca/) || \x27\x27)::text AS busca/' ;;
-  busca_base_vazia)     sabotar 's/so\.busca_base               AS busca_base,/(E\x27\\n\x27 || COALESCE(so.omie_numero_pedido, \x27\x27) || E\x27\\n\\n\x27 || round(COALESCE(so.total, 0), 2)::text || E\x27\\n\x27 || replace(round(COALESCE(so.total, 0), 2)::text, \x27.\x27, \x27,\x27)) AS busca_base,/; s/IF v_div <> 0 THEN/IF false THEN/' ;;
+  busca_base_vazia)     sabotar 's/so\.busca_base               AS busca_base,/(E\x27\\n\x27 || COALESCE(so.omie_numero_pedido, \x27\x27) || E\x27\\n\\n\x27 || round(COALESCE(so.total, 0), 2)::text || E\x27\\n\x27 || replace(round(COALESCE(so.total, 0), 2)::text, \x27.\x27, \x27,\x27)) AS busca_base,/; s/IF v_div <> 0 THEN/IF false THEN/; s/IS DISTINCT FROM .7f74d95f5205b25fa9e35c64f20bb44e. THEN/IS DISTINCT FROM NULL AND false THEN/' ;;
   fim_sem_puros)        sabotar 's/ AND NOT \(f\.created_at = ANY \(COALESCE\(p_puros_fim, .\{\}.::timestamptz\[\]\)\)\)//g' ;;
   fim_inclusivo)        sabotar 's/f\.created_at < p_ate/f.created_at <= p_ate/g' ;;
   marca_qualquer_role)  sabotar "s/IF coalesce\\(auth\\.role\\(\\), ''\\) = 'authenticated' THEN/IF true THEN/" ;;
@@ -318,7 +322,7 @@ como "$F" "UPDATE public.sales_orders SET deleted_at = now() + interval '1 secon
 P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '31 minutes' WHERE sales_order_id = '$X4'"
 REC="$(Pq -c "SELECT private.sales_orders_exclusao_recuperar()")"
 eq E4 "recupera x1/x4/x5, mantém a baixa do reconciliador (n · x1 · x9 oculto)" \
-  "$REC·$(Pq -c "SELECT (deleted_at IS NULL) FROM public.sales_orders WHERE id = '$X1'")·$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X9'")·$(marca "$X1")" "3·t·t·recuperado"
+  "${REC}·$(Pq -c "SELECT (deleted_at IS NULL) FROM public.sales_orders WHERE id = '$X1'")·$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X9'")·$(marca "$X1")" "3·t·t·recuperado"
 eq E5 "marca recente não é recuperada" "$(marca "$X3")·$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X3'")" "em_curso·t"
 eq E6 "re-carimbo segue a marca (x4 voltou)" "$(Pq -c "SELECT (deleted_at IS NULL) FROM public.sales_orders WHERE id = '$X4'")·$(marca "$X4")" "t·recuperado"
 P -q -c "DELETE FROM public.sales_orders WHERE id = '$X3'" 2>"$TMPD/del.err" || true
@@ -332,4 +336,5 @@ eq C1 "cron agendado" "$(Pq -c "SELECT schedule || ' ' || active FROM cron.job W
 echo "═══ $PASS ✅ · $FAIL ❌ ═══"
 [ "$FAIL" = 0 ] || exit 1
 [ "$PASS" = "$TOTAL_ESPERADO" ] || { echo "❌ rodou $PASS asserts, esperado $TOTAL_ESPERADO"; exit 1; }
+FIM=1
 echo "FIM_OK"
