@@ -18501,7 +18501,6 @@ export type Database = {
         Row: {
           account: string
           atendimento_id: string | null
-          busca_base: string | null
           checkout_id: string | null
           created_at: string
           created_by: string | null
@@ -24985,7 +24984,6 @@ export type Database = {
           item_quantity: number | null
           omie_pedido_id: number | null
           order_number: string | null
-          origem_omie: boolean | null
           origin: string | null
           status: string | null
           subtotal: number | null
@@ -29550,12 +29548,10 @@ export type Database = {
       order_feed_total: {
         Args: {
           p_account?: string
-          p_ate?: string
           p_busca?: string
           p_customer?: string
           p_desde?: string
           p_puros?: string[]
-          p_puros_fim?: string[]
           p_status?: string[]
           p_vendedor?: string
         }
