@@ -18501,6 +18501,7 @@ export type Database = {
         Row: {
           account: string
           atendimento_id: string | null
+          busca_base: string | null
           checkout_id: string | null
           created_at: string
           created_by: string | null
@@ -18538,6 +18539,7 @@ export type Database = {
         Insert: {
           account?: string
           atendimento_id?: string | null
+          busca_base?: string | null
           checkout_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -18575,6 +18577,7 @@ export type Database = {
         Update: {
           account?: string
           atendimento_id?: string | null
+          busca_base?: string | null
           checkout_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -18643,6 +18646,55 @@ export type Database = {
             columns: ["whatsapp_conversation_id"]
             isOneToOne: false
             referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_orders_exclusao_marca: {
+        Row: {
+          carimbo: string
+          desfecho: string | null
+          marcado_em: string
+          marcado_por: string | null
+          resolvido_em: string | null
+          sales_order_id: string
+        }
+        Insert: {
+          carimbo: string
+          desfecho?: string | null
+          marcado_em?: string
+          marcado_por?: string | null
+          resolvido_em?: string | null
+          sales_order_id: string
+        }
+        Update: {
+          carimbo?: string
+          desfecho?: string | null
+          marcado_em?: string
+          marcado_por?: string | null
+          resolvido_em?: string | null
+          sales_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_orders_exclusao_marca_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: true
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_exclusao_marca_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: true
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_exclusao_marca_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: true
+            referencedRelation: "v_pedido_snapshot_proprio"
             referencedColumns: ["id"]
           },
         ]
@@ -24984,6 +25036,7 @@ export type Database = {
           item_quantity: number | null
           omie_pedido_id: number | null
           order_number: string | null
+          origem_omie: boolean | null
           origin: string | null
           status: string | null
           subtotal: number | null
@@ -29533,6 +29586,7 @@ export type Database = {
           item_quantity: number | null
           omie_pedido_id: number | null
           order_number: string | null
+          origem_omie: boolean | null
           origin: string | null
           status: string | null
           subtotal: number | null
@@ -29548,10 +29602,12 @@ export type Database = {
       order_feed_total: {
         Args: {
           p_account?: string
+          p_ate?: string
           p_busca?: string
           p_customer?: string
           p_desde?: string
           p_puros?: string[]
+          p_puros_fim?: string[]
           p_status?: string[]
           p_vendedor?: string
         }
