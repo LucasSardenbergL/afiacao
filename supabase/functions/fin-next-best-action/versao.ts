@@ -18,7 +18,9 @@ export const respostaSonda = criarRespostaSonda("fin-next-best-action");
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 // v1.1 (plano v6 C1): caixa desconhecido deixa de virar R$0 — cobertura null / saldo ausente → disponível
 // null com o motivo da A1; saldo datado rebaixa; `crescer` sem caixa conhecido cai em falta_dado.
-export const VERSAO = "v1.1-caixa-desconhecido-nao-vira-zero";
+// v1.2 (fora de escopo da A1 v2.7): o saldo_tesouraria da A1 desconta a folha 30d — `ncg.fontes.folha=false`
+// (folha sem fonte) rebaixa o caixa a baixa com haircut e não autoriza financiar_ja; ausente → média.
+export const VERSAO = "v1.2-folha-sem-fonte-rebaixa-caixa";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

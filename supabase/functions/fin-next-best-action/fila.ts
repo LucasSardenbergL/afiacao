@@ -37,12 +37,16 @@ export type CaixaEmpresa = {
 export type RespostaA1Caixa = {
   indicadores?: { dias_cobertura?: number | null; saldo_tesouraria?: number | null } | null;
   confianca_dados?: { motivos?: string[] | null; saldo_inicial?: string | null } | null;
+  // A1 v2.6+: o saldo_tesouraria desconta a folha 30d da NCG. `fontes.folha=false` = a folha NÃO foi
+  // medida e o saldo saiu SEM esse desconto (superestimado em valor desconhecido).
+  ncg?: { fontes?: { folha?: boolean | null } | null } | null;
 };
 
 // Transporte A1 → caixa da A4. Só o que entra em saldo_tesouraria/dias_cobertura mexe no caixa:
 // o motivo de saldo DATADO (`confianca_dados.saldo_inicial`) rebaixa e aplica o haircut; os demais
 // motivos da A1 (estoque, CMV, prazos PMR/PMP/CCC) não entram nesses dois números → não anulam nem
-// rebaixam o caixa (degradação de PMR não é caixa desconhecido).
+// rebaixam o caixa (degradação de PMR não é caixa desconhecido). A folha 30d ENTRA no saldo
+// (saldo_tesouraria = saldo_cc − folha_30d): folha sem fonte rebaixa e aplica o haircut como o saldo datado.
 export function caixaDaA1(resp: RespostaA1Caixa | null, reserva_dias_min: number): CaixaEmpresa {
   if (resp == null) {
     return { disponivel: null, confianca: 'baixa', saldo_tesouraria: null, dias_cobertura: null, motivos: ['Projeção de caixa (A1) indisponível — caixa disponível desconhecido.'] };
@@ -62,8 +66,16 @@ export function caixaDaA1(resp: RespostaA1Caixa | null, reserva_dias_min: number
   // `{ motivos }` sem `saldo_inicial`) ou valor inválido → não atestado (Codex, revisão do código v6 C1).
   const semAtestado = motivoSaldo !== null && !saldoDatado;
   if (semAtestado) motivos.push('A1 sem confianca_dados.saldo_inicial — frescor do saldo não atestado.');
-  const disponivel = caixaDisponivel({ saldo_tesouraria: saldo, dias_cobertura: dias, reserva_dias_min, confianca_baixa: saldoDatado });
-  const confianca: CaixaEmpresa['confianca'] = disponivel == null || saldoDatado ? 'baixa' : semAtestado ? 'media' : 'alta';
+  // Só `fontes.folha: true` EXPLÍCITO atesta que o saldo descontou a folha. `false` → folha sem fonte
+  // (saldo superestimado): baixa + haircut. Ausente/inválido (A1 anterior à v2.6) → não atestado: média.
+  const folhaRaw = resp.ncg?.fontes?.folha;
+  const folhaSemFonte = folhaRaw === false;
+  const folhaSemAtestado = folhaRaw !== true && !folhaSemFonte;
+  if (folhaSemFonte) motivos.push('Folha dos próximos 30 dias sem fonte na A1 — o saldo de tesouraria não descontou a folha.');
+  if (folhaSemAtestado) motivos.push('A1 sem ncg.fontes.folha — desconto da folha no saldo não atestado.');
+  const rebaixa = saldoDatado || folhaSemFonte;
+  const disponivel = caixaDisponivel({ saldo_tesouraria: saldo, dias_cobertura: dias, reserva_dias_min, confianca_baixa: rebaixa });
+  const confianca: CaixaEmpresa['confianca'] = disponivel == null || rebaixa ? 'baixa' : semAtestado || folhaSemAtestado ? 'media' : 'alta';
   return { disponivel, confianca, saldo_tesouraria: saldo, dias_cobertura: dias, motivos };
 }
 
