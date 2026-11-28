@@ -23,8 +23,6 @@ export LC_ALL=C LANG=C; unset LANGUAGE
 LOC="${LC_TESTE:-C}"
 FALSIFICAR=0; [ "${1:-}" = "--falsificar" ] && FALSIFICAR=1
 PASS=0; FAIL=0
-ok()  { PASS=$((PASS+1)); printf '  ✅ %s\n' "$1"; }
-nok() { FAIL=$((FAIL+1)); printf '  ❌ %s — %s\n' "$1" "$2"; }
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -101,41 +99,105 @@ c_pos() { zera; $PSQL -q -c "DROP TABLE IF EXISTS public.atestar_cfg; CREATE TAB
 c_pos_falso() { zera; $PSQL -q -c "DROP TABLE IF EXISTS public.atestar_cfg; CREATE TABLE public.atestar_cfg (k text PRIMARY KEY, v text)" >/dev/null
   atestar "$DMLF" --pos db/fixtures/db-atestar-dml-pos.sql; [ "$RC" = 4 ] && [ "$(recibos "$DMLF")" = 0 ]; }
 
-CENARIOS="c_ok c_dup c_corpo c_policy c_acl c_sinv c_do c_do_ok c_ro_quebrado c_dml c_pos c_pos_falso"
+# ID de cada cenário: o assert que a falsificação nomeia (idioma do falsificar-exige-assert-gate, R1/R2)
+CENARIOS="A1:c_ok A2:c_dup A3:c_corpo A4:c_policy A5:c_acl A6:c_sinv A7:c_do A8:c_do_ok A9:c_ro_quebrado A10:c_dml A11:c_pos A12:c_pos_falso"
+rodada() {  # roda TODOS os cenários contra o ALVO/PLANO atuais; imprime `  ✓ <ID> ` / `  ✗ <ID> `
+  local item id fn
+  PASS=0; FAIL=0
+  for item in $CENARIOS; do
+    id="${item%%:*}"; fn="${item#*:}"
+    if "$fn"; then ok "$id $fn"; else nok "$id $fn" "rc=$RC $(tail -c 300 "$WORK/out" | tr '\n' ' ')"; fi
+  done
+}
+# ok/nok imprimem "  ✅ …"/"  ❌ …"; a falsificação casa o ID pela linha exata
+ok()  { PASS=$((PASS+1)); printf '  ✓ %s\n' "$1"; }
+nok() { FAIL=$((FAIL+1)); printf '  ✗ %s — %s\n' "$1" "$2"; }
+
+# <sabotagem>:<IDs que TÊM de virar vermelhos>:<IDs que têm de ficar verdes — o controle da camada>
+SABOTAGENS="corpo_md5:A3:A1
+falta:A4:A1
+acl:A5:A1
+sinv:A6:A1
+dos:A7:A8
+nao_provavel:A10:A11
+pos_marcador:A11:A10
+read_only:A9:A7"
+# shellcheck disable=SC2016  # os $ das expressões sed são LITERAIS dos fontes sabotados
+# sabotagem <nome> → ALVO/PLANO apontam para a cópia sabotada; 3 = o sed não casou (não aplicou)
+sabotagem() {
+  local qual expr src dst
+  case "$1" in
+    corpo_md5)    qual=ts;   expr='s/ AND md5(p.prosrc) = \${lit(md5(b\[3\]))}//' ;;
+    falta)        qual=bash; expr='s/^  if \[ -n "\$FALTAS" \] || \[ "\$NOK" != "\$NCH" \]; then$/  if false; then/' ;;
+    acl)          qual=ts;   expr='s/^  for (const a of acl.values()) checagens.push(checagemAcl(a.kind, a.obj, a.role, a.priv, a.v));$/  void acl;/' ;;
+    sinv)         qual=ts;   expr='s/if (si) {/if (false \&\& si) {/' ;;
+    dos)          qual=bash; expr='s/^    if ! ro_prova "\$d" DO_OK "\$d.out"; then$/    if false; then/' ;;
+    nao_provavel) qual=bash; expr='s/^    3) if \[ -z "\$POS" \]; then$/    3) if false; then/' ;;
+    pos_marcador) qual=bash; expr="s/ || ! grep -qx 'POSCONDICAO_OK' \"\$AT_DIR\/pos.out\"//" ;;
+    # todas as camadas do READ ONLY de uma vez sob o wrapper quebrado (cada uma sozinha é redundante DE
+    # PROPÓSITO: BEGIN READ ONLY, RO_ATIVO:on e o ROLLBACK final — docs/historico/lovable-publish-automatico.md)
+    read_only)    qual=bash; expr='s/BEGIN TRANSACTION READ ONLY;/BEGIN;/; s/^    grep -qx .RO_ATIVO:on. "\$3" || return 1$/    true/; s/\\nROLLBACK;\\n"/\\nCOMMIT;\\n"/' ;;
+    *) return 3 ;;
+  esac
+  if [ "$qual" = ts ]; then
+    # a cópia mora fora do repo: o alias `@/` não resolve lá — reescrito para o caminho absoluto NA BASE também,
+    # para o "o sed casou?" comparar só a sabotagem (sem isto o planner sabotado abortava e tudo ficava vermelho)
+    src="$WORK/plano-base.ts"; dst="$WORK/sab-$1.ts"
+    sed "s|'@/lib/erro-mensagem'|'$REPO_ROOT/src/lib/erro-mensagem.ts'|" "$PLANO_REAL" > "$src"
+  else src="$ALVO_REAL"; dst="$WORK/sab-$1.sh"; fi
+  sed "$expr" "$src" > "$dst"
+  cmp -s "$src" "$dst" && return 3
+  if [ "$qual" = ts ]; then PLANO="$dst"; else ALVO="$dst"; fi
+}
+
 if [ "$FALSIFICAR" = 0 ]; then
   echo "▶ db:aplicar --atestar (lc_messages=$LOC)"
-  for c in $CENARIOS; do if "$c"; then ok "$c"; else nok "$c" "rc=$RC $(tail -c 300 "$WORK/out" | tr '\n' ' ')"; fi; done
-else
-  echo "▶ falsificação (controle verde na MESMA invocação; lc_messages=$LOC)"
-  # sabota <nome> <alvo:bash|ts> <sed> <cenário> [RO alternativo]
-  sabota() {
-    local nome=$1 qual=$2 expr=$3 cen=$4 src dst
-    if [ "$qual" = ts ]; then src="$PLANO_REAL"; dst="$WORK/sab-$nome.ts"; else src="$ALVO_REAL"; dst="$WORK/sab-$nome.sh"; fi
-    sed "$expr" "$src" > "$dst"
-    if cmp -s "$src" "$dst"; then nok "sab $nome" "o sed não casou"; return; fi
-    ALVO="$ALVO_REAL"; PLANO="$PLANO_REAL"
-    if ! "$cen"; then nok "controle $nome" "o cenário $cen reprovou o código REAL"; return; fi
-    if [ "$qual" = ts ]; then PLANO="$dst"; else ALVO="$dst"; fi
-    if "$cen"; then nok "sab $nome" "o sabotado passou em $cen"; else ok "falsificação $nome: real verde, sabotado vermelho ($cen)"; fi
-    ALVO="$ALVO_REAL"; PLANO="$PLANO_REAL"
-  }
-  # shellcheck disable=SC2016  # os $ são LITERAIS dos fontes sabotados
-  sabota corpo_md5 ts 's/ AND md5(p.prosrc) = \${lit(md5(b\[3\]))}//' c_corpo
-  # shellcheck disable=SC2016
-  sabota falta bash 's/^  if \[ -n "\$FALTAS" \] || \[ "\$NOK" != "\$NCH" \]; then$/  if false; then/' c_policy
-  sabota acl ts 's/^  for (const a of acl.values()) checagens.push(checagemAcl(a.kind, a.obj, a.role, a.priv, a.v));$/  void acl;/' c_acl
-  sabota sinv ts 's/if (si) {/if (false \&\& si) {/' c_sinv
-  # shellcheck disable=SC2016
-  sabota dos bash 's/^    if ! ro_prova "\$d" DO_OK "\$d.out"; then$/    if false; then/' c_do
-  # shellcheck disable=SC2016
-  sabota nao_provavel bash 's/^    3) if \[ -z "\$POS" \]; then$/    3) if false; then/' c_dml
-  # shellcheck disable=SC2016
-  sabota pos_marcador bash "s/ || ! grep -qx 'POSCONDICAO_OK' \"\$AT_DIR\/pos.out\"//" c_pos
-  # todas as camadas do READ ONLY de uma vez sob o wrapper quebrado (cada uma sozinha é redundante DE PROPÓSITO:
-  # BEGIN READ ONLY, RO_ATIVO:on e o ROLLBACK final — ver docs/historico/lovable-publish-automatico.md)
-  # shellcheck disable=SC2016
-  sabota read_only bash 's/BEGIN TRANSACTION READ ONLY;/BEGIN;/; s/^    grep -qx .RO_ATIVO:on. "\$3" || return 1$/    true/; s/\\nROLLBACK;\\n"/\\nCOMMIT;\\n"/' c_ro_quebrado
+  rodada
+  echo "PASS=$PASS FAIL=$FAIL"
+  [ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ] && echo "DB_ATESTAR_OK"
+  [ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ]
+  exit $?
 fi
-if [ "$FALSIFICAR" = 1 ]; then echo "SABOTAGENS: $PASS vermelhas / $FAIL falhas"; else echo "PASS=$PASS FAIL=$FAIL"; fi
-[ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ] && echo "DB_ATESTAR_OK"
-[ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ]
+
+# ── --falsificar: CONTROLE verde na MESMA invocação, antes da 1ª sabotagem ─────────────────────────────────
+echo "▶ falsificação (lc_messages=$LOC) — CONTROLE (sem sabotagem) tem de ficar VERDE"
+ALVO="$ALVO_REAL"; PLANO="$PLANO_REAL"
+rodada > "$WORK/controle.log" 2>&1
+executados_controle=$((PASS + FAIL))
+if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 1 ]; then
+  echo "  ❌ CONTROLE VERMELHO (PASS=$PASS FAIL=$FAIL) — abortando antes de sabotar"; tail -c 1500 "$WORK/controle.log"; exit 1
+fi
+echo "  ✅ controle verde: $PASS asserts"
+falhas=0
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; resto="${item#*:}"
+  verm="${resto%%:*}"; verdes=""
+  [ "$resto" = "$verm" ] || verdes="${resto#*:}"
+  log="$WORK/sab-$sab.log"; motivo=""
+  ALVO="$ALVO_REAL"; PLANO="$PLANO_REAL"
+  rc=0; sabotagem "$sab" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    motivo=" sabotagem não aplicou (exit $rc: o sed não casou)"
+  else
+    rodada > "$log" 2>&1
+    if [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
+      motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
+    else
+      for id in ${verm//,/ }; do
+        if ! grep -Eq "^  ✓ ($id) " "$WORK/controle.log" || ! grep -Eq "^  ✗ ($id) " "$log"; then
+          motivo="$motivo $id não virou (verde no controle → vermelho aqui);"
+        fi
+      done
+      for id in ${verdes//,/ }; do
+        grep -Eq "^  ✓ ($id) " "$log" || motivo="$motivo $id ficou VERMELHO (pré-condição: a sabotagem quebrou outra camada);"
+      done
+    fi
+  fi
+  ALVO="$ALVO_REAL"; PLANO="$PLANO_REAL"
+  if [ -z "$motivo" ]; then echo "  ✅ $sab — vermelho no assert declarado ($verm)"; else falhas=$((falhas+1)); echo "  ❌ $sab —$motivo"; fi
+done
+total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
+echo "PASS=$((total - falhas))  FAIL=$falhas"
+[ "$falhas" -eq 0 ] && echo "DB_ATESTAR_OK"
+[ "$falhas" -eq 0 ]
