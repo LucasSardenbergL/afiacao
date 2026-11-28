@@ -201,6 +201,33 @@ export function carrinhoEhEnvioPendente(
   return doEnvelope !== null && doEnvelope === itensDaFingerprint(computeCheckoutFingerprint('', items));
 }
 
+// ── Disco (localStorage) ── extraído do hook para ser testável com `setItem` falhando (P0-7 do #4271).
+export const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
+
+export function lerEnvelopeDoDisco(): CheckoutEnvelope | null {
+  if (typeof localStorage === 'undefined') return null;
+  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
+}
+
+/** true = gravado (ou não há storage — então também não há envelope velho para ressuscitar).
+ *  false = o navegador recusou (cota cheia, dados do site bloqueados): o envelope NÃO protege nada. */
+export function gravarEnvelopeNoDisco(e: CheckoutEnvelope | null): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY);
+    return true;
+  } catch {
+    return false; // quota / bloqueado
+  }
+}
+
+/** O disco JÁ guarda este envio comprometido (mesmo checkoutId): um reenvio sai protegido mesmo que a
+ *  regravação (fp migrada para a chave canônica) falhe — o checkoutId é o que dá a idempotência. */
+export function envioJaProtegidoNoDisco(checkoutId: string): boolean {
+  const noDisco = lerEnvelopeDoDisco();
+  return !!noDisco?.committed && noDisco.checkoutId === checkoutId;
+}
+
 export type DescarteRascunho = 'descartar' | 'confirmar';
 export function decidirDescarteRascunho(stored: CheckoutEnvelope | null): DescarteRascunho {
   return stored ? 'confirmar' : 'descartar';

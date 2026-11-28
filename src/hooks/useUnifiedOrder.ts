@@ -35,6 +35,7 @@ import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import {
   decidirEnvelopeDoCliente, carrinhoEhEnvioPendente, itensDaFingerprintDoCarrinho, type CheckoutEnvelope,
+  lerEnvelopeDoDisco as loadCheckoutEnv, gravarEnvelopeNoDisco as persistCheckoutEnv, envioJaProtegidoNoDisco,
 } from '@/services/orderSubmission/checkout-envelope';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
@@ -52,17 +53,6 @@ import {
 // A5 (rodada 2): aviso único quando algo tenta mudar o carrinho com envio em voo.
 function avisarCarrinhoTravado() {
   toast.info('Aguarde o envio terminar para mudar o carrinho.');
-}
-
-const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
-function loadCheckoutEnv(): CheckoutEnvelope | null {
-  if (typeof localStorage === 'undefined') return null;
-  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
-}
-/** true = gravado (ou não há storage — então também não há envelope velho para ressuscitar). */
-function persistCheckoutEnv(e: CheckoutEnvelope | null): boolean {
-  if (typeof localStorage === 'undefined') return true;
-  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); return true; } catch { return false; /* quota */ }
 }
 
 // Re-export shared types for backwards compatibility
@@ -1073,7 +1063,10 @@ export function useUnifiedOrder() {
         // mesmo pedido, só a forma da chave muda; o checkoutId é o que dá a idempotência.
         checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true } as CheckoutEnvelope;
       }
-      if (!persistCheckoutEnv(checkoutEnvRef.current)) {
+      // Reenvio do MESMO envelope que já está no disco (mesmo checkoutId, comprometido): a proteção
+      // já existe — barrar aqui só travaria o vendedor (revisão adversarial do PR). Só o envelope
+      // NOVO (ou um que o disco não tem) exige a gravação.
+      if (!persistCheckoutEnv(checkoutEnvRef.current) && !envioJaProtegidoNoDisco(checkoutEnvRef.current.checkoutId)) {
         checkoutEnvRef.current = envelopeAnterior;
         falhouLocal('envelope_nao_gravado');
         toast.error('Não foi possível proteger o envio contra duplicidade', {

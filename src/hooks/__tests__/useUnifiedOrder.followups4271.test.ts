@@ -21,13 +21,13 @@ describe('P0-7: envelope que não foi gravado no disco barra o envio', () => {
   const trecho = hook.slice(ini, envio);
 
   it('a gravação do envelope é CONFERIDA antes de comprometer e de chamar o service', () => {
-    const guarda = posicao(trecho, 'if (!persistCheckoutEnv(checkoutEnvRef.current)) {');
+    const guarda = posicao(trecho, 'if (!persistCheckoutEnv(checkoutEnvRef.current) && !envioJaProtegidoNoDisco(checkoutEnvRef.current.checkoutId)) {');
     const comprometer = posicao(trecho, 'cicloRascunhoRef.current.aoComprometer?.();');
     expect(guarda).toBeLessThan(comprometer);
   });
 
   it('na falha: volta a memória ao envelope anterior, registra o motivo e sai', () => {
-    const guarda = posicao(trecho, 'if (!persistCheckoutEnv(checkoutEnvRef.current)) {');
+    const guarda = posicao(trecho, 'if (!persistCheckoutEnv(checkoutEnvRef.current) && !envioJaProtegidoNoDisco(checkoutEnvRef.current.checkoutId)) {');
     const fim = posicao(trecho, '\n      }\n', guarda);
     const ramo = trecho.slice(guarda, fim);
     expect(ramo).toContain('checkoutEnvRef.current = envelopeAnterior;');

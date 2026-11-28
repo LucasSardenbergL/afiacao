@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   carrinhoEhEnvioPendente, itensDaFingerprintDoCarrinho, decidirEnvelopeDoCliente, type CheckoutEnvelope,
+  gravarEnvelopeNoDisco, lerEnvelopeDoDisco, envioJaProtegidoNoDisco, CHECKOUT_ENV_KEY,
 } from '../checkout-envelope';
 
 // P0-5 (follow-up Codex do #4271): a reprecificação automática não pode mexer no carrinho do envio pendente.
@@ -68,8 +69,53 @@ describe('carrinhoEhEnvioPendente', () => {
     expect(carrinhoEhEnvioPendente(envOutraChave, itensDaFingerprintDoCarrinho(CARRINHO))).toBe(true);
   });
 
+  it('envelope SÓ de serviço (itens vazios na fp) não congela o carrinho vazio', () => {
+    expect(carrinhoEhEnvioPendente(envelopeDe([]), [])).toBe(false);
+  });
+
   it('envelope legado com fp sem "#" não congela (fail-open aqui é o comportamento de sempre)', () => {
     expect(carrinhoEhEnvioPendente({ ...env, fingerprint: 'lixo' }, itensDaFingerprintDoCarrinho(CARRINHO))).toBe(false);
+  });
+});
+
+// P0-7: o disco é a proteção. Um Storage em memória, com `setItem` que pode recusar (cota cheia).
+class StorageFalso {
+  dados = new Map<string, string>();
+  recusar = false;
+  getItem(k: string) { return this.dados.get(k) ?? null; }
+  setItem(k: string, v: string) {
+    if (this.recusar) throw new DOMException('cheio', 'QuotaExceededError');
+    this.dados.set(k, v);
+  }
+  removeItem(k: string) { this.dados.delete(k); }
+}
+
+describe('envelope no disco (P0-7)', () => {
+  let disco: StorageFalso;
+  beforeEach(() => { disco = new StorageFalso(); vi.stubGlobal('localStorage', disco); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('CONTROLE: gravar devolve true e o envelope volta igual', () => {
+    const env = envelopeDe(CARRINHO);
+    expect(gravarEnvelopeNoDisco(env)).toBe(true);
+    expect(lerEnvelopeDoDisco()).toEqual(env);
+    expect(disco.getItem(CHECKOUT_ENV_KEY)).not.toBeNull();
+  });
+
+  it('cota cheia: gravar devolve FALSE e o disco fica como estava', () => {
+    disco.recusar = true;
+    expect(gravarEnvelopeNoDisco(envelopeDe(CARRINHO))).toBe(false);
+    expect(lerEnvelopeDoDisco()).toBeNull();
+  });
+
+  it('envio já protegido: só quando o disco tem o MESMO checkoutId comprometido', () => {
+    const env = envelopeDe(CARRINHO);
+    expect(envioJaProtegidoNoDisco('ck-1')).toBe(false); // disco vazio
+    gravarEnvelopeNoDisco(env);
+    expect(envioJaProtegidoNoDisco('ck-1')).toBe(true);
+    expect(envioJaProtegidoNoDisco('ck-outro')).toBe(false); // envelope NOVO não está no disco
+    gravarEnvelopeNoDisco(envelopeDe(CARRINHO, false));
+    expect(envioJaProtegidoNoDisco('ck-1')).toBe(false); // não comprometido não protege
   });
 });
 
