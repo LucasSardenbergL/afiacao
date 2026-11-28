@@ -5,7 +5,7 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
     throw new Error(`${msg ?? "assertEquals"}\n  esperado: ${JSON.stringify(b)}\n  recebido: ${JSON.stringify(a)}`);
   }
 }
-import { mapeamentosComMesmaDescricao, normalizarDescricao } from "./sugestao-cruzada.ts";
+import { decidirSugestaoCruzada, mapeamentosComMesmaDescricao, normalizarDescricao } from "./sugestao-cruzada.ts";
 
 const desc: Record<string, string> = {
   "colacor|2.01.99": "Compra de Ativo Imobilizado",
@@ -47,4 +47,16 @@ Deno.test("plural não é forma: Mercadoria ≠ Mercadorias", () => {
 Deno.test("descrição ausente (fonte ou alvo) ⇒ nada", () => {
   assertEquals(mapeamentosComMesmaDescricao(null, [{ company: "colacor", dre_linha: "cmv" }], "2.03.05", de), []);
   assertEquals(mapeamentosComMesmaDescricao("Qualquer", [{ company: "oben", dre_linha: "cmv" }], "9.99", de), []);
+});
+
+Deno.test("fontes com mesma descrição mas linhas DIFERENTES ⇒ sem sugestão (nada de sorteio)", () => {
+  const d2 = (c: string, _k: string) => (c === "colacor" || c === "oben" ? "Outros" : undefined);
+  assertEquals(
+    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "despesas_administrativas" }, { company: "oben", dre_linha: "outras_despesas" }], "2.99", d2),
+    null,
+  );
+  assertEquals(
+    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "outras_despesas" }, { company: "oben", dre_linha: "outras_despesas" }], "2.99", d2),
+    { company: "colacor", dre_linha: "outras_despesas" },
+  );
 });

@@ -33,3 +33,20 @@ export function mapeamentosComMesmaDescricao(
   if (alvo == null) return [];
   return candidatos.filter((m) => normalizarDescricao(descricaoDe(m.company, codigo)) === alvo);
 }
+
+/**
+ * Decide a sugestão cruzada: só quando TODAS as fontes com mesmo código e descrição concordam na
+ * linha DRE. Divergência ⇒ null — o front aplica em lote toda sugestão `alta`, e a ordem dos
+ * candidatos é arbitrária (escolher o 1º seria sorteio).
+ */
+export function decidirSugestaoCruzada(
+  categoriaNome: string | null | undefined,
+  candidatos: MapeamentoOutraEmpresa[],
+  codigo: string,
+  descricaoDe: (company: string, codigo: string) => string | null | undefined,
+): MapeamentoOutraEmpresa | null {
+  const iguais = mapeamentosComMesmaDescricao(categoriaNome, candidatos, codigo, descricaoDe);
+  if (iguais.length === 0) return null;
+  const linhas = new Set(iguais.map((m) => m.dre_linha));
+  return linhas.size === 1 ? iguais[0] : null;
+}
