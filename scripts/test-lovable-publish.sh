@@ -396,6 +396,18 @@ sabota_dec m1_prova 's/if \[ "\$(head -1 "\$PROVA")" = 0 \]; then/if true; then/
 # shellcheck disable=SC2016
 sabota_dec m1_bloco 's/^  if \[ -n "\$SH" \]; then$/  if false; then/' s_sh0 0 PUBLICAR "$SH"
 
+# ═══ Rodada 2 — PR E: o comando CERTO no RETIDO (M10/M5) e o dono da camada (M7) ══════════════════
+CENARIO=dec_acao_mig; semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; decide 10 RETIDO "$FRONT2" \
+  && { tem_dec "ACAO=bun run db:aplicar supabase/migrations/1_x.sql"; tem_dec "bun run db:aplicar supabase/migrations/1_x.sql --atestar"; tem_dec "DONO=?|t|supabase/migrations/1_x.sql"; }
+git checkout -q -b dono "$FRONT2"; mkdir -p supabase/migrations; echo 'select 5;' > supabase/migrations/5_p.sql; git add -A
+git commit -qm "feat(x): camada nova (#4242)"; PD=$(c src/pd.ts pd); git checkout -q main
+CENARIO=dec_dono_pr; semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; rec "$FRONT2" "$PD"; decide 10 RETIDO "$PD" && tem_dec "DONO=4242|t|supabase/migrations/5_p.sql"
+# shellcheck disable=SC2329
+s_edge_nomes() { semeia "$MIG" x; vigia; rm -f "$F/vigia"/*; printf '1\nf\noutra-edge\n' > "$F/vigia/pendencias-$EDGE"; }
+CENARIO=dec_acao_edge; s_edge_nomes; decide 10 RETIDO "$EDGE" && tem_dec "ACAO=deployar edge(s): f outra-edge"
+# falsificação: sem acoes no retido() o RETIDO volta a não dizer o comando nem as edges
+sabota_msg acao_edge 's/^  acoes$/  true/' s_edge_nomes "ACAO=deployar edge(s): f outra-edge" 10 RETIDO "$EDGE"
+
 # Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
 # numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.
 sabota() { # sabota <nome> <sed> <semeador> <rc> <regex> <sha> — o semeador roda antes de CADA lado
@@ -425,11 +437,35 @@ sabota retido 's/^    1) retido migration "\$MIG" ;;/    1) true ;;/' \
 sabota rele 's/if AR=\$(ar_lido); then/if AR=${AR0:=$(ar_lido)}; then/' s_vira 0 "NO_AR=$FRONT2" "$FRONT"
 # M6 (rodada 2): TIMEOUT com o batimento do vigia velho diz que o vigia está parado; fresco = TIMEOUT cru
 # shellcheck disable=SC2329
-s_bat_velho() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; echo $(( $(date +%s) - 1500 )) > "$F/vigia/batimento"; }
+s_bat_velho() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; echo $(( $(date +%s) - 450 )) > "$F/vigia/batimento"; }   # 300 < 450 < 600: o M11 (rodada 2, PR E) deixa passar
 CENARIO=esperar_bat_fresco; semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; date +%s > "$F/vigia/batimento"
                             espera 30 TIMEOUT "$FRONT"
 # shellcheck disable=SC2016
-sabota bat 's/\[ "\$P" -gt "\${LP_BATIMENTO_VELHO_S:-300}" \] \&\& sai 30/false \&\& sai 30/' s_bat_velho 30 'TIMEOUT=vigia parado há 2[45] min.*' "$FRONT"
+sabota bat 's/\[ "\$P" -gt "\${LP_BATIMENTO_VELHO_S:-300}" \] \&\& sai 30/false \&\& sai 30/' s_bat_velho 30 'TIMEOUT=vigia parado há 7 min.*' "$FRONT"
+# M10: --ate-o-ar — o RETIDO não encerra a espera: imprime o comando UMA vez e segue até o ar (aqui, o prazo)
+espera_ar() { local esp="$1" ult="$2" sha="$3" alvo="${4:-$ALVO}" out rc; : > "$F/log"
+  out=$(PATH="$BIN:$PATH" LP_FAKE="$F" APP_URL=https://app.test LOVABLE_API_BASE=https://api.test \
+    LP_SLEEP=true LP_ESPERAR_PRAZO=50 LP_ESPERAR_INTERVALO=10 LP_VIGIA_ESTADO="$F/vigia" \
+    env -u LOVABLE_API_KEY bash "$alvo" --esperar "$sha" --ate-o-ar 2>&1); rc=$?; ESP_OUT=$out
+  [ "$rc" = "$esp" ] && printf '%s' "$out" | tail -1 | grep -qxE "$ult" && [ "$(printf '%s' "$out" | grep -c 'ACAO=bun run db:aplicar')" = 1 ] && return 0
+  echo "FALHOU [$CENARIO]: --ate-o-ar esperado rc=$esp /$ult/, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /' | tail -8; fail=1; return 1; }
+CENARIO=esperar_ate_o_ar; s_retido; espera_ar 30 TIMEOUT "$FRONT"
+CENARIO=controle-ate_o_ar; s_retido
+# shellcheck disable=SC2016
+sed 's/^            if \[ "\$ATE_O_AR" = 1 \]; then$/            if false; then/' "$ALVO" > "$base/sab-ateoar.sh"
+if cmp -s "$ALVO" "$base/sab-ateoar.sh"; then echo "FALHOU [sab-ateoar]: o sed não casou"; fail=1
+elif ( espera_ar 30 TIMEOUT "$FRONT" "$base/sab-ateoar.sh" ) >/dev/null 2>&1; then echo "FALHOU [sab-ateoar]: o sabotado seguiu esperando"; fail=1; fi
+# M11: batimento do vigia velho → o --esperar sai JÁ (1 leitura), não no prazo
+# shellcheck disable=SC2329
+s_parado() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; echo $(( $(date +%s) - 1300 )) > "$F/vigia/batimento"; }
+CENARIO=esperar_parado; s_parado; espera 30 'TIMEOUT=vigia parado há 21 min.*' "$FRONT" \
+  && { [ "$(leituras)" -le 2 ] || { echo "FALHOU [$CENARIO]: esperou $(leituras) leituras com o vigia parado"; fail=1; }; }   # 1 volta = ar + o ar do --decidir
+# shellcheck disable=SC2016
+sed 's/\[ "\$P" -gt "\${LP_ESPERAR_PARADO_S:-600}" \] \&\& sai 30/false \&\& sai 30/' "$ALVO" > "$base/sab-parado.sh"
+if cmp -s "$ALVO" "$base/sab-parado.sh"; then echo "FALHOU [sab-parado]: o sed não casou"; fail=1
+else s_parado; ( espera 30 'TIMEOUT=vigia parado.*' "$FRONT" "$base/sab-parado.sh" ) >/dev/null 2>&1
+  [ "$(leituras)" -gt 2 ] || { echo "FALHOU [sab-parado]: o sabotado saiu cedo também (o roteiro não distingue)"; fail=1; }; fi
+
 # front revertido sem sair → a cópia confirma NADA_A_PUBLICAR com exit 0 (verde falso)
 git push -q origin "$C8:refs/heads/main" -f 2>/dev/null
 # shellcheck disable=SC2329

@@ -23,7 +23,7 @@ printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/osascript"
 # shellcheck disable=SC2016  # $LVT expande quando o gh FALSO roda
 printf '#!/bin/sh\necho "$*" >> "$LVT/gh"\n[ -f "$LVT/gh-falha" ] && exit 1\nexit 0\n' > "$TMP/bin/gh"
 # shellcheck disable=SC2016  # o $* e o $LVT são do bun FALSO, expandem quando ele roda
-printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\ncase "$*" in *--prova-ledger*) [ -f "$LVT/prova-falha" ] && { echo boom; exit 1; }; echo "LEDGER e _shared/x.ts"; echo PROVA_LEDGER=0; exit 0 ;; esac\n[ -f "$LVT/bun_anda" ] && git -C "$LVT/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m anda\nexit 0\n' > "$TMP/bin/bun"
+printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\ncase "$*" in *pendencias:deploy*) [ -f "$LVT/pend-saida" ] && cat "$LVT/pend-saida" ;; *--prova-ledger*) [ -f "$LVT/prova-falha" ] && { echo boom; exit 1; }; echo "LEDGER e _shared/x.ts"; echo PROVA_LEDGER=0; exit 0 ;; esac\n[ -f "$LVT/bun_anda" ] && git -C "$LVT/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m anda\nexit 0\n' > "$TMP/bin/bun"
 # claude falso: conta chamadas, emite $CENARIO.jsonl; "deploy" real = cria $TMP/ar-novo
 cat > "$TMP/bin/claude-falso" <<'EOF'
 #!/usr/bin/env bash
@@ -453,6 +453,39 @@ r_prova_falha() {
 }
 r_prova_falha && ok "M1: prova que falha (exit ≠ 0) → cache 2 (fail-closed: liberar humano)" || nok "prova_falha: $(tail -3 "$LOGV")"
 
+# ═══ Rodada 2 — PR E ════════════════════════════════════════════════════════════════════════════
+# M5: o cache do ledger guarda as edges que o pendencias:deploy NOMEIA (seções ≠ ✅), não só o exit
+r_m5() {
+  local e="$TMP/est-m5" h; rm -rf "$e"; h=$(cat "$TMP/head")
+  printf '$ bun scripts/pendencias-deploy.ts\n🔴 P1 — DEPLOY PENDENTE — 2\n   omie-vendas-sync    prod v1 → main v2\n   fin-x               prod v1 → main v3\n✅ confere — 2\n   ai-ops-agent        v1 · visto\n' > "$TMP/pend-saida"
+  printf 'ar=aaaaaaaa x\nVEREDITO=PRECISA_LEDGER\n' > "$TMP/decisao"; printf 'ar=aaaaaaaa x\nVEREDITO=NADA_A_PUBLICAR\n' > "$TMP/decisao-pos"
+  roda m5; rm -f "$TMP/decisao" "$TMP/decisao-pos" "$TMP/pend-saida"
+  [ "$(sed -n '2,$p' "$e/pendencias-$h" | paste -sd, -)" = "fin-x,omie-vendas-sync" ]
+}
+r_m5 && ok "M5: cache do ledger traz as edges pendentes nomeadas (sem as que conferem)" || nok "m5: $(cat "$TMP/est-m5/pendencias-$(cat "$TMP/head")" 2>&1 | head -3)"
+# M7: RETIDO comenta no PR dono da camada (1x por episódio); o aviso traz o comando ACAO=
+RET7='ar=aaaaaaaa x
+ACAO=bun run db:aplicar supabase/migrations/1_x.sql   (já aplicada fora do envelope? bun run db:aplicar supabase/migrations/1_x.sql --atestar)
+DONO=4242|fulano|supabase/migrations/1_x.sql
+DONO=?|beltrano|supabase/functions/f/index.ts
+RETIDO=migration:supabase/migrations/1_x.sql
+VEREDITO=RETIDO'
+r_m7() {
+  local e="$TMP/est-m7"; rm -rf "$e"; rm -f "$TMP/gh"; printf '%s\n' "$RET7" > "$TMP/decisao"
+  roda m7; LVT_MANTEM=1 roda m7; rm -f "$TMP/decisao"
+  [ "$(grep -c '^pr comment 4242 ' "$TMP/gh")" = 1 ] && ! grep -q 'pr comment ?' "$TMP/gh" && tem "comentei no PR #4242" \
+    && tem "AVISO: RETIDO (migration:supabase/migrations/1_x.sql) até $(cut -c1-8 "$TMP/head"). bun run db:aplicar supabase/migrations/1_x.sql"
+}
+r_m7 && ok "M7: RETIDO comenta 1x no PR dono (#4242, do título do squash) e o aviso traz o comando db:aplicar" || nok "m7: $(cat "$TMP/gh" 2>&1 | head -c 300) | $(tail -2 "$LOGV")"
+# M7: 1º lembrete com 45 min (não 4 h)
+r_primeiro() {
+  local e="$TMP/est-m7"; rm -rf "$e"; mkdir -p "$e"; printf '%s\n' "$RET7" > "$TMP/decisao"
+  local t=$(( $(date +%s) - 50 * 60 )); echo "$t $t" > "$e/retido-episodio"; echo 4242 > "$e/retido-comentados"
+  LVT_MANTEM=1 roda m7; rm -f "$TMP/decisao"
+  tem "AVISO: AINDA RETIDO há 50 min"
+}
+r_primeiro && ok "M7: 1º lembrete do RETIDO aos 45 min (há 50 min → avisa)" || nok "primeiro: $(tail -2 "$LOGV")"
+
 # lock vinculado ao processo: dono vivo (vigia) segura; dono morto ou PID reciclado (não-vigia) libera
 mkdir -p "$TMP/dono"; printf 'sleep 30\n' > "$TMP/dono/vigia.sh"
 r_lock() {
@@ -590,6 +623,12 @@ falsifica b5_divida 's/\[ "\$1" = JA_NO_AR \] \&\& \[ -s "\$EST\/retido-camadas"
 # rodada 2 — PR C
 # shellcheck disable=SC2016
 falsifica m1_failclosed 's/\[ "\$SRC" = 0 \] \&\& \[ -n "\$SV" \] || SV=2/[ -n "$SV" ] || SV=0/' r_prova_falha
+
+# rodada 2 — PR E
+falsifica m5_nomes "s/^      NOMES=\$(awk .*\$/      NOMES=''/" r_m5
+falsifica m7_comenta 's/^  comenta_donos$/  true/' r_m7
+# shellcheck disable=SC2016
+falsifica m7_primeiro 's/^    \[ "\$1" = retido \] \&\& \[ "\$ini" = "\$ult" \] \&\& rel=.*$/    true/' r_primeiro
 
 [ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK ($OKS)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1
