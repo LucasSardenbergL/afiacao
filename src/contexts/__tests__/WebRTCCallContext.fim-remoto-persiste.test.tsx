@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 
-const { sipClientMock, invokeMock, insertMock, transcricao } = vi.hoisted(() => ({
+const { sipClientMock, invokeMock, insertMock, transcricao, respostaInsert, trackMock } = vi.hoisted(() => ({
   sipClientMock: {
     connect: vi.fn(),
     disconnect: vi.fn(),
@@ -28,6 +28,8 @@ const { sipClientMock, invokeMock, insertMock, transcricao } = vi.hoisted(() => 
   invokeMock: vi.fn(),
   insertMock: vi.fn(),
   transcricao: { turns: [] as unknown[] },
+  respostaInsert: { atual: { data: { id: 'call-1' }, error: null } as { data: unknown; error: unknown } },
+  trackMock: vi.fn(),
 }));
 
 vi.mock('@/lib/sip/sip-client', () => ({
@@ -40,6 +42,7 @@ vi.mock('@/hooks/useTranscription', () => ({
 vi.mock('@/lib/call/spin/useSpinAnalysis', () => ({
   useSpinAnalysis: () => ({ status: 'idle' as const, analysis: null, error: null }),
 }));
+vi.mock('@/lib/analytics', () => ({ track: trackMock }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('@/lib/call-log/recording-policy', () => ({
   resolveCallParty: vi.fn(async (raw: string) => ({
@@ -73,7 +76,7 @@ vi.mock('@/integrations/supabase/client', () => ({
       return {
         insert: (payload: unknown) => {
           insertMock(payload);
-          return { select: () => ({ single: async () => ({ data: { id: 'call-1' }, error: null }) }) };
+          return { select: () => ({ single: async () => respostaInsert.atual }) };
         },
       };
     }),
@@ -129,6 +132,7 @@ beforeEach(() => {
   invokeMock.mockResolvedValue({ wsUri: 'wss://x', sipDomain: 'd', username: 'u', password: 'p' });
   transcricao.turns = [];
   conteudoDaLigacao = [turnoFinal];
+  respostaInsert.atual = { data: { id: 'call-1' }, error: null };
   const fakeMic = { getTracks: () => [{ kind: 'audio', stop: vi.fn() }] } as unknown as MediaStream;
   Object.defineProperty(navigator, 'mediaDevices', {
     value: { getUserMedia: vi.fn(async () => fakeMic) },
@@ -240,5 +244,37 @@ describe('revisão adversária (2026-10-10): a sessão não herda nem cede conte
     act(() => handler('stateChange')('ended'));
     await waitFor(() => expect(insertMock).toHaveBeenCalledTimes(1));
     expect(resolveCustomerByPhone).toHaveBeenCalledWith(expect.any(String), { clienteOrigemId: null });
+  });
+});
+
+describe('falha ao gravar farmer_calls é visível (design item 1 — antes só console.error)', () => {
+  const AVISO = 'A conversa não foi salva no histórico. Registre pelo /farmer/calls e avise o gestor.';
+
+  it('banco recusa o insert: toast com o aviso e track com o código do erro', async () => {
+    respostaInsert.atual = { data: null, error: { code: '22P02', message: 'invalid input value for enum farmer_call_type' } };
+    await ligacaoAtendida();
+    act(() => handler('stateChange')('ended'));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(AVISO));
+    expect(trackMock).toHaveBeenCalledWith('telefonia.registro_falhou', { motivo: 'insert', codigo: '22P02' });
+  });
+
+  it('exceção antes do insert (reconhecimento do número cai): mesmo aviso, motivo excecao', async () => {
+    vi.mocked(resolveCustomerByPhone).mockRejectedValueOnce(new Error('rede caiu'));
+    await ligacaoAtendida();
+    act(() => handler('stateChange')('ended'));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(AVISO));
+    expect(trackMock).toHaveBeenCalledWith('telefonia.registro_falhou', { motivo: 'excecao', codigo: 'Error' });
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it('insert ok: nenhum aviso de falha', async () => {
+    await ligacaoAtendida();
+    act(() => handler('stateChange')('ended'));
+    await waitFor(() => expect(insertMock).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+    expect(toast.error).not.toHaveBeenCalledWith(AVISO);
+    expect(trackMock).not.toHaveBeenCalledWith('telefonia.registro_falhou', expect.anything());
   });
 });

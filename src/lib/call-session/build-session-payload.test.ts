@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSessionPayload } from './build-session-payload';
+import { Constants } from '@/integrations/supabase/types';
 import type { SpinAnalysis } from '@/lib/call/spin/types';
 import type { TranscriptTurn } from '@/lib/transcription/types';
 
@@ -44,8 +45,9 @@ describe('buildSessionPayload', () => {
     expect(payload.phone_dialed).toBe('31999991234');
     expect(payload.call_backend).toBe('webrtc');
     expect(payload.duration_seconds).toBe(1080); // 18min = 1080s
-    expect(payload.call_type).toBe('venda'); // default no schema
-    expect(payload.call_result).toBe('atendeu'); // default — vendedor edita depois
+    // defaults de CONVERSA (design 6.1) — o card de fim (item 10) sobrescreve o resultado
+    expect(payload.call_type).toBe('follow_up');
+    expect(payload.call_result).toBe('contato_sucesso');
   });
 
   it('serializa turns como TranscriptTurnLite (sem id, sem endedAt)', () => {
@@ -128,5 +130,15 @@ describe('buildSessionPayload', () => {
       endedAt:new Date('2026-06-13T10:05:00Z'), turns:[], analyses:[] };
     expect(buildSessionPayload({ ...base, atendimentoId:'atend-1' }).atendimento_id).toBe('atend-1');
     expect(buildSessionPayload(base).atendimento_id).toBeNull();
+  });
+
+  it('call_type e call_result são valores do enum de produção (antes: venda/atendeu, recusados → 0 linhas)', () => {
+    const payload = buildSessionPayload({
+      farmerId: 'f', customerUserId: null, phoneDialed: '3133334444', callBackend: 'webrtc',
+      startedAt: new Date('2026-11-28T10:00:00Z'), endedAt: new Date('2026-11-28T10:01:00Z'),
+      turns: [], analyses: [],
+    });
+    expect(Constants.public.Enums.farmer_call_type).toContain(payload.call_type);
+    expect(Constants.public.Enums.farmer_call_result).toContain(payload.call_result);
   });
 });

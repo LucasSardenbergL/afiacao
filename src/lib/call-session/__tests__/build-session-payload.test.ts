@@ -6,6 +6,7 @@ vi.mock('../aggregate-entities', () => ({
 
 import { buildSessionPayload, type BuildSessionPayloadInput } from '../build-session-payload';
 import { aggregateEntities } from '../aggregate-entities';
+import { Constants } from '@/integrations/supabase/types';
 import type { TranscriptTurn } from '@/lib/transcription/types';
 import type { SpinAnalysis } from '@/lib/call/spin/types';
 
@@ -87,9 +88,11 @@ describe('buildSessionPayload', () => {
     });
   });
 
-  it('defaults conservadores: call_type=venda, call_result=atendeu', () => {
+  it('defaults de conversa dentro do enum: call_type=follow_up, call_result=contato_sucesso', () => {
     const p = buildSessionPayload(makeInput());
-    expect(p.call_type).toBe('venda');
-    expect(p.call_result).toBe('atendeu');
+    expect(p.call_type).toBe('follow_up');
+    expect(p.call_result).toBe('contato_sucesso');
+    expect(Constants.public.Enums.farmer_call_type).toContain(p.call_type);
+    expect(Constants.public.Enums.farmer_call_result).toContain(p.call_result);
   });
 });
