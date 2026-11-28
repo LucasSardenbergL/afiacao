@@ -10,7 +10,9 @@ import {
   coletarFanOut,
   contaComoShared,
   main,
+  provaPeloLedger,
   renderizar,
+  type EdgeParaProva,
   type EdgeNaFatia,
   type Relatorio,
 } from './sonda-fan-out';
@@ -410,5 +412,44 @@ describe('main — exit 0 com achados (informativo), 2 so por mecanica', () => {
     const { rc, err } = capturar(['--base', 'HEAD', '--head', 'inexistente-xyz-000']);
     expect(rc).toBe(2);
     expect(err).toContain('--head');
+  });
+});
+
+// ─── Prova pelo LEDGER (vigia do Publish, rodada 2 / M1) ──────────────────────────────────────
+function ep(p: Partial<EdgeParaProva> & { edge: string }): EdgeParaProva {
+  return { fecho: [`supabase/functions/${p.edge}/index.ts`], erroFecho: null, instrumentada: true, noMapa: true, ...p };
+}
+describe('provaPeloLedger — quando o ledger prova uma mudanca de _shared/', () => {
+  const pii = `${SHARED}/pii-carteira.ts`;
+  it('so o mapa mudou (o RETIDO de 74 min de 27/11) => prova, sem linha', () => {
+    expect(provaPeloLedger([{ caminho: ARQ_MAPA, removido: false }], [ep({ edge: 'a' })])).toEqual({ prova: true, linhas: [] });
+  });
+  it('toda consumidora instrumentada e no mapa => prova, uma linha LEDGER por edge', () => {
+    const r = provaPeloLedger([{ caminho: pii, removido: false }], [
+      ep({ edge: 'omie-sync', fecho: ['supabase/functions/omie-sync/index.ts', pii] }),
+      ep({ edge: 'nao-importa' }),
+    ]);
+    expect(r).toEqual({ prova: true, linhas: ['LEDGER omie-sync _shared/pii-carteira.ts'] });
+  });
+  it('consumidora SEM versao.ts => sem prova (FORA_DO_MAPA)', () => {
+    const r = provaPeloLedger([{ caminho: pii, removido: false }], [
+      ep({ edge: 'x', fecho: [pii], instrumentada: false, noMapa: false }),
+    ]);
+    expect(r.prova).toBe(false);
+    expect(r.linhas).toEqual(['FORA_DO_MAPA x _shared/pii-carteira.ts']);
+  });
+  it('consumidora instrumentada mas fora do mapa => sem prova', () => {
+    expect(provaPeloLedger([{ caminho: pii, removido: false }], [ep({ edge: 'x', fecho: [pii], noMapa: false })]).prova).toBe(false);
+  });
+  it('fecho ilegivel em QUALQUER edge => sem prova (nao sei quem consome)', () => {
+    const r = provaPeloLedger([{ caminho: pii, removido: false }], [ep({ edge: 'y', fecho: null, erroFecho: 'import nao resolve' })]);
+    expect(r.prova).toBe(false);
+    expect(r.linhas[0]).toMatch(/^ILEGIVEL y import nao resolve/);
+  });
+  it('arquivo que ninguem importa => prova, nomeado como SEM_CONSUMIDORA', () => {
+    expect(provaPeloLedger([{ caminho: pii, removido: false }], [ep({ edge: 'a' })])).toEqual({
+      prova: true,
+      linhas: ['SEM_CONSUMIDORA _shared/pii-carteira.ts'],
+    });
   });
 });

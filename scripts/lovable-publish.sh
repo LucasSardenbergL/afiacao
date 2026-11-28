@@ -60,8 +60,9 @@
 #       ledger a partir de ar/piso) — só SHA de 40 hex resolvível;
 #     - migration em base..<sha> → RETIDO (imprime `RETIDO=migration:<arq>` e o comando de liberação);
 #     - só edge → o ledger (`pendencias-<sha>` gravado pelo vigia, válido LP_CACHE_EDGE_MIN=15 min):
-#       0 = liberado · 1 = `RETIDO=edge:<arq>` · ausente/vencido = PRECISA_LEDGER (exit 11). Edge em
-#       `_shared` ou sem `versao.ts` o ledger não prova: só `liberar` sem mudança nela depois;
+#       0 = liberado · 1 = `RETIDO=edge:<arq>` · ausente/vencido = PRECISA_LEDGER (exit 11). `_shared` vai
+#       ao ledger quando toda consumidora está no mapa (`shared-<base>-<sha>`, sonda-fan-out --prova-ledger);
+#       consumidora fora do mapa, ou edge sem `versao.ts`: só `liberar` sem mudança nela depois;
 #     - migration sem atestação → RECIBOS (`recibos-<ar>-<sha>`, scripts/lovable-recibos.sh, válido
 #       LP_CACHE_RECIBO_MIN=5 min): todas aplicada/adiada = liberado · sem_recibo/desconhecido =
 #       RETIDO · ausente/vencido = PRECISA_RECIBOS (exit 12);
@@ -355,12 +356,35 @@ fi
 if [ -n "$PEND" ]; then
   EDG=$(printf '%s\n' "$PEND" | head -1)
   [ "$DECIDIR" = 1 ] || retido edge "$EDG"
-  # edge que o ledger NÃO prova: _shared (muda toda edge sem mexer na versão dela) ou função sem
-  # versao.ts (a sonda não sabe o que está servido). Só atestação humana (liberar) sem mudança depois.
+  # edge que o ledger NÃO prova por si: _shared (muda toda edge sem mexer na versão dela — provado à parte,
+  # abaixo) ou função sem versao.ts (a sonda não sabe o que está servido). Sem prova, só atestação humana
+  # (liberar) sem mudança depois.
   SEMV=$(printf '%s\n' "$PEND" | while read -r e; do
     fn=$(printf '%s' "$e" | cut -d/ -f3)
     if [ "$fn" = _shared ] || ! git cat-file -e "$HEAD_SHA:supabase/functions/$fn/versao.ts" 2>/dev/null; then echo "$e"; fi
   done)
+  # `_shared/` pelo LEDGER (rodada 2, M1): o `fonte` do mapa é o hash do fecho com `_shared/` dentro, então o
+  # `pendencias:deploy` já prova a mudança para toda edge DO MAPA. A prova de que toda consumidora do arquivo
+  # está no mapa (e tem versao.ts) é do `sonda-fan-out.ts --prova-ledger`, que o vigia grava em
+  # `shared-<base>-<head>` (validade LP_CACHE_EDGE_MIN). 0 = o _shared sai daqui e segue para o ledger; qualquer
+  # outra coisa (consumidora fora do mapa, fecho ilegível, mecânica) = liberar humano, como antes.
+  SH=$(printf '%s\n' "$SEMV" | grep '^supabase/functions/_shared/' || true)
+  if [ -n "$SH" ]; then
+    echo "PROVA_DE=$BASE_E"
+    PROVA="$ESTADO/shared-$BASE_E-$HEAD_SHA"
+    if [ -z "$(find "$PROVA" -mmin "-$CACHE_EDGE_MIN" 2>/dev/null)" ]; then
+      echo "  _shared em ${BASE_E:0:8}..${HEAD_SHA:0:8}; prova do fecho (sonda-fan-out --prova-ledger) sem leitura válida (< ${CACHE_EDGE_MIN} min)"
+      fim 11 PRECISA_LEDGER
+    fi
+    if [ "$(head -1 "$PROVA")" = 0 ]; then
+      echo "  _shared provado pelo ledger (toda consumidora no mapa de fingerprints):"
+      sed -n '2,$p' "$PROVA" | sed 's/^/      /'
+      SEMV=$(printf '%s\n' "$SEMV" | grep -v '^supabase/functions/_shared/' || true)
+    else
+      echo "  _shared que o ledger NÃO prova (consumidora fora do mapa/sem versao.ts, ou fecho ilegível):"
+      sed -n '2,$p' "$PROVA" | grep -v '^LEDGER ' | sed 's/^/      /'
+    fi
+  fi
   if [ -n "$SEMV" ]; then
     L=""; [ -n "$LIB_ARQ" ] && L=$(sha40 "$LIB_ARQ" || true)
     # rodada 2, B3: só um liberar que o ar NÃO ultrapassou (ar ancestral dele) atesta edge sem versão

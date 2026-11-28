@@ -245,7 +245,18 @@ CENARIO=dec_recibo_lib_velho; semeia "$FRONT" x; vigia; echo "$BASE" > "$F/vigia
 git checkout -q -b semv "$FRONT2"; c supabase/functions/h/index.ts sv >/dev/null; SV=$(c src/sv.ts svf); git checkout -q main
 git checkout -q -b shared "$FRONT2"; c supabase/functions/_shared/x.ts sh >/dev/null; SH=$(c src/sh.ts shf); git checkout -q main
 CENARIO=dec_semv_ledger0;  semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SV"; decide 10 RETIDO "$SV" && tem_dec "RETIDO=edge:supabase/functions/h/index.ts"
-CENARIO=dec_shared_ledger0; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SH"; decide 10 RETIDO "$SH" && tem_dec "--liberar $SH"
+# M1 (rodada 2): _shared vai ao LEDGER quando a prova do fecho (sonda-fan-out --prova-ledger) diz que toda
+# consumidora está no mapa; sem prova lida, o vigia precisa medir (PRECISA_LEDGER); prova 1 = liberar humano
+CENARIO=dec_shared_sem_prova; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SH"; decide 11 PRECISA_LEDGER "$SH" && tem_dec "PROVA_DE=$FRONT2"
+# shellcheck disable=SC2329
+s_sh0() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo 0 > "$F/vigia/pendencias-$SH"; printf '0\nSEM_CONSUMIDORA _shared/x.ts\n' > "$F/vigia/shared-$FRONT2-$SH"; }
+# shellcheck disable=SC2329
+s_sh1() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo 0 > "$F/vigia/pendencias-$SH"; printf '1\nFORA_DO_MAPA h _shared/x.ts\n' > "$F/vigia/shared-$FRONT2-$SH"; }
+CENARIO=dec_shared_prova0; s_sh0; decide 0 PUBLICAR "$SH" && { tem_dec "LIBERADO=ledger"; tem_dec "_shared provado pelo ledger"; }
+CENARIO=dec_shared_prova1; s_sh1; decide 10 RETIDO "$SH" && { tem_dec "--liberar $SH"; tem_dec "FORA_DO_MAPA h _shared/x.ts"; }
+CENARIO=dec_shared_prova0_l1; s_sh0; echo 1 > "$F/vigia/pendencias-$SH"; decide 10 RETIDO "$SH" && tem_dec "RETIDO=edge:supabase/functions/_shared/x.ts"
+CENARIO=dec_shared_prova_velha; s_sh0; touch -t 202001010000 "$F/vigia/shared-$FRONT2-$SH"; decide 11 PRECISA_LEDGER "$SH"
+CENARIO=dec_shared_prova2; s_sh0; printf '2\nPROVA_LEDGER_MECANICA: x\n' > "$F/vigia/shared-$FRONT2-$SH"; decide 10 RETIDO "$SH"
 CENARIO=dec_semv_liberado; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SV"; echo "$SV" > "$F/vigia/liberar"
                            decide 0 PUBLICAR "$SV" && tem_dec "edge sem versao.ts"
 # Codex #6: piso e liberar em ramos IRMÃOS (incomparáveis) — o liberar vale sozinho
@@ -378,6 +389,12 @@ s_fb_head() { s_fb; export LP_AR_FALLBACK="$FRONT2"; }
 s_fb_fora_e() { s_fb_fora; export LP_AR_FALLBACK="$BASE"; }
 ( s_fb_fora_e; sabota_dec fb_fora 's/^    CARIMBO_INVALIDO\*)$/    *)/' s_fb_fora_e 6 MECANICA "$FRONT"; exit "$fail" ) || fail=1
 unset LP_AR_FALLBACK
+
+# M1: prova ≠ 0 tratada como prova → publica _shared que o ledger não vê; bloco removido → volta ao liberar
+# shellcheck disable=SC2016
+sabota_dec m1_prova 's/if \[ "\$(head -1 "\$PROVA")" = 0 \]; then/if true; then/' s_sh1 10 RETIDO "$SH"
+# shellcheck disable=SC2016
+sabota_dec m1_bloco 's/^  if \[ -n "\$SH" \]; then$/  if false; then/' s_sh0 0 PUBLICAR "$SH"
 
 # Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
 # numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.

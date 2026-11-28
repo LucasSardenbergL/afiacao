@@ -23,7 +23,7 @@ printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/osascript"
 # shellcheck disable=SC2016  # $LVT expande quando o gh FALSO roda
 printf '#!/bin/sh\necho "$*" >> "$LVT/gh"\n[ -f "$LVT/gh-falha" ] && exit 1\nexit 0\n' > "$TMP/bin/gh"
 # shellcheck disable=SC2016  # o $* e o $LVT são do bun FALSO, expandem quando ele roda
-printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\n[ -f "$LVT/bun_anda" ] && git -C "$LVT/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m anda\nexit 0\n' > "$TMP/bin/bun"
+printf '#!/bin/sh\necho "$*" >> "$LVT/bun"\ncase "$*" in *--prova-ledger*) [ -f "$LVT/prova-falha" ] && { echo boom; exit 1; }; echo "LEDGER e _shared/x.ts"; echo PROVA_LEDGER=0; exit 0 ;; esac\n[ -f "$LVT/bun_anda" ] && git -C "$LVT/origin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m anda\nexit 0\n' > "$TMP/bin/bun"
 # claude falso: conta chamadas, emite $CENARIO.jsonl; "deploy" real = cria $TMP/ar-novo
 cat > "$TMP/bin/claude-falso" <<'EOF'
 #!/usr/bin/env bash
@@ -54,7 +54,7 @@ fim()  { printf '{"type":"result","subtype":"success","result":"%s","total_cost_
 gp()   { printf '{\\"id\\":\\"p\\",\\"latest_commit_sha\\":\\"%s\\"}' "$1"; }
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project
   res t2 '{\"status\":\"pending\",\"deployment_id\":\"dep-123\"}'; fim "VIGIA=DISPARADO dep-123"; } > "$TMP/stream-ok.jsonl"
-for c in ledger recibos sem_ar adiante_limpo adiante_camada ar_divergente lock store intencao buraco caches carimbo; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
+for c in ledger recibos sem_ar adiante_limpo adiante_camada ar_divergente lock store intencao buraco caches carimbo prova; do cp "$TMP/stream-ok.jsonl" "$TMP/stream-$c.jsonl"; done
 DEPR='{\"status\":\"pending\",\"deployment_id\":\"dep-9\"}'
 # PR 3 — controle do protocolo: cada stream tem deploy aceito (deployment_id lido), mas FORA do roteiro
 { init connected; uso t1 get_project; res t1 "$(gp @HEAD@)"; uso t2 deploy_project "{\"project_id\":\"$PROJ\",\"name\":\"outro\"}"; res t2 "$DEPR"; } > "$TMP/stream-viol_nome.jsonl"
@@ -433,6 +433,26 @@ r_divida() {
 }
 r_divida && ok "B5: RETIDO → JA_NO_AR registra a dívida e avisa; → NADA_A_PUBLICAR não" || nok "divida: $(tail -3 "$LOGV")"
 
+# ═══ Rodada 2 — PR C ════════════════════════════════════════════════════════════════════════════
+# M1: _shared no intervalo → o vigia grava a prova do fecho (sonda-fan-out --prova-ledger) por (base, head)
+r_prova() {
+  local e="$TMP/est-prova" h; rm -rf "$e"; h=$(cat "$TMP/head")
+  printf 'ar=22222222 x\nAR=%s\nPROVA_DE=%s\nVEREDITO=PRECISA_LEDGER\n' "$AR40" "$AR40" > "$TMP/decisao"
+  printf 'ar=22222222 x\nLIBERADO=ledger ar=22222222\nVEREDITO=PUBLICAR\n' > "$TMP/decisao-pos"
+  rm -f "$TMP/bun"; roda prova; rm -f "$TMP/decisao" "$TMP/decisao-pos"
+  grep -q -- "--prova-ledger --base $AR40 --head $h" "$TMP/bun" && [ "$(head -1 "$e/shared-$AR40-$h")" = 0 ] \
+    && tem "prova do _shared 22222222..$(cut -c1-8 "$TMP/head"): PROVA_LEDGER=0" && tem "PUBLICADO"
+}
+r_prova && ok "M1: PRECISA_LEDGER com PROVA_DE → prova do fecho gravada (0) e publica pelo ledger" || nok "prova: $(tail -3 "$LOGV")"
+r_prova_falha() {
+  local e="$TMP/est-prova" h; rm -rf "$e"; h=$(cat "$TMP/head"); touch "$TMP/prova-falha"
+  printf 'ar=22222222 x\nAR=%s\nPROVA_DE=%s\nVEREDITO=PRECISA_LEDGER\n' "$AR40" "$AR40" > "$TMP/decisao"
+  printf 'ar=22222222 x\nRETIDO=edge:supabase/functions/_shared/x.ts\nVEREDITO=RETIDO\n' > "$TMP/decisao-pos"
+  roda prova; rm -f "$TMP/decisao" "$TMP/decisao-pos" "$TMP/prova-falha"
+  [ "$(head -1 "$e/shared-$AR40-$h")" = 2 ] && tem "PROVA_LEDGER=2"
+}
+r_prova_falha && ok "M1: prova que falha (exit ≠ 0) → cache 2 (fail-closed: liberar humano)" || nok "prova_falha: $(tail -3 "$LOGV")"
+
 # lock vinculado ao processo: dono vivo (vigia) segura; dono morto ou PID reciclado (não-vigia) libera
 mkdir -p "$TMP/dono"; printf 'sleep 30\n' > "$TMP/dono/vigia.sh"
 r_lock() {
@@ -566,6 +586,10 @@ falsifica b1_failclosed 's/^    if \[\[ "\$AR_FB" =~ \^\[0-9a-f\]{40}\$ \]\]; th
 falsifica b1_n_ticks 's/-ge "\${LV_CARIMBO_TICKS:-5}"/-ge 1/' r_carimbo_cedo
 # shellcheck disable=SC2016
 falsifica b5_divida 's/\[ "\$1" = JA_NO_AR \] \&\& \[ -s "\$EST\/retido-camadas" \]/false/' r_divida
+
+# rodada 2 — PR C
+# shellcheck disable=SC2016
+falsifica m1_failclosed 's/\[ "\$SRC" = 0 \] \&\& \[ -n "\$SV" \] || SV=2/[ -n "$SV" ] || SV=0/' r_prova_falha
 
 [ "$FALHAS" -eq 0 ] && { echo "TEST-LOVABLE-VIGIA: OK ($OKS)"; exit 0; }
 echo "TEST-LOVABLE-VIGIA: $FALHAS falha(s)"; exit 1
