@@ -175,7 +175,11 @@ describe('o corpo REAL do repo', () => {
     // 2026-11-26: 21 → 22, consumidor novo e legítimo — `scripts/lovable-recibos.sh` (vigia do Publish, PR 2)
     // lê os recibos de db_aplicacoes/db_migracoes_adiadas. Por `-c` COM `-v ON_ERROR_STOP=1`; falha de leitura
     // vira veredito 2 (desconhecido — não libera), então não entra na lista de `-f` abaixo.
-    expect(r.arquivosComVinculo).toBe(22);
+    // 2026-11-27: 22 → 23, consumidor novo e legítimo — `scripts/db-aplicar.sh --atestar` (vigia do Publish, rodada 2
+    // PR D) roda a pós-condição read-only por STDIN (`< arquivo`) COM `-v ON_ERROR_STOP=1`, dentro de
+    // `BEGIN TRANSACTION READ ONLY … ROLLBACK`, e só aceita rc 0 + marcador + zero linha de erro do servidor. Não é `-f`,
+    // então não entra na lista abaixo.
+    expect(r.arquivosComVinculo).toBe(23);
   });
 
   it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) o exportador do Jev, o do orçamento de compra e o extrator do replay TSB, e TODOS têm ON_ERROR_STOP', () => {

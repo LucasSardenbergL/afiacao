@@ -1,0 +1,3 @@
+# db:aplicar --atestar (rodada 2 do vigia, M2): recibo de migration aplicada fora do envelope só com o EFEITO
+# no banco, lido em sessão READ ONLY. 12 cenários + 8 sabotagens com controle verde na mesma invocação.
+db/test-db-atestar.sh 12 falsificar=8

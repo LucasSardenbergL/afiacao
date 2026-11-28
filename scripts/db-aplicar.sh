@@ -4,6 +4,8 @@
 # ║                                                                                        ║
 # ║  Uso:  bun run db:aplicar db/arquivo.sql            (aplica de verdade)                 ║
 # ║        bun run db:aplicar db/arquivo.sql --ensaio   (roda e faz ROLLBACK; não grava)    ║
+# ║        bun run db:aplicar <migration.sql> --atestar [--autor <nome>] [--pos <prova.sql>]║
+# ║          (migration JÁ aplicada fora do envelope: prova read-only e só então recibo)    ║
 # ║                                                                                        ║
 # ║  Substitui a colagem manual no SQL Editor do Lovable. O que ele garante, e por quê:     ║
 # ║                                                                                        ║
@@ -53,14 +55,26 @@ morre() { msg "❌ $2"; exit "$1"; }
 # ─────────────────────────────────────────────────────────────────────────────────────────
 ARQUIVO="${1:-}"
 MODO="${2:-aplicar}"
-[ -n "$ARQUIVO" ] || morre 2 "uso: bun run db:aplicar <arquivo.sql> [--ensaio]"
+[ -n "$ARQUIVO" ] || morre 2 "uso: bun run db:aplicar <arquivo.sql> [--ensaio | --atestar [--autor <nome>] [--pos <prova.sql>]]"
 [ -f "$ARQUIVO" ] || morre 2 "arquivo não existe: $ARQUIVO"
 case "$MODO" in
-  aplicar|--ensaio) ;;
-  *) morre 2 "modo inválido: '$MODO' (use --ensaio ou nada)" ;;
+  aplicar|--ensaio|--atestar) ;;
+  *) morre 2 "modo inválido: '$MODO' (use --ensaio, --atestar ou nada)" ;;
 esac
 ENSAIO=0
 [ "$MODO" = "--ensaio" ] && ENSAIO=1
+ATESTAR=0; AUTOR=""; POS=""
+if [ "$MODO" = "--atestar" ]; then
+  ATESTAR=1
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --autor) AUTOR="${2:-}"; shift 2 || morre 2 "--autor sem valor" ;;
+      --pos) POS="${2:-}"; shift 2 || morre 2 "--pos sem valor" ;;
+      *) morre 2 "argumento desconhecido no --atestar: '$1'" ;;
+    esac
+  done
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
 # 1) Sonda FAIL-CLOSED do wrapper — resposta POSITIVA, não mera existência
@@ -119,7 +133,8 @@ COMMIT="$(git rev-parse --short HEAD)"
 # Qualquer transformação no cliente quebra a cadeia e vira `APLICAR_SQL: sha divergente`, que é o
 # banco fazendo o trabalho dele. O envelope pertence à migration feita para o SQL Editor; o SQL
 # feito para cá não leva envelope nenhum.
-if grep -qiE '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)[[:space:]]*;' "$SNAP"; then
+# (o --atestar NÃO executa o arquivo — lê; a migration de SQL Editor, com envelope, é exatamente o caso dele)
+if [ "$ATESTAR" -eq 0 ] && grep -qiE '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)[[:space:]]*;' "$SNAP"; then
   morre 2 "o arquivo tem controle de transação no corpo (BEGIN/COMMIT/ROLLBACK).
    A transação é DESTE script — o corpo roda dentro dela, via EXECUTE, onde esses comandos são
    proibidos. Remova o envelope: o SQL feito para o \`db:aplicar\` não leva \`BEGIN;\`/\`COMMIT;\`.
@@ -142,6 +157,9 @@ fi
 FORA_TX="$(sed 's/--.*$//' "$SNAP" | tr '\n' ' ' | grep -oEi \
   'CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX[[:space:]]+CONCURRENTLY|DROP[[:space:]]+INDEX[[:space:]]+CONCURRENTLY|REINDEX[^;]{0,80}CONCURRENTLY' \
   | head -2 | tr '\n' ' ' || true)"
+# o --atestar NÃO executa o arquivo: a migration com CONCURRENTLY (que só vai pelo SQL Editor) é o caso dele.
+# Zerado ANTES do `if` (não dentro da condição): a S6 do db/test-db-aplicar.sh sabota esta linha pelo texto.
+[ "$ATESTAR" -eq 0 ] || FORA_TX=""
 if [ -n "$FORA_TX" ]; then
   morre 2 "RECUSA_FORA_DE_TRANSACAO — comando que não roda dentro de transação nenhuma (nem a
    deste script): $FORA_TX
@@ -191,6 +209,120 @@ if [ "$ENSAIO" -eq 0 ]; then
   esac
 fi
 msg "📋 ledger: $ESTADOS"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# 3b) --atestar: migration aplicada FORA do envelope (SQL Editor/MCP) ganha recibo SÓ COM PROVA
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# Rodada 2 do vigia do Publish (M2, docs/historico/lovable-publish-automatico.md). O vigia libera o front
+# por recibo `aplicada`; sem recibo, migration colada no SQL Editor segura o front até um `liberar` à mão.
+# Isto NÃO é declaração: o recibo só nasce depois que o banco MOSTRA o efeito da migration, numa sessão
+# READ ONLY (três camadas: psqlrc-ro do wrapper + `BEGIN TRANSACTION READ ONLY` + ROLLBACK):
+#   · objetos que ela cria/altera — função pelo CORPO exato (md5(prosrc)), tabela, coluna, índice, view
+#     (security_invoker), policy, trigger, constraint, RLS, extensão, DROP sem recriação, ACL final;
+#   · cada bloco DO roda de novo na sessão READ ONLY: o idempotente que acha o estado certo não escreve e
+#     passa; o que precisaria escrever o próprio banco recusa (`cannot execute … in a read-only transaction`);
+#   · o que não tem prova automática (DML, GRANT em schema, SELECT cron.*…) exige `--pos <prova.sql>`
+#     COMMITADO, que roda read-only e tem de imprimir POSCONDICAO_OK.
+# Nunca confia no exit do psql sozinho (psql-ro -f sai 0 com ERROR — docs/historico/psql-ro-exit-zero-em-
+# sql-que-falhou.md): exige o rc, o marcador positivo E zero linha de erro do servidor.
+# Exit: 0 atestado · 2 recusa (sem prova automática e sem --pos) · 3 já aplicado · 4 pós-condição FALHOU
+#       (nada gravado) · 5 desconhecido pendente · 6 não consegui consultar
+if [ "$ATESTAR" -eq 1 ]; then
+  RO="${AFIACAO_PSQL_RO:-$HOME/.config/afiacao/psql-ro}"
+  [ -x "$RO" ] || morre 6 "wrapper read-only ausente: $RO (a pós-condição é read-only por desenho)"
+  [ -n "$AUTOR" ] || AUTOR="$(git config user.name 2>/dev/null || true)"
+  AUTOR="$(printf '%s' "$AUTOR" | tr -cd 'A-Za-z0-9 ._@-' | cut -c1-60)"
+  [ -n "$AUTOR" ] || morre 2 "--atestar exige autor (--autor <nome>, ou git config user.name)"
+  if [ -n "$POS" ]; then
+    [ -f "$POS" ] || morre 2 "--pos não existe: $POS"
+    git ls-files --error-unmatch -- "$POS" >/dev/null 2>&1 && [ -z "$(git status --porcelain -- "$POS")" ] \
+      || morre 2 "--pos precisa estar commitado e limpo: $POS (a prova também é rastreável)"
+    ! grep -qiE '^[[:space:]]*(BEGIN|COMMIT|ROLLBACK|END|START TRANSACTION)[[:space:]]*;' "$POS" \
+      || morre 2 "--pos com controle de transação no corpo — a transação READ ONLY é deste script"
+  fi
+  # `aplicada` (exit 3) e `desconhecido` (exit 5) já saíram na seção 3 — que vale para o --atestar também
+  AT_DIR="$(mktemp -d "${LOG_DIR%/}/db-atestar.XXXXXX")"
+  trap 'rm -f "$SNAP"; rm -rf "$AT_DIR"' EXIT
+  mkdir -p "$AT_DIR/dos"
+  set +e
+  bun "${DB_ATESTAR_PLANO:-$(dirname "$0")/db-atestar-poscondicao.ts}" "$SNAP" --dos "$AT_DIR/dos" > "$AT_DIR/checagens.sql" 2> "$AT_DIR/plano.err"
+  PRC=$?
+  set -e
+  case "$PRC" in
+    0) ;;
+    3) if [ -z "$POS" ]; then
+         msg "$(sed 's/^/   /' "$AT_DIR/plano.err" | head -20)"
+         morre 2 "RECUSA_SEM_PROVA — comando(s) sem pós-condição automática (acima). Escreva a prova read-only
+   num .sql commitado que imprima POSCONDICAO_OK e passe --pos <arquivo>. Declaração pura não vira recibo."
+       fi
+       msg "   sem prova automática (cobertos pelo --pos $POS):"; msg "$(sed 's/^/     /' "$AT_DIR/plano.err" | head -20)" ;;
+    *) msg "$(head -c 600 "$AT_DIR/plano.err")"; morre 6 "não consegui planejar a pós-condição (rc $PRC)" ;;
+  esac
+  # ro_prova <corpo.sql> <marcador> <saida> → 0 só com rc 0 + marcador + nenhuma linha de erro do SERVIDOR
+  ro_prova() {
+    { printf 'BEGIN TRANSACTION READ ONLY;\n'; printf "SELECT 'RO_ATIVO:' || current_setting('transaction_read_only');\n"
+      cat "$1"; printf "SELECT '%s';\nROLLBACK;\n" "$2"; } > "$1.ro"
+    local rc=0
+    "$RO" -A -t -v ON_ERROR_STOP=1 < "$1.ro" > "$3" 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || return 1
+    grep -qx 'RO_ATIVO:on' "$3" || return 1
+    grep -qx "$2" "$3" || return 1
+    ! grep -qE '(^|: )(ERROR|ERRO|FATAL):' "$3"
+  }
+  NCH="$(grep -c '^SELECT CASE' "$AT_DIR/checagens.sql" || true)"
+  if ! ro_prova "$AT_DIR/checagens.sql" CHECAGENS_OK "$AT_DIR/checagens.out"; then
+    msg "$(head -c 900 "$AT_DIR/checagens.out")"
+    morre 6 "a pós-condição não rodou inteira em sessão READ ONLY (sem marcador, erro do servidor ou RO_ATIVO≠on) — não gravei nada"
+  fi
+  NOK="$(grep -c '^OK ' "$AT_DIR/checagens.out" || true)"
+  FALTAS="$(grep '^FALTA ' "$AT_DIR/checagens.out" || true)"
+  grep -qx "POSCONDICAO_FIM n=$NCH" "$AT_DIR/checagens.out" \
+    || morre 6 "a pós-condição não confirmou as $NCH checagens (POSCONDICAO_FIM ausente/divergente) — não gravei nada"
+  if [ -n "$FALTAS" ] || [ "$NOK" != "$NCH" ]; then
+    msg "$(printf '%s\n' "$FALTAS" | sed 's/^/   /' | head -30)"
+    morre 4 "POSCONDICAO_FALHOU — o banco NÃO mostra o efeito da migration ($NOK/$NCH OK). Não gravei recibo.
+   Função com corpo diferente = a versão aplicada não é a do repo: aplique pelo envelope (bun run db:aplicar $ARQUIVO)."
+  fi
+  NDO=0
+  for d in "$AT_DIR"/dos/do-*.sql; do
+    [ -e "$d" ] || continue
+    NDO=$((NDO + 1))
+    if ! ro_prova "$d" DO_OK "$d.out"; then
+      msg "$(grep -E '(ERROR|ERRO):' "$d.out" | head -2 | cut -c1-200)"
+      msg "   bloco: $(tr '\n' ' ' < "$d" | tr -s ' ' | cut -c1-160)"
+      if [ -z "$POS" ]; then
+        morre 2 "RECUSA_SEM_PROVA — o bloco DO nº $NDO não passa em sessão READ ONLY (escreveria, ou o estado não é o esperado).
+   Prove o efeito dele num .sql commitado que imprima POSCONDICAO_OK e passe --pos <arquivo>."
+      fi
+      msg "   (bloco DO nº $NDO sem prova read-only — coberto pelo --pos $POS)"
+    fi
+  done
+  NPOS=0
+  if [ -n "$POS" ]; then
+    cp "$POS" "$AT_DIR/pos.sql"
+    if ! ro_prova "$AT_DIR/pos.sql" POS_FIM "$AT_DIR/pos.out" || ! grep -qx 'POSCONDICAO_OK' "$AT_DIR/pos.out"; then
+      msg "$(head -c 900 "$AT_DIR/pos.out")"
+      morre 4 "POSCONDICAO_FALHOU — o --pos $POS não imprimiu POSCONDICAO_OK em sessão READ ONLY. Não gravei recibo."
+    fi
+    NPOS=1
+  fi
+  [ $((NCH + NDO + NPOS)) -gt 0 ] || morre 2 "RECUSA_SEM_PROVA — nada a checar no arquivo (nenhum objeto, nenhum DO, sem --pos)"
+  ATOR="manual:${AUTOR}"
+  ATOR_SQL="${ATOR//\'/\'\'}"
+  ID_OUT="$LOG_DIR/db-atestar-id.$$.log"
+  if ! "$RW" -X -A -t -q -v ON_ERROR_STOP=1 -c "
+    insert into public.db_aplicacoes (arquivo, sha256, commit_sha, estado, ator, concluido_em, erro)
+    values ('$ARQUIVO_SQL', '$SHA', '$COMMIT', 'aplicada', '$ATOR_SQL', now(),
+            null) returning id" > "$ID_OUT" 2>&1; then
+    msg "$(head -c 600 "$ID_OUT")"; rm -f "$ID_OUT"
+    morre 6 "a pós-condição passou, mas não consegui gravar o recibo (outro recibo aplicada no meio? releia o ledger)"
+  fi
+  ID="$(head -1 "$ID_OUT" | tr -d '[:space:]')"; rm -f "$ID_OUT"
+  case "$ID" in ''|*[!0-9]*) morre 6 "o insert do recibo não devolveu um id numérico" ;; esac
+  msg "✅ ATESTADO — recibo #$ID 'aplicada' (ator $ATOR) após $NOK checagem(ns) OK, $NDO bloco(s) DO read-only${POS:+ e o --pos $POS}."
+  invalida_recibos_do_vigia
+  exit 0
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
 # 4) TENTATIVA — fora da transação, para sobreviver ao rollback
