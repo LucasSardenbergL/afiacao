@@ -30,6 +30,9 @@ type NCGData = {
   valor: number;
   // Opcional: engines anteriores à v1.5 não mandam o campo.
   parcial?: boolean;
+  // Engine v2.6+: `false` = a parcela NÃO foi medida (o número dela é 0 por ausência, não zero medido).
+  // Ausente = engine anterior. Ver docs/historico/ncg-folha-tributos-fonte-vazia.md.
+  fontes?: { folha: boolean; tributos: boolean };
   projecao_12m: Array<{ mes: string; valor: number }>;
 };
 
