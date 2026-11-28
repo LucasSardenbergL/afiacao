@@ -96,7 +96,7 @@ export function valorCitado(ficha: Record<string, unknown>, campo: string): stri
  * do `authenticated` e NADA do bloco era aprovado; blocos de 2–3 passaram. Bloco menor = mais
  * chamadas, mas cada uma cabe no timeout e uma falha isola só 3 propostas.
  */
-export const TAMANHO_BLOCO_APROVACAO = 3;
+const TAMANHO_BLOCO_APROVACAO = 3;
 export function emBlocos(ids: string[], tamanho = TAMANHO_BLOCO_APROVACAO): string[][] {
   const unicos = [...new Set(ids)];
   const blocos: string[][] = [];
