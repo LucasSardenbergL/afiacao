@@ -159,7 +159,7 @@ h.responderForaDoGate(async (req) => {
     }
     // v2.7: fonte de folha/tributos da NCG = mapa por empresa + código.
     if (caminho === "fin_categoria_fluxo_mapping") {
-      return json([{ omie_codigo: "2.10.01", fluxo_linha: "op_pessoal" }, { omie_codigo: "3.99.01", fluxo_linha: "op_impostos" }]);
+      return json([{ omie_codigo: "2.10.01", fluxo_linha: "op_pessoal" }, { omie_codigo: "3.99.01", fluxo_linha: "op_impostos" }, { omie_codigo: "1.01.01", fluxo_linha: "op_recebimento_clientes" }]);
     }
     // Alertas já ativos para 2 tipos: exercita o ramo UPDATE (além do INSERT e do dismiss).
     if (caminho === "fin_alertas") {
@@ -250,6 +250,20 @@ for (const cen of CENARIOS) {
 }
 Object.assign(baseLeituras, leiturasPorRota());
 baseEscritas.push(...escritas);
+
+Deno.test("v2.8: linhas cr_omie/cp_omie carregam fluxo_linha do mapa (CP e CR no mapa ⇒ curada; CP fora ⇒ nao_classificado)", () => {
+  type L = { origem: string; desc: string; fluxo_linha?: string | null };
+  const linhas = (base.realista.semanas as Array<{ entradas: L[]; saidas: L[] }>).flatMap((s) => [...s.entradas, ...s.saidas]);
+  const cps = linhas.filter((l) => l.origem === "cp_omie");
+  const crs = linhas.filter((l) => l.origem === "cr_omie");
+  if (cps.length === 0 || crs.length === 0) throw new Error("FIXTURE_FRACA: sem linha de CP ou CR nas semanas");
+  const pessoal = cps.filter((l) => l.desc === "2.10.01");
+  const fora = cps.filter((l) => l.desc === "2.05.01");
+  if (pessoal.length === 0 || fora.length === 0) throw new Error("FIXTURE_FRACA: faltam CP 2.10.01 e 2.05.01 nas semanas");
+  if (!pessoal.every((l) => l.fluxo_linha === "op_pessoal")) throw new Error(`2.10.01 deveria ser op_pessoal: ${JSON.stringify(pessoal[0])}`);
+  if (!fora.every((l) => l.fluxo_linha === "nao_classificado")) throw new Error(`2.05.01 (fora do mapa) deveria ser nao_classificado: ${JSON.stringify(fora[0])}`);
+  if (!crs.every((l) => l.fluxo_linha === "op_recebimento_clientes")) throw new Error(`CR 1.01.01 (no mapa) deveria ser op_recebimento_clientes: ${JSON.stringify(crs[0])}`);
+});
 
 Deno.test("fixture: os 3 cenários de cenário único divergem entre si (a paridade abaixo não é trivial)", () => {
   const ncgSemana = (cen: string) => JSON.stringify((base[cen].semanas as unknown[]).map((s) => (s as { saldo_final: number }).saldo_final));

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DREComparativo } from '../DREComparativo';
 import { makeDRE } from './factories';
+import { fmtCompact } from '@/components/financeiro/dashboard/format';
 
 const row = makeDRE({
   receita_liquida: 9000, lucro_bruto: 5000, resultado_operacional: 3000,
@@ -20,6 +21,14 @@ describe('DREComparativo', () => {
     expect(screen.getByText('Receita Líquida')).toBeTruthy();
     expect(screen.getByText('Margem Bruta')).toBeTruthy();
     expect(screen.getByText('% da Receita Total')).toBeTruthy();
+  });
+
+  it('linha não-operacional fecha Resultado Operacional − Impostos = Resultado Líquido', () => {
+    const r = makeDRE({ resultado_operacional: 3000, outras_receitas: 70_000, outras_despesas: 20_000, impostos: 600, resultado_liquido: 52_400 });
+    render(<DREComparativo data={{ oben: [r], colacor_sc: [r] }} ano={2026} />);
+    const tr = screen.getByText('Outras Receitas − Outras Despesas').closest('tr')!;
+    const celulas = [...tr.querySelectorAll('td')].map((td) => td.textContent ?? '');
+    expect(celulas.some((c) => c.includes(fmtCompact(50_000)))).toBe(true);
   });
 
   it('badge de regime segue o ANO exibido: colacor SN em 2022, LP em 2023', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmt, getToolName, formatDuration } from '../helpers';
+import { fmt, getToolName, formatDuration, resumoRelatorio } from '../helpers';
 import { type UserTool } from '../types';
 
 const baseTool: UserTool = {
@@ -40,5 +40,20 @@ describe('formatDuration', () => {
     expect(formatDuration(9)).toBe('0:09');
     expect(formatDuration(65)).toBe('1:05');
     expect(formatDuration(125)).toBe('2:05');
+  });
+});
+
+describe('resumoRelatorio (PR 3.1)', () => {
+  const zero = { entrou: 0, adicionado: 0, somado: 0, cor: 0, descartado: 0, inferidas: 0 };
+  it('diz o que NÃO entrou, não só "N adicionados"', () => {
+    expect(resumoRelatorio({ ...zero, entrou: 2, adicionado: 2, descartado: 1 }))
+      .toBe('2 adicionado(s) · 1 não entrou(aram)');
+  });
+  it('avisa a quantidade inferida', () => {
+    expect(resumoRelatorio({ ...zero, entrou: 1, adicionado: 1, inferidas: 1 }))
+      .toBe('1 adicionado(s) — 1 com quantidade inferida, confira');
+  });
+  it('nada entrou', () => {
+    expect(resumoRelatorio(zero)).toBe('nenhum item');
   });
 });

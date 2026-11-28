@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { caixaDisponivel, caixaDaA1, hurdleEfetivo, classificarStatus, montarFilaAcoes, type CaixaEmpresa } from '../next-best-action-helpers';
 
+// A1 v2.6+: o saldo_tesouraria descontou a folha (fonte medida). Sem isto o caso cai em 'não atestado'.
+const FOLHA_OK = { fontes: { folha: true } };
+
 const cx = (disponivel: number | null, confianca: CaixaEmpresa['confianca']): CaixaEmpresa => ({ disponivel, confianca, saldo_tesouraria: null, dias_cobertura: null, motivos: [] });
 
 describe('caixaDisponivel', () => {
@@ -26,25 +29,55 @@ describe('caixaDisponivel', () => {
 
 describe('caixaDaA1 (transporte A1 → A4, plano v6 C1)', () => {
   it('reprodução do Codex: cobertura null + saldo 10.000 → disponível null, baixa, saldo preservado', () => {
-    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 10000, dias_cobertura: null }, confianca_dados: { motivos: [], saldo_inicial: null } }, 21);
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 10000, dias_cobertura: null }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: FOLHA_OK }, 21);
     expect(r).toMatchObject({ disponivel: null, confianca: 'baixa', saldo_tesouraria: 10000, dias_cobertura: null });
     expect(r.motivos).toHaveLength(1);
     expect(r.motivos[0]).toContain('sem base de saída');
   });
   it('saldo datado → haircut + baixa + motivo da A1', () => {
-    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['x'], saldo_inicial: 'Saldo datado.' } }, 21);
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['x'], saldo_inicial: 'Saldo datado.' }, ncg: FOLHA_OK }, 21);
     expect(r.disponivel).toBeCloseTo(32500, 6);
     expect(r.confianca).toBe('baixa');
     expect(r.motivos).toEqual(['Saldo inicial datado: Saldo datado.']);
   });
   it('degradação de PMR/PMP/CCC não toca o caixa', () => {
-    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['… PMR/PMP/CCC ficam indisponíveis.'], saldo_inicial: null } }, 21);
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['… PMR/PMP/CCC ficam indisponíveis.'], saldo_inicial: null }, ncg: FOLHA_OK }, 21);
     expect(r).toEqual({ disponivel: 65000, confianca: 'alta', saldo_tesouraria: 100000, dias_cobertura: 60, motivos: [] });
   });
   it('formato legado da A1 ({ motivos } sem saldo_inicial) → média, frescor não atestado (Codex, revisão do código)', () => {
-    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [] } }, 21);
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [] }, ncg: FOLHA_OK }, 21);
     expect(r).toMatchObject({ disponivel: 65000, confianca: 'media' });
     expect(r.motivos[0]).toContain('frescor do saldo não atestado');
+  });
+  it('folha sem fonte (ncg.fontes.folha=false) → haircut + baixa + motivo: o saldo não descontou a folha', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: { fontes: { folha: false } } }, 21);
+    expect(r.disponivel).toBeCloseTo(32500, 6);
+    expect(r.confianca).toBe('baixa');
+    expect(r.motivos).toEqual(['Folha dos próximos 30 dias sem fonte na A1 — o saldo de tesouraria não descontou a folha.']);
+  });
+  it('folha sem fonte + saldo datado: baixa com UM haircut (não dois) e os dois motivos', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: 'Saldo datado.' }, ncg: { fontes: { folha: false } } }, 21);
+    expect(r.disponivel).toBeCloseTo(32500, 6);
+    expect(r.confianca).toBe('baixa');
+    expect(r.motivos).toHaveLength(2);
+  });
+  it('folha não-booleana ("true" string) não atesta → média', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: { fontes: { folha: 'true' as unknown as boolean } } }, 21);
+    expect(r.confianca).toBe('media');
+  });
+  it('folha sem fonte: crescer que caberia no caixa estimado cai em falta_dado (não financiar_ja)', () => {
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: { fontes: { folha: false } } }, 21);
+    const r = montarFilaAcoes({
+      candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 1000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
+      caixaPorEmpresa: { oben: caixa },
+      hurdlePorEmpresa: { oben: 0.15 },
+    });
+    expect(r.fila.find((a) => a.tipo === 'crescer')!.status).toBe('falta_dado');
+  });
+  it('A1 sem ncg.fontes.folha → média, desconto da folha não atestado', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: null } }, 21);
+    expect(r).toMatchObject({ disponivel: 65000, confianca: 'media' });
+    expect(r.motivos).toEqual(['A1 sem ncg.fontes.folha — desconto da folha no saldo não atestado.']);
   });
   it('A1 null → disponível null, baixa', () => {
     expect(caixaDaA1(null, 21)).toMatchObject({ disponivel: null, confianca: 'baixa' });
@@ -53,7 +86,7 @@ describe('caixaDaA1 (transporte A1 → A4, plano v6 C1)', () => {
 
 describe('montarFilaAcoes com caixa desconhecido (plano v6 C1)', () => {
   it('crescer dimensionado com caixa null → falta_dado, e o motivo da empresa chega à confiança da fila', () => {
-    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 10000, dias_cobertura: null }, confianca_dados: { motivos: [], saldo_inicial: null } }, 21);
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 10000, dias_cobertura: null }, confianca_dados: { motivos: [], saldo_inicial: null }, ncg: FOLHA_OK }, 21);
     const r = montarFilaAcoes({
       candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 5000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
       caixaPorEmpresa: { oben: caixa },
@@ -64,7 +97,7 @@ describe('montarFilaAcoes com caixa desconhecido (plano v6 C1)', () => {
     expect(r.confianca.motivos.join(' | ')).toContain('Caixa (oben): Cobertura de caixa desconhecida');
   });
   it('saldo datado: a ESTIMATA (baixa) segue no card mas não aprova financiar_ja (contraexemplo do Codex)', () => {
-    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: 'Saldo datado.' } }, 21);
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: 'Saldo datado.' }, ncg: FOLHA_OK }, 21);
     const r = montarFilaAcoes({
       candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 30000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
       caixaPorEmpresa: { oben: caixa },

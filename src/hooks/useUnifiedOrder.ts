@@ -27,6 +27,8 @@ import { track } from '@/lib/analytics';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
+import type { RelatorioAdicaoIA } from '@/components/unifiedAI/types';
+import { aplicarAdicaoIA, planejarAdicaoIA, relatorioTudoDescartado } from '@/hooks/unifiedOrder/adicao-ia';
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
@@ -727,38 +729,26 @@ export function useUnifiedOrder() {
     }
   }, [selectCustomer, user?.id]);
 
-  // Unified AI handler
-  const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {
+  // Unified AI handler — PR 3.1 ("IA honesta"): devolve o desfecho de CADA item (o assistente anuncia o
+  // que entrou, não o que foi pedido), soma só na linha SEM cor e manda a base tintométrica para a
+  // fila de cor (o caller a enfileira). A decisão é pura (unifiedOrder/adicao-ia.ts). A IA NÃO
+  // precifica: o item nasce pela MESMA função da lista (nascerItemProduto + getProductPrice).
+  const handleUnifiedAIResult = useCallback((result: AIOrderResult): RelatorioAdicaoIA => {
     // A5: estas vias escrevem direto no setCart — mesma trava dos mutadores protegidos.
-    if (submittingRef.current) { avisarCarrinhoTravado(); return; }
-    const newCartItems: CartItem[] = [];
-    const allProducts = [...obenProducts, ...colacorProducts];
-    for (const aiProd of result.products) {
-      const product = allProducts.find(p => p.id === aiProd.product_id);
-      if (!product) continue;
-      const existing = cart.find((c): c is ProductCartItem => c.type === 'product' && c.product.id === product.id);
-      if (existing) {
-        setCart(prev => prev.map(c =>
-          c.type === 'product' && (c as ProductCartItem).product.id === product.id
-            ? { ...c, quantity: c.quantity + aiProd.quantity } as ProductCartItem : c
-        ));
-      } else {
-        // A IA NÃO precifica: o item nasce pela MESMA função da lista do catálogo (getProductPrice =
-        // precoPartida, para o cliente SELECIONADO) e com precoNascimento — a reprecificação da
-        // fronteira o corrige se nasceu antes do tier/preços do cliente firmarem. O tipo AIProduct
-        // não tem mais `unit_price`; a edge também não o manda (montarRespostaAnalise). Ver
-        // src/hooks/unifiedOrder/nascimento-item.ts.
-        newCartItems.push(nascerItemProduto(product as Product, aiProd.quantity, getProductPrice));
-      }
+    if (submittingRef.current) {
+      avisarCarrinhoTravado();
+      return relatorioTudoDescartado(result, 'o pedido está sendo enviado — tente de novo depois');
     }
-    for (const aiSvc of result.services) {
-      const tool = userTools.find(t => t.id === aiSvc.userToolId);
-      if (!tool) continue;
-      if (cart.some(c => c.type === 'service' && (c as ServiceCartItem).userTool.id === tool.id)) continue;
-      const servico = servicos.find(s => s.omie_codigo_servico === aiSvc.omie_codigo_servico) || null;
-      newCartItems.push({ type: 'service', userTool: tool, servico, quantity: aiSvc.quantity, notes: aiSvc.notes, photos: [] });
-    }
-    if (newCartItems.length > 0) setCart(prev => [...prev, ...newCartItems]);
+    const plano = planejarAdicaoIA({
+      carrinho: cart,
+      resultado: result,
+      catalogo: [...obenProducts, ...colacorProducts] as Product[],
+      userTools,
+      servicos,
+      nascer: (product, quantidade) => nascerItemProduto(product, quantidade, getProductPrice),
+    });
+    if (plano.novas.length > 0 || plano.somas.size > 0) setCart(prev => aplicarAdicaoIA(prev, plano));
+    return plano.relatorio;
   }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice, setCart]);
 
   // Preço com que um item da IA vai NASCER, pelo id do catálogo — o MESMO getProductPrice que o

@@ -1,3 +1,5 @@
+import type { ItemTinta } from '@/lib/pedido/replicar-pedido';
+
 // Tipos do Assistente de Pedido IA.
 // Extraídos verbatim de src/components/UnifiedAIAssistant.tsx (god-component split).
 // As interfaces públicas (AIProduct/AIService/AISuggestion/AICustomerMatch/AIOrderResult)
@@ -12,6 +14,8 @@ export interface AIProduct {
   codigo: string;
   descricao: string;
   quantity: number;
+  /** PR 3.1: a quantidade NÃO foi dita pelo vendedor (a IA assumiu). Ausente = inferida (fail-closed). */
+  quantidade_inferida?: boolean;
   account: 'oben' | 'colacor';
   notes?: string;
 }
@@ -21,6 +25,7 @@ export interface AIService {
   omie_codigo_servico: number;
   servico_descricao: string;
   quantity: number;
+  quantidade_inferida?: boolean;
   notes?: string;
 }
 
@@ -30,6 +35,7 @@ export interface AISuggestion {
   codigo?: string;
   descricao: string;
   quantity?: number;
+  quantidade_inferida?: boolean;
   account?: string;
   reason: string;
   userToolId?: string;
@@ -45,6 +51,33 @@ export interface AICustomerMatch {
   codigo_cliente: number;
   confidence: 'high' | 'medium' | 'low';
   user_id?: string | null;
+}
+
+/** O que a edge recebeu da IA e não devolveu como item — sai com o motivo (PR 3.1). */
+export interface AIDescartado {
+  descricao: string;
+  motivo: string;
+}
+
+/**
+ * Desfecho de cada item ao adicionar (PR 3.1). `adicionado` e `somado` ENTRARAM no carrinho; `cor`
+ * espera a cor na janela do fluxo tintométrico; `descartado` não entrou, e o motivo diz por quê.
+ */
+export type DesfechoItemIA = 'adicionado' | 'somado' | 'cor' | 'descartado';
+
+export interface ItemRelatorioIA {
+  tipo: 'produto' | 'servico';
+  descricao: string;
+  desfecho: DesfechoItemIA;
+  quantidade: number;
+  quantidadeInferida: boolean;
+  motivo?: string;
+}
+
+export interface RelatorioAdicaoIA {
+  itens: ItemRelatorioIA[];
+  /** Bases tintométricas: o caller as põe na fila de cor (uma janela por vez). */
+  tintas: ItemTinta[];
 }
 
 export interface AIOrderResult {
@@ -81,7 +114,8 @@ export interface ImageAttachment {
 export interface UnifiedAIAssistantProps {
   products: Product[];
   userTools: UserTool[];
-  onItemsIdentified: (result: AIOrderResult) => void;
+  /** Devolve o desfecho de CADA item: o anúncio conta o que entrou, não o que foi pedido (PR 3.1). */
+  onItemsIdentified: (result: AIOrderResult) => RelatorioAdicaoIA;
   onCustomerIdentified?: (customer: AICustomerMatch) => void;
   customerUserId?: string | null;
   hasCustomerSelected?: boolean;

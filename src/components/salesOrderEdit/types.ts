@@ -90,3 +90,29 @@ export function motivoEdicaoBloqueada(status: string): string {
   if (status === 'importado') return 'Pedido importado do Omie: o app só espelha. Para alterar, altere no Omie.';
   return `Este pedido está com status "${status}" e não pode ser editado.`;
 }
+
+/** #28: estado do catálogo "Adicionar produto" — separado das formas; falha ≠ catálogo vazio. */
+export type EstadoCatalogo = 'carregando' | 'ok' | 'falhou';
+
+/** #40: a carga do PEDIDO. `nao-encontrado` (a linha não existe) ≠ `falhou` (não consegui ler). */
+export type CargaDoPedido =
+  | { estado: 'carregando' }
+  | { estado: 'ok' }
+  | { estado: 'nao-encontrado' }
+  | { estado: 'falhou'; erro: unknown };
+
+/** Texto da falha de leitura do pedido na edição — mesma régua de `mensagemDoErroDaLista` (/sales). */
+export function mensagemDaFalhaDoPedido(erro: unknown, online: boolean): string {
+  if (!online) return 'Sem conexão com a internet.';
+  if (erro instanceof Error && erro.name === 'LensReadOnlyError') {
+    return 'A lente "Ver como" não permite esta leitura. Saia da lente para abrir o pedido.';
+  }
+  const codigo = typeof erro === 'object' && erro !== null && 'code' in erro ? String((erro as { code: unknown }).code) : '';
+  if (codigo === '42501' || codigo === 'PGRST301' || codigo === '401' || codigo === '403') {
+    return 'Seu acesso não permite ler este pedido. Se deveria, avise o suporte.';
+  }
+  if (codigo === 'PGRST002' || codigo.startsWith('5') || codigo === '57014') {
+    return 'O servidor não respondeu. Tente de novo em instantes.';
+  }
+  return 'A leitura do pedido falhou. Tente de novo; se repetir, avise o suporte.';
+}

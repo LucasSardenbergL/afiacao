@@ -39,7 +39,8 @@ case "$url" in
     if [ -f "$F/atraso" ] && grep -q '^POST' "$F/log"; then
       n=$(cat "$F/atraso"); if [ "$n" -le 0 ]; then cp "$F/vira" "$F/ar"; else echo $((n - 1)) > "$F/atraso"; fi
     fi
-    if [ -f "$F/sem_carimbo" ]; then emite 200 'x=1'; else emite 200 "window.__BUILD_SHA__=\"$(cut -c1-8 "$F/ar")\";"; fi ;;
+    if [ -f "$F/sem_carimbo" ]; then emite 200 'x=1'
+    elif [ -f "$F/carimbo_dev" ]; then emite 200 'window.__BUILD_SHA__="dev";'; else emite 200 "window.__BUILD_SHA__=\"$(cut -c1-8 "$F/ar")\";"; fi ;;
   https://api.test/v1/projects/P) emite 200 "{\"latest_commit_sha\":\"$(cat "$F/ws")\"}" ;;
   https://api.test/v1/projects/P/publish)
     c=$(cat "$F/post_code")
@@ -237,11 +238,25 @@ CENARIO=dec_recibo_lixo;   semeia "$BASE" x; vigia; : > "$F/vigia/recibos-$BASE-
 # Codex PR2 #6: o que o liberar cobre não volta a exigir recibo — a base dos recibos é o liberar
 CENARIO=dec_recibo_base_lib; semeia "$BASE" x; vigia; echo "$MIG" > "$F/vigia/liberar"; rec "$MIG" "$F3" 0; echo 0 > "$F/vigia/pendencias-$F3"
                            decide 0 PUBLICAR "$F3" && { tem_dec "RECIBOS_DE=$MIG"; tem_dec "LIBERADO=recibos+ledger"; }
+# caso real 27/11: liberar de 26/11 MAIS VELHO que o ar — a base é o ar, não o liberar velho
+CENARIO=dec_recibo_lib_velho; semeia "$FRONT" x; vigia; echo "$BASE" > "$F/vigia/liberar"; rec "$FRONT" "$FRONT2" 0
+                           decide 0 PUBLICAR "$FRONT2" && { tem_dec "RECIBOS_DE=$FRONT"; tem_dec "LIBERADO=recibos"; }
 # edge que o ledger não prova: sem versao.ts, ou _shared → ledger=0 NÃO libera; liberar sem mudança depois libera
 git checkout -q -b semv "$FRONT2"; c supabase/functions/h/index.ts sv >/dev/null; SV=$(c src/sv.ts svf); git checkout -q main
 git checkout -q -b shared "$FRONT2"; c supabase/functions/_shared/x.ts sh >/dev/null; SH=$(c src/sh.ts shf); git checkout -q main
 CENARIO=dec_semv_ledger0;  semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SV"; decide 10 RETIDO "$SV" && tem_dec "RETIDO=edge:supabase/functions/h/index.ts"
-CENARIO=dec_shared_ledger0; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SH"; decide 10 RETIDO "$SH" && tem_dec "--liberar $SH"
+# M1 (rodada 2): _shared vai ao LEDGER quando a prova do fecho (sonda-fan-out --prova-ledger) diz que toda
+# consumidora está no mapa; sem prova lida, o vigia precisa medir (PRECISA_LEDGER); prova 1 = liberar humano
+CENARIO=dec_shared_sem_prova; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SH"; decide 11 PRECISA_LEDGER "$SH" && tem_dec "PROVA_DE=$FRONT2"
+# shellcheck disable=SC2329
+s_sh0() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo 0 > "$F/vigia/pendencias-$SH"; printf '0\nSEM_CONSUMIDORA _shared/x.ts\n' > "$F/vigia/shared-$FRONT2-$SH"; }
+# shellcheck disable=SC2329
+s_sh1() { semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; echo 0 > "$F/vigia/pendencias-$SH"; printf '1\nFORA_DO_MAPA h _shared/x.ts\n' > "$F/vigia/shared-$FRONT2-$SH"; }
+CENARIO=dec_shared_prova0; s_sh0; decide 0 PUBLICAR "$SH" && { tem_dec "LIBERADO=ledger"; tem_dec "_shared provado pelo ledger"; }
+CENARIO=dec_shared_prova1; s_sh1; decide 10 RETIDO "$SH" && { tem_dec "--liberar $SH"; tem_dec "FORA_DO_MAPA h _shared/x.ts"; }
+CENARIO=dec_shared_prova0_l1; s_sh0; echo 1 > "$F/vigia/pendencias-$SH"; decide 10 RETIDO "$SH" && tem_dec "RETIDO=edge:supabase/functions/_shared/x.ts"
+CENARIO=dec_shared_prova_velha; s_sh0; touch -t 202001010000 "$F/vigia/shared-$FRONT2-$SH"; decide 11 PRECISA_LEDGER "$SH"
+CENARIO=dec_shared_prova2; s_sh0; printf '2\nPROVA_LEDGER_MECANICA: x\n' > "$F/vigia/shared-$FRONT2-$SH"; decide 10 RETIDO "$SH"
 CENARIO=dec_semv_liberado; semeia "$FRONT2" x; vigia; echo 0 > "$F/vigia/pendencias-$SV"; echo "$SV" > "$F/vigia/liberar"
                            decide 0 PUBLICAR "$SV" && tem_dec "edge sem versao.ts"
 # Codex #6: piso e liberar em ramos IRMÃOS (incomparáveis) — o liberar vale sozinho
@@ -316,6 +331,112 @@ sabota_dec piso 's/atestacao "\$PISO_ARQ" piso \&\& MIG_OK=1/false/' s_piso_mig 
 # filtro de teste/doc de edge desligado → RETIDO por *_test.ts
 sabota_dec teste_edge "s/^NAO_CAMADA=.*/NAO_CAMADA='^\$'/" s_nada 0 PUBLICAR "$ETESTE"
 
+# ═══ Rodada 2 — PR A ═══════════════════════════════════════════════════════════════════════════
+# B3: liberar que o ar já ULTRAPASSOU não é "liberado para SHA antigo" (ar=FRONT, liberar=BASE)
+# shellcheck disable=SC2329
+s_lib_ultra() { semeia "$FRONT" x; vigia; rm -f "$F/vigia"/*; echo "$BASE" > "$F/vigia/liberar"; rec "$FRONT" "$FRONT2" 1; }
+CENARIO=dec_lib_ultrapassado; s_lib_ultra; decide 10 RETIDO "$FRONT2" \
+  && { tem_dec "liberar ${BASE:0:8} ultrapassado"; sem_dec "liberado para SHA antigo"; }
+# falsificação por MENSAGEM (rc e veredito são os mesmos nos dois lados): o sabotado volta a dizer "SHA antigo"
+sabota_msg() {  # <nome> <sed> <semeador> <texto-que-o-real-diz> <rc> <veredito> <head>
+  local nome="$1" expr="$2" sem="$3" txt="$4" s="$base/sabm-$1.sh" out; shift 4
+  sed "$expr" "$ALVO" > "$s"
+  if cmp -s "$ALVO" "$s"; then echo "FALHOU [sabm-$nome]: a sabotagem não pegou (o sed não casou)"; fail=1; return; fi
+  CENARIO="controle-msg-$nome"; "$sem"; decide "$@" || return
+  printf '%s' "$DEC_OUT" | grep -qF -- "$txt" || { echo "FALHOU [controle-msg-$nome]: o real não disse '$txt'"; fail=1; return; }
+  "$sem"; out=$( (decide "$@" "$s"; printf '%s' "$DEC_OUT") 2>&1 )
+  if printf '%s' "$out" | grep -qF -- "$txt"; then echo "FALHOU [sabm-$nome]: cópia sabotada ainda disse '$txt'"; fail=1; fi
+}
+# shellcheck disable=SC2016  # os $ são LITERAIS do fonte sabotado
+sabota_msg lib_ultra 's/if \[ "\$L" != "\$AR" \] \&\& git merge-base --is-ancestor "\$L" "\$AR" 2>\/dev\/null; then/if false; then/' \
+  s_lib_ultra "liberar ${BASE:0:8} ultrapassado" 10 RETIDO "$FRONT2"
+# B3 no ramo de edge sem versão: o helper mudou (L→ar) e VOLTOU aos bytes de L em HEAD — a edge servida é a
+# do ar; o liberar velho não pode atestar (diff L..HEAD vazio mentiria: a edge precisa de deploy)
+git checkout -q -b semvolta "$FRONT2"; mkdir -p supabase/functions/k; echo v1 > supabase/functions/k/index.ts
+git add -A; git commit -qm k1; K1=$(git rev-parse HEAD)
+echo v2 > supabase/functions/k/index.ts; git add -A; git commit -qm k2; K2=$(git rev-parse HEAD)
+echo v1 > supabase/functions/k/index.ts; KH=$(c src/k.ts kh); git checkout -q main
+# shellcheck disable=SC2329
+s_semv_volta() { semeia "$K2" x; vigia; rm -f "$F/vigia"/*; echo "$K1" > "$F/vigia/liberar"; echo 0 > "$F/vigia/pendencias-$KH"; }
+CENARIO=dec_semv_lib_ultrapassado; s_semv_volta; decide 10 RETIDO "$KH" && tem_dec "RETIDO=edge:supabase/functions/k/index.ts"
+# shellcheck disable=SC2016
+sabota_dec semv_ultra 's/^    \[ -n "\$L" \] \&\& ! git merge-base --is-ancestor "\$AR" "\$L" 2>\/dev\/null \&\& L=""$/    true/' s_semv_volta 10 RETIDO "$KH"
+
+# ═══ Rodada 2 — PR B: B1, carimbo ausente/inválido ═══════════════════════════════════════════════
+# o motivo diz o que o bundle traz no lugar do carimbo (27/11: o asset sumiu antes de alguém olhar)
+CENARIO=dec_fb_sem;  semeia "$BASE" x; vigia; touch "$F/sem_carimbo"; decide 6 MECANICA "$FRONT" && tem_dec "visto: nenhum __BUILD_SHA__"
+CENARIO=dec_fb_dev;  semeia "$BASE" x; vigia; touch "$F/carimbo_dev"; decide 6 MECANICA "$FRONT" && tem_dec "visto: __BUILD_SHA__=dev"
+# com o último ar MEDIDO (o vigia passa depois de N ticks): julga dele, com o gate inteiro
+# shellcheck disable=SC2329
+s_fb() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; touch "$F/sem_carimbo"; }
+CENARIO=dec_fb_ok;   s_fb; LP_AR_FALLBACK="$BASE" decide 0 PUBLICAR "$FRONT" && tem_dec "AR_FALLBACK=$BASE"
+# ar-ultimo = HEAD: o servido é desconhecido — republicar a main (não JA_NO_AR)
+CENARIO=dec_fb_head; s_fb; LP_AR_FALLBACK="$FRONT2" decide 0 PUBLICAR "$FRONT2"
+CENARIO=dec_fb_mig;  s_fb; rec "$BASE" "$FRONT2"; LP_AR_FALLBACK="$BASE" decide 10 RETIDO "$FRONT2" && tem_dec "RETIDO=migration:supabase/migrations/1_x.sql"
+CENARIO=dec_fb_naoanc; s_fb; LP_AR_FALLBACK="$FRONT2" decide 6 MECANICA "$FRONT" && tem_dec "NAO_ANCESTRAL"
+CENARIO=dec_fb_lixo; s_fb; LP_AR_FALLBACK=HEAD decide 6 MECANICA "$FRONT"
+# shellcheck disable=SC2329
+s_fb_fora() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; touch "$F/fora"; }
+CENARIO=dec_fb_fora; s_fb_fora; LP_AR_FALLBACK="$BASE" decide 6 MECANICA "$FRONT"
+CENARIO=julgar_fb;   s_fb; LP_AR_FALLBACK="$BASE" julga 6 MECANICA "$FRONT"   # só o --decidir aceita o fallback
+# falsificação: sem a guarda, o fallback igual a HEAD vira JA_NO_AR (o carimbo nunca se conserta)
+# shellcheck disable=SC2329
+s_fb_head() { s_fb; export LP_AR_FALLBACK="$FRONT2"; }
+# shellcheck disable=SC2016
+( s_fb_head; sabota_dec fb_head 's/ \&\& \[ "\$FALLBACK" = 0 \] \&\& fim 0 JA_NO_AR/ \&\& fim 0 JA_NO_AR/' s_fb_head 0 PUBLICAR "$FRONT2"; exit "$fail" ) || fail=1
+# falsificação: fallback para qualquer falha de leitura (site fora) publicaria às cegas
+# shellcheck disable=SC2329
+s_fb_fora_e() { s_fb_fora; export LP_AR_FALLBACK="$BASE"; }
+( s_fb_fora_e; sabota_dec fb_fora 's/^    CARIMBO_INVALIDO\*)$/    *)/' s_fb_fora_e 6 MECANICA "$FRONT"; exit "$fail" ) || fail=1
+unset LP_AR_FALLBACK
+
+# M1: prova ≠ 0 tratada como prova → publica _shared que o ledger não vê; bloco removido → volta ao liberar
+# shellcheck disable=SC2016
+sabota_dec m1_prova 's/if \[ "\$(head -1 "\$PROVA")" = 0 \]; then/if true; then/' s_sh1 10 RETIDO "$SH"
+# shellcheck disable=SC2016
+sabota_dec m1_bloco 's/^  if \[ -n "\$SH" \]; then$/  if false; then/' s_sh0 0 PUBLICAR "$SH"
+
+# ═══ Rodada 2 — PR E: o comando CERTO no RETIDO (M10/M5) e o dono da camada (M7) ══════════════════
+CENARIO=dec_acao_mig; semeia "$BASE" x; vigia; rec "$BASE" "$FRONT2"; decide 10 RETIDO "$FRONT2" \
+  && { tem_dec "ACAO=bun run db:aplicar supabase/migrations/1_x.sql"; tem_dec "bun run db:aplicar supabase/migrations/1_x.sql --atestar"; tem_dec "DONO=?|t|supabase/migrations/1_x.sql"; }
+git checkout -q -b dono "$FRONT2"; mkdir -p supabase/migrations; echo 'select 5;' > supabase/migrations/5_p.sql; git add -A
+git commit -qm "feat(x): camada nova (#4242)"; PD=$(c src/pd.ts pd); git checkout -q main
+CENARIO=dec_dono_pr; semeia "$FRONT2" x; vigia; rm -f "$F/vigia"/*; rec "$FRONT2" "$PD"; decide 10 RETIDO "$PD" && tem_dec "DONO=4242|t|supabase/migrations/5_p.sql"
+# shellcheck disable=SC2329
+s_edge_nomes() { semeia "$MIG" x; vigia; rm -f "$F/vigia"/*; printf '1\nf\noutra-edge\n' > "$F/vigia/pendencias-$EDGE"; }
+CENARIO=dec_acao_edge; s_edge_nomes; decide 10 RETIDO "$EDGE" && tem_dec "ACAO=deployar edge(s): f outra-edge"
+# falsificação: sem acoes no retido() o RETIDO volta a não dizer o comando nem as edges
+sabota_msg acao_edge 's/^  acoes$/  true/' s_edge_nomes "ACAO=deployar edge(s): f outra-edge" 10 RETIDO "$EDGE"
+
+# ═══ Rodada 2 — PR F: --atraso (o sensor M8) ══════════════════════════════════════════════════════
+# atrasa <rc> <head> [alvo] → ATR_OUT; LP_AGORA = 2 h no futuro (os commits do teste são de agora)
+atrasa() { local esp="$1" head="$2" alvo="${3:-$ALVO}" rc; : > "$F/log"
+  ATR_OUT=$(PATH="$BIN:$PATH" LP_FAKE="$F" APP_URL=https://app.test LOVABLE_API_BASE=https://api.test LP_AGORA=$(( $(date +%s) + 7200 )) \
+    env -u LOVABLE_API_KEY bash "$alvo" --atraso "$head" 2>&1); rc=$?
+  grep -q 'api.test' "$F/log" && { echo "FALHOU [$CENARIO]: --atraso tocou a API"; fail=1; return 1; }
+  [ "$rc" = "$esp" ] && return 0
+  echo "FALHOU [$CENARIO]: --atraso rc=$rc (esperado $esp)"; printf '%s\n' "$ATR_OUT" | sed 's/^/    /'; fail=1; return 1; }
+tem_atr() { printf '%s' "$ATR_OUT" | grep -qE -- "$1" || { echo "FALHOU [$CENARIO]: faltou /$1/"; printf '%s\n' "$ATR_OUT" | sed 's/^/    /'; fail=1; }; }
+CENARIO=atraso_publicar; semeia "$BASE" x; atrasa 0 "$FRONT" && { tem_atr '^ATRASO_MIN=1(19|20)$'; tem_atr "^ATRASO_DE=${FRONT:0:8} "; tem_atr '^VEREDITO=PUBLICAR$'; }
+# shellcheck disable=SC2329
+s_atr_retido() { semeia "$BASE" x; }
+CENARIO=atraso_retido;   s_atr_retido; atrasa 0 "$FRONT2" && { tem_atr "^ATRASO_DE=${FRONT:0:8} "; tem_atr '^VEREDITO=RETIDO$'; tem_atr '^ACAO=bun run db:aplicar'; }
+CENARIO=atraso_ja;       semeia "$FRONT2" x; atrasa 0 "$FRONT2" && tem_atr '^ATRASO_MIN=0$'
+CENARIO=atraso_nada;     semeia "$FRONT" x; atrasa 0 "$DOC" && tem_atr '^ATRASO_MIN=0$'
+CENARIO=atraso_mecanica; semeia "$BASE" x; touch "$F/sem_carimbo"; atrasa 6 "$FRONT" \
+  && { printf '%s' "$ATR_OUT" | grep -q '^ATRASO_MIN=' && { echo "FALHOU [$CENARIO]: MECANICA com número"; fail=1; }; }
+# falsificação: o mais NOVO em vez do mais velho → a idade mente (subestima o atraso)
+# shellcheck disable=SC2016
+sed 's/for c in \$(git rev-list --reverse "\$A\.\.\$H"); do/for c in $(git rev-list "$A..$H"); do/' "$ALVO" > "$base/sab-atr.sh"
+if cmp -s "$ALVO" "$base/sab-atr.sh"; then echo "FALHOU [sab-atr]: o sed não casou"; fail=1
+else s_atr_retido; ( atrasa 0 "$FRONT2" "$base/sab-atr.sh"; printf '%s' "$ATR_OUT" | grep -q "^ATRASO_DE=${FRONT:0:8} " ) >/dev/null 2>&1 \
+  && { echo "FALHOU [sab-atr]: o sabotado achou o mesmo commit"; fail=1; }; fi
+# falsificação: MECANICA vira "em dia" → o sensor calaria o vigia quebrado
+# shellcheck disable=SC2016
+sed 's/^    \*) printf .%s\\n. "\$J" | grep -E .\^  motivo:. || true; echo "VEREDITO=\${V:-MECANICA}"; exit 6 ;;$/    *) echo ATRASO_MIN=0; exit 0 ;;/' "$ALVO" > "$base/sab-atr2.sh"
+if cmp -s "$ALVO" "$base/sab-atr2.sh"; then echo "FALHOU [sab-atr2]: o sed não casou"; fail=1
+else semeia "$BASE" x; touch "$F/sem_carimbo"; ( atrasa 6 "$FRONT" "$base/sab-atr2.sh" ) >/dev/null 2>&1 && { echo "FALHOU [sab-atr2]: o sabotado reportou MECANICA"; fail=1; }; fi
+
 # Falsificação com CONTROLE verde na MESMA invocação: o cenário passa no alvo real E fica vermelho
 # numa cópia sabotada — senão um teste que sempre passa (ou sempre falha) aprovaria tudo.
 sabota() { # sabota <nome> <sed> <semeador> <rc> <regex> <sha> — o semeador roda antes de CADA lado
@@ -343,6 +464,37 @@ sabota retido 's/^    1) retido migration "\$MIG" ;;/    1) true ;;/' \
 # o ar vira no meio da espera, mas a cópia lê o ar uma vez só → TIMEOUT
 # shellcheck disable=SC2016
 sabota rele 's/if AR=\$(ar_lido); then/if AR=${AR0:=$(ar_lido)}; then/' s_vira 0 "NO_AR=$FRONT2" "$FRONT"
+# M6 (rodada 2): TIMEOUT com o batimento do vigia velho diz que o vigia está parado; fresco = TIMEOUT cru
+# shellcheck disable=SC2329
+s_bat_velho() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; echo $(( $(date +%s) - 450 )) > "$F/vigia/batimento"; }   # 300 < 450 < 600: o M11 (rodada 2, PR E) deixa passar
+CENARIO=esperar_bat_fresco; semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; date +%s > "$F/vigia/batimento"
+                            espera 30 TIMEOUT "$FRONT"
+# shellcheck disable=SC2016
+sabota bat 's/\[ "\$P" -gt "\${LP_BATIMENTO_VELHO_S:-300}" \] \&\& sai 30/false \&\& sai 30/' s_bat_velho 30 'TIMEOUT=vigia parado há 7 min.*' "$FRONT"
+# M10: --ate-o-ar — o RETIDO não encerra a espera: imprime o comando UMA vez e segue até o ar (aqui, o prazo)
+espera_ar() { local esp="$1" ult="$2" sha="$3" alvo="${4:-$ALVO}" out rc; : > "$F/log"
+  out=$(PATH="$BIN:$PATH" LP_FAKE="$F" APP_URL=https://app.test LOVABLE_API_BASE=https://api.test \
+    LP_SLEEP=true LP_ESPERAR_PRAZO=50 LP_ESPERAR_INTERVALO=10 LP_VIGIA_ESTADO="$F/vigia" \
+    env -u LOVABLE_API_KEY bash "$alvo" --esperar "$sha" --ate-o-ar 2>&1); rc=$?; ESP_OUT=$out
+  [ "$rc" = "$esp" ] && printf '%s' "$out" | tail -1 | grep -qxE "$ult" && [ "$(printf '%s' "$out" | grep -c 'ACAO=bun run db:aplicar')" = 1 ] && return 0
+  echo "FALHOU [$CENARIO]: --ate-o-ar esperado rc=$esp /$ult/, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /' | tail -8; fail=1; return 1; }
+CENARIO=esperar_ate_o_ar; s_retido; espera_ar 30 TIMEOUT "$FRONT"
+CENARIO=controle-ate_o_ar; s_retido
+# shellcheck disable=SC2016
+sed 's/^            if \[ "\$ATE_O_AR" = 1 \]; then$/            if false; then/' "$ALVO" > "$base/sab-ateoar.sh"
+if cmp -s "$ALVO" "$base/sab-ateoar.sh"; then echo "FALHOU [sab-ateoar]: o sed não casou"; fail=1
+elif ( espera_ar 30 TIMEOUT "$FRONT" "$base/sab-ateoar.sh" ) >/dev/null 2>&1; then echo "FALHOU [sab-ateoar]: o sabotado seguiu esperando"; fail=1; fi
+# M11: batimento do vigia velho → o --esperar sai JÁ (1 leitura), não no prazo
+# shellcheck disable=SC2329
+s_parado() { semeia "$BASE" x; vigia; rm -f "$F/vigia"/*; echo "$FRONT2" > "$F/vigia/liberar"; echo $(( $(date +%s) - 1300 )) > "$F/vigia/batimento"; }
+CENARIO=esperar_parado; s_parado; espera 30 'TIMEOUT=vigia parado há 21 min.*' "$FRONT" \
+  && { [ "$(leituras)" -le 2 ] || { echo "FALHOU [$CENARIO]: esperou $(leituras) leituras com o vigia parado"; fail=1; }; }   # 1 volta = ar + o ar do --decidir
+# shellcheck disable=SC2016
+sed 's/\[ "\$P" -gt "\${LP_ESPERAR_PARADO_S:-600}" \] \&\& sai 30/false \&\& sai 30/' "$ALVO" > "$base/sab-parado.sh"
+if cmp -s "$ALVO" "$base/sab-parado.sh"; then echo "FALHOU [sab-parado]: o sed não casou"; fail=1
+else s_parado; ( espera 30 'TIMEOUT=vigia parado.*' "$FRONT" "$base/sab-parado.sh" ) >/dev/null 2>&1
+  [ "$(leituras)" -gt 2 ] || { echo "FALHOU [sab-parado]: o sabotado saiu cedo também (o roteiro não distingue)"; fail=1; }; fi
+
 # front revertido sem sair → a cópia confirma NADA_A_PUBLICAR com exit 0 (verde falso)
 git push -q origin "$C8:refs/heads/main" -f 2>/dev/null
 # shellcheck disable=SC2329

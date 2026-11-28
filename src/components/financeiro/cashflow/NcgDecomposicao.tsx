@@ -29,13 +29,19 @@ export function NcgDecomposicao() {
   }
   if (!data) return null;
 
+  const semFolha = data.ncg.fontes?.folha === false;
+  const semTributos = data.ncg.fontes?.tributos === false;
+  const pcoParcial = semFolha || semTributos;
+
   const acoData = [
     { nome: 'CR aberto', valor: data.ncg.aco.cr_aberto, tipo: 'ACO' },
     { nome: 'Estoque', valor: data.ncg.aco.estoque, tipo: 'ACO' },
     { nome: 'Adiantamentos', valor: data.ncg.aco.adiantamentos, tipo: 'ACO' },
     { nome: 'CP fornecedor', valor: data.ncg.pco.cp_fornecedor, tipo: 'PCO' },
-    { nome: 'Folha 30d', valor: data.ncg.pco.folha_30d, tipo: 'PCO' },
-    { nome: 'Tributos', valor: data.ncg.pco.tributos_a_pagar, tipo: 'PCO' },
+    // Fonte vazia (engine v2.6+: `fontes.x === false`) → barra AUSENTE, não R$ 0: o 0 que a engine manda
+    // ali é ausência de dado ("ausente ≠ zero"). O motivo já chega em `confianca_dados.motivos` acima.
+    { nome: semFolha ? 'Folha 30d (sem fonte)' : 'Folha 30d', valor: semFolha ? null : data.ncg.pco.folha_30d, tipo: 'PCO' },
+    { nome: semTributos ? 'Tributos (sem fonte)' : 'Tributos', valor: semTributos ? null : data.ncg.pco.tributos_a_pagar, tipo: 'PCO' },
   ];
 
   const proj12Data = data.ncg.projecao_12m;
@@ -77,7 +83,11 @@ export function NcgDecomposicao() {
           <CardHeader><CardTitle className="text-xs">PCO total</CardTitle></CardHeader>
           <CardContent>
             <div className="text-2xl font-mono">{formatBRL(data.ncg.pco.total)}</div>
-            <div className="text-xs text-muted-foreground mt-1">CP fornecedor + Folha + Tributos</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {pcoParcial
+                ? `⚠ Parcial — sem fonte: ${[semFolha && 'folha', semTributos && 'tributos'].filter(Boolean).join(' e ')}`
+                : 'CP fornecedor + Folha + Tributos'}
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -95,6 +105,9 @@ export function NcgDecomposicao() {
             <div className="text-xs text-muted-foreground mt-1">
               {data.ncg.valor > data.indicadores.liquidez_operacional_liquida ? '⚠ Excede liquidez operacional' : 'Dentro da liquidez'}
             </div>
+            {pcoParcial && (
+              <div className="text-xs text-status-warning mt-1">⚠ NCG parcial — PCO sem todas as fontes</div>
+            )}
           </CardContent>
         </Card>
       </div>

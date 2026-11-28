@@ -65,12 +65,17 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
     for (const sig of [
       'const handleVoiceItemsIdentified = (identifiedItems: IdentifiedItem[]) => {',
       'const handleImageCategoryIdentified = (categoryId: string) => {',
-      'const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {',
     ]) {
       const ini = hook.indexOf(sig);
       expect(ini, sig).toBeGreaterThan(-1);
       expect(hook.slice(ini, ini + 400)).toContain('if (submittingRef.current) { avisarCarrinhoTravado(); return; }');
     }
+    // PR 3.1: a via da IA devolve o relatório — com envio em voo, NADA entra e todo item sai descartado.
+    const ia = hook.indexOf('const handleUnifiedAIResult = useCallback((result: AIOrderResult): RelatorioAdicaoIA => {');
+    expect(ia).toBeGreaterThan(-1);
+    expect(hook.slice(ia, ia + 400)).toMatch(
+      /if \(submittingRef\.current\) \{\s*avisarCarrinhoTravado\(\);\s*return relatorioTudoDescartado\(/,
+    );
     expect(pagina).toContain('precoLoading={h.precoPartidaLoading || h.submitting}');
   });
 

@@ -7,11 +7,11 @@ import { classificarCanaria } from "../canaria-preco";
 // em PROD). Estados exigidos pelo Codex: ok / falha / erro / desconhecido.
 // REGRA money-path: erro HTTP (401/403/4xx/5xx) é FALHA de canária, NÃO "sem dados".
 //
-// Desde 2026-09-30 a canária atesta `ia-nao-precifica-v1`: a fronteira de saída da edge
+// Desde 2026-09-30 a canária atesta `ia-nao-precifica-v2`: a fronteira de saída da edge
 // (`montarRespostaAnalise`) roda sobre 1 produto + 1 sugestão que TRAZEM preço, e o verde
 // exige 0 preços na saída E os 2 itens na saída.
 
-const VERDE = { canary: true, contrato: "ia-nao-precifica-v1", precos_na_saida: 0, itens_na_saida: 2, ok: true };
+const VERDE = { canary: true, contrato: "ia-nao-precifica-v2", precos_na_saida: 0, itens_na_saida: 2, ok: true };
 
 describe("classificarCanaria", () => {
   it("ok: nenhum preço saiu e os 2 itens saíram, com o contrato da fatia", () => {
@@ -36,7 +36,7 @@ describe("classificarCanaria", () => {
   });
 
   it("falha: campos ausentes não viram 0 (ausente ≠ zero) — `ok:true` sozinho não é verde", () => {
-    const r = classificarCanaria({ canary: true, contrato: "ia-nao-precifica-v1", ok: true }, null);
+    const r = classificarCanaria({ canary: true, contrato: "ia-nao-precifica-v2", ok: true }, null);
     expect(r.status).toBe("falha");
     expect(r.detalhe).toContain("precos_na_saida=ausente");
   });
@@ -72,13 +72,13 @@ describe("classificarCanaria", () => {
     );
     expect(r.status).toBe("falha");
     expect(r.detalhe).toContain("ainda PRECIFICA");
-    expect(r.detalhe).toContain("ia-nao-precifica-v1");
+    expect(r.detalhe).toContain("ia-nao-precifica-v2");
   });
 
   it("contrato de OUTRA fatia = deploy que não é o desta, não verde (a mentira que o marcador existe para pegar)", () => {
     const r = classificarCanaria({ ...VERDE, contrato: "fatia-qualquer-v0" }, null);
     expect(r.status).toBe("falha");
-    expect(r.detalhe).toContain("ia-nao-precifica-v1");
+    expect(r.detalhe).toContain("ia-nao-precifica-v2");
     expect(r.detalhe).toContain("fatia-qualquer-v0");
   });
 
@@ -102,5 +102,13 @@ describe("classificarCanaria", () => {
     expect(classificarCanaria(VERDE, null).status).toBe("ok");
     // …e vermelha para o card antigo — por isso a troca exige o Publish E o deploy (deploy.md §Canárias).
     expect(antiga(VERDE)).toBe("falha");
+  });
+});
+
+describe("classificarCanaria — bump v2 (PR 3.1)", () => {
+  it("a v1 no ar (bundle de antes do 3.1) NÃO é verde, mesmo com ok=true", () => {
+    const r = classificarCanaria({ ...VERDE, contrato: "ia-nao-precifica-v1" }, null);
+    expect(r.status).toBe("falha");
+    expect(r.detalhe).toContain("OUTRA fatia");
   });
 });

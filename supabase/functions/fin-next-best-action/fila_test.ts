@@ -16,9 +16,15 @@ function assertContem(hay: string, marca: string, msg: string) {
   if (!hay.includes(marca)) throw new Error(`${msg}: "${marca}" ausente em ${JSON.stringify(hay)}`);
 }
 
-const a1 = (saldo: number | null | undefined, dias: number | null | undefined, cd: RespostaA1Caixa["confianca_dados"] = { motivos: [], saldo_inicial: null }): RespostaA1Caixa => ({
+const a1 = (
+  saldo: number | null | undefined,
+  dias: number | null | undefined,
+  cd: RespostaA1Caixa["confianca_dados"] = { motivos: [], saldo_inicial: null },
+  ncg: RespostaA1Caixa["ncg"] = { fontes: { folha: true } },
+): RespostaA1Caixa => ({
   indicadores: { saldo_tesouraria: saldo, dias_cobertura: dias },
   confianca_dados: cd,
+  ncg,
 });
 
 const crescer = (empresa: string, custo: number): AcaoCandidata => ({
@@ -152,4 +158,29 @@ Deno.test("A1→A4: formato LEGADO da A1 ({ motivos } sem saldo_inicial) não at
   const j = respostaA4([legado, legado, legado]);
   assertEq(j.caixa_por_empresa.oben.confianca, "media", "confiança no JSON");
   assertContem(j.confianca.motivos.join(" | "), "Caixa (oben): A1 sem confianca_dados.saldo_inicial", "motivo na fila");
+});
+
+// Fora de escopo da v2.7 da A1, fechado aqui: saldo_tesouraria = saldo_cc − folha_30d. Folha SEM fonte
+// (`ncg.fontes.folha=false`) deixa o saldo superestimado — a A4 não pode aprovar `financiar_ja` com ele.
+Deno.test("folha sem fonte na A1: caixa baixa com haircut e motivo — crescer não vira financiar_ja", () => {
+  const ok = caixaDaA1(a1(100_000, 60), RESERVA);
+  const sem = caixaDaA1(a1(100_000, 60, undefined, { fontes: { folha: false } }), RESERVA);
+  assertEq(ok.confianca, "alta", "controle: folha medida segue alta");
+  assertEq(sem.confianca, "baixa", "confiança com folha sem fonte");
+  assertEq(sem.disponivel, (ok.disponivel as number) * 0.5, "haircut de 50%");
+  assertContem(sem.motivos.join(" | "), "Folha dos próximos 30 dias sem fonte", "motivo");
+  const fila = montarFilaAcoes({ candidatos: [crescer("oben", 1_000)], caixaPorEmpresa: { oben: sem }, hurdlePorEmpresa: { oben: 0.15 } });
+  assertEq(fila.fila.find((a) => a.empresa === "oben")?.status, "falta_dado", "status no escuro");
+  const filaOk = montarFilaAcoes({ candidatos: [crescer("oben", 1_000)], caixaPorEmpresa: { oben: ok }, hurdlePorEmpresa: { oben: 0.15 } });
+  assertEq(filaOk.fila.find((a) => a.empresa === "oben")?.status, "financiar_ja", "controle: com folha medida financia");
+});
+
+Deno.test("A1 sem ncg.fontes.folha (anterior à v2.6 ou inválido): não atestado → média, sem haircut", () => {
+  const ok = caixaDaA1(a1(100_000, 60), RESERVA);
+  for (const ncg of [undefined, null, { fontes: null }, { fontes: { folha: null } }] as RespostaA1Caixa["ncg"][]) {
+    const cx = caixaDaA1({ ...a1(100_000, 60), ncg }, RESERVA); // spread: `undefined` não cai no default
+    assertEq(cx.confianca, "media", `confiança (${JSON.stringify(ncg)})`);
+    assertEq(cx.disponivel, ok.disponivel, `sem haircut (${JSON.stringify(ncg)})`);
+    assertContem(cx.motivos.join(" | "), "A1 sem ncg.fontes.folha", `motivo (${JSON.stringify(ncg)})`);
+  }
 });

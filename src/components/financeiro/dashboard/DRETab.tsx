@@ -54,7 +54,7 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
 
   const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-  const dreLines: { label: string; field: keyof FinDRE & ('receita_bruta' | 'deducoes' | 'receita_liquida' | 'cmv' | 'lucro_bruto' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais' | 'despesas_financeiras' | 'receitas_financeiras' | 'resultado_operacional' | 'impostos' | 'resultado_liquido'); bold: boolean; color: string }[] = [
+  const dreLines: { label: string; field: keyof FinDRE & ('receita_bruta' | 'deducoes' | 'receita_liquida' | 'cmv' | 'lucro_bruto' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais' | 'despesas_financeiras' | 'receitas_financeiras' | 'resultado_operacional' | 'outras_receitas' | 'outras_despesas' | 'resultado_antes_impostos' | 'impostos' | 'resultado_liquido'); bold: boolean; color: string }[] = [
     { label: 'Receita Bruta', field: 'receita_bruta', bold: true, color: '' },
     { label: '(-) Deduções', field: 'deducoes', bold: false, color: 'text-status-error' },
     { label: '= Receita Líquida', field: 'receita_liquida', bold: true, color: '' },
@@ -66,6 +66,11 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
     { label: '(-) Desp. Financeiras', field: 'despesas_financeiras', bold: false, color: 'text-status-error' },
     { label: '(+) Rec. Financeiras', field: 'receitas_financeiras', bold: false, color: 'text-status-success' },
     { label: '= Resultado Operacional', field: 'resultado_operacional', bold: true, color: '' },
+    // Não-operacional: sem estas linhas a tela pulava de Resultado Operacional direto para Impostos e a
+    // conta não fechava (resultado_liquido = resultado_antes_impostos − impostos).
+    { label: '(+) Outras Receitas', field: 'outras_receitas', bold: false, color: 'text-status-success' },
+    { label: '(-) Outras Despesas', field: 'outras_despesas', bold: false, color: 'text-status-error' },
+    { label: '= Resultado antes dos Impostos', field: 'resultado_antes_impostos', bold: true, color: '' },
     { label: '(-) Impostos', field: 'impostos', bold: false, color: 'text-status-error' },
     { label: '= RESULTADO LÍQUIDO', field: 'resultado_liquido', bold: true, color: '' },
   ];

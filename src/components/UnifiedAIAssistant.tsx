@@ -62,6 +62,8 @@ export function UnifiedAIAssistant(props: UnifiedAIAssistantProps) {
           onAcceptSuggestion={ai.acceptSuggestion}
           precoNascimentoPorId={precoNascimentoPorId}
           precoLoading={precoLoading}
+          descartadosIA={ai.descartadosIA}
+          relatorio={ai.relatorio}
         />
       )}
     </div>

@@ -489,3 +489,21 @@ do founder**: mergeado com esses 2 P0 como follow-up próprio (caso raro: envio 
 volume real ~1 pedido do app/mês). Lição (de novo, 8.1 e 8.2): toda saída que PRESERVA estado (revalidar,
 titular congelado) reabre estado velho; o corte para a saída que recomeça do zero converge. Falsificação 18/18
 (× `C` e `pt_BR.UTF-8`), controle verde na mesma invocação.
+
+### Novo Pedido — Rodada 3, Frente 3: assistente IA (2026-11-27)
+
+**PR 3.1 — IA honesta** (edge `analyze-unified-order` v1.16 + front · Publish · sem migration). O assistente
+passa a dizer o que fez com CADA item. (1) **Resultado por item**: `handleUnifiedAIResult` devolve o desfecho
+(adicionado · somado · aguardando cor · não entrou, com o motivo) por um helper puro
+(`hooks/unifiedOrder/adicao-ia.ts`), e o anúncio e o sensor `ia_itens_adicionados` contam o que ENTROU, não
+o que foi pedido. A edge devolve `descartados` (ferramenta fora do cadastro, produto citado que não existe) em
+vez de sumir com eles. (2) **Quantidade inferida**: o schema pede `quantidade_explicita`, e a saída marca
+`quantidade_inferida` em modo fail-closed (sem prova de que o vendedor disse, fica a marca). Painel,
+sugestões e relatório mostram o selo. (3) **Uma variante por item**: o prompt deixou de pedir "TODAS as
+variantes (oben E colacor)", e o mesmo código vira um item na conta de `escolherContaPorQuantidade`.
+Repetido com quantidades diferentes, vira sugestão (`variantes.ts`). (4) **Cor**: a soma cai só na linha SEM
+`tint_formula_id` (a mesma regra do `addProductToCart`), e a base tintométrica entra na `tintQueue` do
+"Repetir pedido", um diálogo por vez. (5) **Ambíguo é do vendedor**: o resgate de `product_id` e o dedup de
+embalagem só escolhem com UM código distinto, e a embalagem pedida é filtro duro. A `message` da IA deixou de
+ser pista, e o que ficou de fora vira sugestão com o motivo. O aceite de sugestão sem `product_id` também só
+adiciona com um candidato. Fora: 3.2 (edição no painel), 3.3 (catálogo no servidor e timeout) e 3.4 (foto).

@@ -97,3 +97,18 @@ A fonte certa é o mapa curado por empresa e código `fin_categoria_fluxo_mappin
 - se colacor e oben têm folha própria ou centralizada na colacor_sc.
 
 Também está fora deste PR a resposta ao vivo, que ainda devolve `folha_30d = 0` quando a fonte está vazia (consumida por `NcgDecomposicao.tsx` e pela A4).
+
+## Fora de escopo da v2.7, fechado (27/11)
+
+- **A4 v1.2** (`fin-next-best-action`): `caixaDaA1` passou a ler `ncg.fontes.folha`, porque o `saldo_tesouraria` da A1 é `saldo_cc − folha_30d`.
+  - Com `false` (folha sem fonte), o saldo está superestimado. O caixa da empresa fica com confiança **baixa**, leva o haircut de 50% e ganha um motivo. Pela regra de `montarFilaAcoes`, só o caixa de confiança alta decide, então `crescer` cai em `falta_dado` e não vai para `financiar_ja`.
+  - Com o campo ausente ou inválido (A1 anterior à v2.6), o desconto não é atestado: confiança **média**, sem haircut. É o mesmo padrão do `saldo_inicial`.
+  - Os tributos não entram no `saldo_tesouraria`, então não mexem no caixa da A4.
+  - Fonte em `src/lib/financeiro/next-best-action-helpers.ts`, com espelho verbatim em `fila.ts`.
+  - Falsificação: 5 sabotagens, uma camada por vez, com controle verde antes e depois nos dois locales (`C` e `pt_BR.UTF-8`). Resultado: 5/5 vermelhas.
+- **`NcgDecomposicao.tsx`:** com `fontes.x === false`, a barra da parcela some (`null`, não R$ 0), o rótulo passa a dizer "(sem fonte)" e o card de PCO vira "⚠ Parcial — sem fonte: …". O motivo já chegava em `confianca_dados.motivos`.
+- **`src/lib/financeiro/ncg-helpers.ts` removido** (ainda com a regra `3.99`). Só o próprio teste o importava.
+- **Ficam com o founder, não com código:** tirar o parcelamento da NCG, que muda o total, e saber por que os títulos de folha da colacor_sc não são baixados no Omie desde julho.
+- **Revisão adversarial** (subagente independente; o Codex ficou sem cota até 02/12, exit 79): **sem P0**. Neste PR também entraram a marca "NCG parcial" no card da NCG e os testes de folha sem fonte com saldo datado, de valor não-booleano e de `montarFilaAcoes` no vitest.
+- **Próximo passo (P1, não confirmado):** `fin-funding/index.ts` (~527-613) classifica sobra e déficit pelas `semanas` da A1 sem ler `ncg.fontes`. Se não houver recorrente, a folha pode ficar fora das saídas semanais. É preciso rastrear antes de mexer.
+- **P2 aceitos:** folha vencida há mais de 30 dias fica em `cp_fornecedor` com `fontes.folha = true` (por desenho, com motivo). O `caixa_livre` do `fin-funding` e o snapshot gravam o saldo sem o rótulo de confiança.

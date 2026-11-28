@@ -375,3 +375,164 @@ esse número; o modelo **não** sai do disparo agora.
   - **Abaixo de 95%:** o próximo PR tira o LLM do disparo e chama o MCP do Lovable direto.
   - Com denominador pequeno (o vigia só chama o claude quando há o que publicar), registrar o número com o
     denominador e decidir explicitamente. "Ninguém reclamou" não é sinal.
+
+## Fecho do roteiro (2026-11-27): item 12 decidido e base dos recibos corrigida
+
+**Item 12 decidido em 27/11, sem esperar 03/12.** O founder pediu para fechar o roteiro.
+- Medição: `TAXA=85.7% acertos=6 denominador=7 legado_excluido=4 corte95=NAO_ATINGIDO` (7 dias).
+- A única falha é o `NEEDS_AUTH` de 25/11 23:05, quando o token do MCP sumiu do Keychain compartilhado.
+  Com `mcp=connected` foram 6/6 `DISPARADO`. Tirar o LLM **não** cura essa falha: a chamada direta ao MCP
+  usa o mesmo OAuth. A causa já foi tratada no #4193 (store próprio do vigia).
+- **Decisão: o modelo fica no disparo.** É um desvio explícito do corte pré-registrado (<95% → tirar o LLM):
+  o corte media "o modelo erra", e o erro medido é de autenticação. Reabre se aparecer uma falha com
+  `mcp=connected` que não seja `DISPARADO`/`NAO_SINCRONIZADO`. Comando para reabrir: `scripts/vigia-taxa-1a-chamada.sh`.
+
+**Por que a liberação por recibo nunca tinha disparado (bug, corrigido neste PR).** O
+`lovable-publish.sh` escolhia como base dos recibos o arquivo `liberar` antes do ar, mesmo quando o
+`liberar` era MAIS VELHO. O `liberar` de 26/11 08:35 (`39ea6374`) ficou no disco, e o intervalo
+`39ea6374..HEAD` passou a incluir 2 migrations aplicadas fora do envelope e já servidas
+(`20261126190127_sales_orders_claim_envio_conferido`, `20261127120100_pedido_edicao_omie_posse_duravel`).
+Toda leitura de recibo devolvia `1` (`sem_recibo`), e o front ficava RETIDO até um Publish por fora.
+- Correção: a base é o MAIS NOVO entre ar, `liberar` e piso, desde que seja ancestral de HEAD.
+- Não abre fail-open: o `PEND`, que decide se há migration pendente, já parte do ar. O recibo só exigia a
+  mais o que estava antes dele.
+- Teste `dec_recibo_lib_velho` (ar à frente do `liberar`): verde com a correção, vermelho (rc=12
+  `PRECISA_RECIBOS`) com o código antigo, em `C` e em `pt_BR.UTF-8`.
+- Codex não consultado: cota em 99% até 02/12 (Caminho B).
+- A prova em produção é a próxima linha `LIBERADO=recibos` no `vigia.log`
+  (`grep LIBERADO=recibos ~/.local/state/afiacao/lovable-vigia/vigia.log`).
+
+## Rodada 2 (2026-11-27): 19 melhorias da varredura B1–B5 / M1–M14
+
+**Origem.** No `vigia.log` de 22 a 27/11 houve 17 `PUBLICADO` e **0** `LIBERADO=recibos`. Os 5 episódios RETIDO
+terminaram todos com alguém publicando por fora. Uma varredura (Fable), conferida no log, achou 25 linhas
+`CARIMBO_INVALIDO`, 132 linhas de recibo repetidas e nenhuma liberação por recibo. A lista B1–B5 / M1–M14 vira
+6 PRs sequenciais (A–F), um por lote.
+
+### PR A — higiene (B2, B3, B4, M4, M6, M9, M13)
+
+- **B2, dedup do log de recibos.** `rm -f "$EST"/recibos-*` apagava também o `recibos-ultimo`, que é a memória do
+  dedup. Por isso a mesma linha de ~400 caracteres voltava ao log a cada releitura (5 min, 11 vezes por hora).
+  O glob agora é `recibos-[0-9a-f]*`, só os caches. Teste `r_dedup`: 3 releituras de mesmo conteúdo dão 1 linha.
+- **B3, `liberar` ultrapassado.** A atestação humana só vale enquanto o ar for ancestral dela. Quando o ar a
+  passa, o vigia apaga `$EST/liberar` e loga `liberar <sha> apagado: o ar (<sha>) já o ultrapassou`. No
+  `lovable-publish.sh`, `retido()` deixa de dizer "liberado para SHA antigo" para esse caso
+  (`liberar <sha> ultrapassado`). O ramo de edge sem versão/`_shared` também deixou de aceitar um `L` que o ar
+  passou. Ali havia um verde falso real: um helper que muda (L→ar) e volta aos bytes de L em HEAD tem
+  `diff L..HEAD` vazio, mas a edge servida é a do ar e precisa de deploy (teste `dec_semv_lib_ultrapassado`).
+- **B4, MECANICA vira episódio.** Antes era 1 aviso por dia (`mecanica-<data>`), sem lembrete nem fim: em 27/11
+  foram ~5 h de `CARIMBO_INVALIDO` com um aviso às 07:25 e mais nada. Agora segue a mesma lógica do RETIDO
+  (`episodio()`): 1 aviso no início, lembrete a cada `LV_RELEMBRA_MEC_MIN` (60) com a idade, e
+  `fim do episódio MECANICA após N min` quando a medida volta. Os arquivos são `mecanica-episodio` e `mecanica-chave`.
+- **M4, cache de recibos invalidado no apply.** Quando o `db-aplicar.sh` grava `aplicada` (inclusive no caso
+  "COMMIT chegou, resposta perdida"), ele apaga os `recibos-[0-9a-f]*` do vigia (`LP_VIGIA_ESTADO`, por padrão
+  `~/.local/state/afiacao/lovable-vigia`). Assim o próximo tick relê o banco, sem esperar os 5 min do cache.
+- **M6, batimento.** Toda invocação do launchd grava o epoch em `$EST/batimento`, inclusive a que sai porque o
+  lock está com um tick vivo. Ao acordar depois de um buraco maior que `LV_BURACO_S` (300 s), o vigia loga
+  `acordei após buraco de N min sem tick`. O `--esperar`, no prazo, troca o `TIMEOUT` cru por
+  `TIMEOUT=vigia parado há N min` quando o batimento tem mais de `LP_BATIMENTO_VELHO_S` (300 s).
+- **M9, publicado por fora.** `$EST/ar-ultimo` guarda o último ar medido (40 hex). Se o ar muda sem `intencao`
+  do vigia, sai `JA_NO_AR por fora (ar A→B)`. O PR B reaproveita esse arquivo para o B1.
+- **M13, tetos.** `avisados` tem teto de 200 linhas (fica com as 100 mais novas). Os caches `pendencias-*` e
+  `recibos-*` de outra main são apagados a cada tick. O último stream do `claude -p` que não disparou fica em
+  `claude-falha.jsonl`.
+
+Prova: `test-lovable-vigia.sh` e `test-lovable-publish.sh`. Cada correção tem roteiro próprio e falsificação com
+controle verde na mesma invocação (o real passa, a cópia sabotada na linha da correção reprova), em `LC_ALL=C` e
+`pt_BR.UTF-8`.
+
+### PR B — B1 (carimbo ausente) e B5 (dívida de camada)
+
+- **B1, causa investigada.** Em 27/11, das 07:25 às 07:51, o entry servido `index-Bueh8PF1.js` não trazia nenhum
+  `__BUILD_SHA__="<hex>"`: 25 linhas `CARIMBO_INVALIDO: 0 carimbos`, todas com o mesmo entry. Às 07:25:26 o bot do
+  Lovable commitou `04a04a22f` "Work in progress" (`.env` + `types.ts`). Ou seja, houve um Publish **por fora**, do
+  workspace sujo, segundos antes do commit. A causa provável é o `vite.config.ts` `resolveCommitSha()`: sem
+  variável de commit e sem `.git`, ele cai em `"dev"`, e o regex hex de `sha_no_ar` não casa. Não deu para confirmar
+  os bytes, porque o asset já respondia 404 quando fui olhar. Daí a 1ª correção: o motivo agora traz o que o
+  bundle mostra no lugar, `CARIMBO_INVALIDO: 0 carimbos em <entry> (visto: __BUILD_SHA__=dev)` ou
+  `(visto: nenhum __BUILD_SHA__)`.
+  O "5 h de MECANICA" era quase todo um buraco do launchd: de 07:51 a 12:16 não houve tick, e o M6 agora loga isso.
+- **B1, correção.** O vigia conta os ticks seguidos com `CARIMBO_INVALIDO` (`$EST/carimbo-invalido`). No 5º
+  (`LV_CARIMBO_TICKS`), decide de novo com `LP_AR_FALLBACK=$(cat ar-ultimo)`, o último ar **medido**, gravado a cada
+  leitura boa desde o PR A. O `--decidir` então julga as camadas a partir dele, com o gate inteiro (migration sem
+  recibo e edge sem ledger seguem RETIDO). Nesse modo ele não aceita `JA_NO_AR` nem `NADA_A_PUBLICAR`, porque o
+  servido é desconhecido e republicar a main é o que conserta o carimbo. Só `CARIMBO_INVALIDO` aciona o fallback:
+  site fora ou entry que não baixa seguem `MECANICA`. Sem `ar-ultimo` é **fail-closed**: segue MECANICA e loga
+  `sem ar-ultimo — fail-closed`. Na prova pelo ar, qualquer carimbo válido depois do deploy conta (`AR_ANTES`
+  vazio); republicar sem o carimbo voltar cai no backoff 5/15/60 min e na Issue, como qualquer falha.
+- **B5, dívida de camada.** Quando um episódio RETIDO termina em `JA_NO_AR`, o ar foi à main sem o vigia liberar.
+  As camadas que seguravam o episódio (`$EST/retido-camadas`) viram um aviso "publicado por fora com camada não
+  atestada: X" e uma linha em `$EST/divida-camadas`. Só alerta, nunca bloqueia. Terminar em `NADA_A_PUBLICAR`
+  não gera dívida.
+
+### PR C — M1, `_shared/` pelo ledger
+
+**Antes.** Todo arquivo de `supabase/functions/_shared/` no intervalo ar..main exigia `liberar` humano. O mapa
+`_shared/sonda-fingerprints.ts` muda em todo PR de edge, então todo PR de edge virava RETIDO manual: em 27/11
+foram 74 min, de 18:16 a 19:31, por `sonda-fingerprints.ts` e depois `pii-carteira.ts`.
+
+**Por que o ledger prova.** O `pendencias:deploy` compara `(versao, fonte)` servido com a main, e `fonte` é o hash
+do FECHO transitivo da edge, `_shared/` incluído. Para uma edge DO MAPA, o ledger já vê a mudança de `_shared/`.
+Ele só não vê uma consumidora fora do mapa (edge sem `versao.ts`, ou que não entrou no mapa).
+
+**Agora.** O `scripts/sonda-fan-out.ts --prova-ledger --base <ar> --head <main>` olha TODA edge com `index.ts`, e
+não só as instrumentadas. Imprime `LEDGER`/`FORA_DO_MAPA`/`ILEGIVEL`/`SEM_CONSUMIDORA` por linha e termina em
+`PROVA_LEDGER=0|1`; exit 2 é mecânica. O vigia grava o resultado em `$EST/shared-<base>-<head>` no ramo
+`PRECISA_LEDGER`, e qualquer falha da prova grava `2`.
+- No `--decidir`: `0` tira o `_shared/` do caminho humano e o manda para o ledger.
+- `1` ou `2` mantém o `liberar` e lista as consumidoras fora do mapa.
+- Sem leitura fresca da prova, sai `PRECISA_LEDGER` (exit 11).
+
+O teste antigo `dec_shared_ledger0`, em que `_shared` com ledger=0 ficava RETIDO, foi invertido em 6 cenários.
+
+**Calibração em produção, os dois RETIDO de 27/11:**
+- `--base 166ed871 --head 370e32c8` (só o mapa mudou) → `PROVA_LEDGER=0`.
+- `--base 166ed871 --head d7ae7171` → `LEDGER omie-cliente/omie-sync/omie-vendas-sync _shared/pii-carteira.ts`,
+  `PROVA_LEDGER=0`.
+
+Os dois teriam ido ao ledger em vez de esperar 74 min por um `liberar`.
+
+### PR E — M7, M10, M11, M5 (mínimo)
+
+- **M10, o comando certo.** Todo RETIDO imprime linhas `ACAO=`:
+  - migration: `bun run db:aplicar <arq>`, ou `--atestar` se ela já foi aplicada fora do envelope (PR D);
+  - edge: a lista INTEIRA a deployar, que junta o diff, as consumidoras da prova do `_shared/` (PR C) e as edges
+    que o ledger nomeia.
+
+  O aviso do Mac usa a 1ª `ACAO=` no lugar do `--liberar`. O `--esperar <sha> --ate-o-ar` não encerra no RETIDO:
+  imprime as `ACAO=` uma vez e segue esperando o ar, porque quem aplica a camada é a própria sessão.
+- **M11.** O `--esperar` lê o `batimento` do vigia (PR A) a cada volta. Com mais de `LP_ESPERAR_PARADO_S` (600 s)
+  ele sai na hora com `TIMEOUT=vigia parado há N min`, em vez de dormir até o prazo de 30 min. Um tick vivo com o
+  lock não envelhece o batimento: toda invocação do launchd o renova.
+- **M5 mínimo.** O cache `pendencias-<head>` passa a guardar, a partir da 2ª linha, as edges que o
+  `pendencias:deploy` nomeia nas seções pendentes (≠ ✅). O RETIDO por edge lista todas, e não só a 1ª do diff.
+- **M7, dono da camada.** As linhas `DONO=<pr>|<autor>|<arquivo>` saem do commit mais novo que tocou a camada no
+  intervalo. O PR vem do `(#NNNN)` do título do squash, sem rede. O vigia comenta no PR dono (`gh pr comment`)
+  uma vez por PR por episódio; falha do `gh` vira log, sem laço. O 1º lembrete do RETIDO vem aos
+  `LV_PRIMEIRO_LEMBRETE_MIN` (45), e os seguintes a cada `LV_RELEMBRA_H` (4 h). MECANICA não comenta em PR:
+  não há camada nem dono.
+
+### PR F — M8 (sensor de ar atrasado) e M3 fase 1
+
+- **M8.** O workflow `.github/workflows/lovable-ar-atrasado.yml` roda a cada 30 min (`7,37 * * * *`) e só
+  **mede**: `scripts/lovable-publish.sh --atraso origin/main`.
+  - Sem chave, sem API: é o `--julgar` + a idade do commit **mais velho** de ar..main que muda algo publicável.
+  - Com o front publicável esperando há mais de `LIMITE_MIN` (90), abre **uma** Issue `lovable-ar-atrasado` com a
+    medida e as `ACAO=`. Quando o ar volta a estar em dia (`ATRASO_MIN=0`), fecha.
+  - MECANICA (não medi) não abre Issue, só um notice: ausência de medida não é atraso.
+
+  Máquina meta nova, com incidentes citados: os 5 episódios RETIDO de 22–27/11 acabaram com Publish por fora; o
+  vigia ficou sem tick de 07:51 a 12:16 em 27/11 e ninguém fora do Mac viu; o #3106 ficou fora do ar até o
+  clique. É o único sensor que não depende do Mac estar acordado.
+- **M3 fase 1.** O aviso de RETIDO por migration traz o PR e o autor da camada que segura, a partir do `DONO=`
+  (título do squash), e o comando `db:aplicar` exato. Exemplo:
+  `RETIDO (migration:…) até X. PR #4242 (fulano): bun run db:aplicar … (já aplicada fora do envelope? … --atestar)`.
+
+### Fora do escopo agora (⏸️, com gatilho para reabrir)
+
+- ⏸️ **M3 fase 2, o vigia aplicar migrations sozinho.** Reabre depois do **1º `LIBERADO=recibos`** no
+  `vigia.log` (`grep LIBERADO=recibos ~/.local/state/afiacao/lovable-vigia/vigia.log`) **e** do M2 (PR D) no ar,
+  com a revisão Codex feita.
+- ⏸️ **M5 completo, o vigia deployar edges.** Reabre depois que o M1 (PR C) mostrar sinal: um episódio de
+  `_shared/` liberado pelo ledger (`prova do _shared …: PROVA_LEDGER=0` seguido de `PUBLICAR … liberado: ledger`).
+- **M12 (testes):** entrou em cada PR acima. **M14 (custo):** sem ação (US$ 0,01–0,04 por disparo).

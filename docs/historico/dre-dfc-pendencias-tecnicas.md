@@ -7,7 +7,7 @@ Codex em 2 consultas (desenho + código), prova PG17 com falsificação em `C` e
 |---|---|---|---|---|
 | 1 | Ingestão colapsava baixas iguais | #4247 | migration `20261127000000` (recibo #1512) · edge `omie-financeiro` v1.16 · backfill `db/2026-11-27-backfill-movimentos-chave-ncodbaixa.sql` | ✅ no ar; backfill das 3 empresas concluído; os 3 títulos fecham |
 | 2 | Baixa cancelada contava como caixa no DFC | #4252 | migration `20261127003000` (recibo #1513) · Publish | ✅ no ar (bytes do Publish conferidos) |
-| 3 | Projeção A1 rotular pelo mapa de fluxo | — | — | não iniciado (esperou #4237 na mesma edge) |
+| 3 | Projeção A1 rotular pelo mapa de fluxo | #4289 | edge `fin-cashflow-engine` v2.8 (deploy 2026-11-28, 21/21 hashes) | ✅ no ar; sonda por cron atesta |
 | 4 | Locale da prova da DRE | #4238 | só teste | ✅ |
 | 5 | CMV nov/2026 baixo | — | — | ✅ investigado: não é defeito |
 
@@ -45,8 +45,36 @@ Codex em 2 consultas (desenho + código), prova PG17 com falsificação em `C` e
 - A vencedora por `nCodBaixa` prioriza a chave negativa. No front, o balde é próprio em `FORA_DAS_ATIVIDADES`.
 - **Impacto medido antes de aplicar:** oben 50 eventos (R$ 128.875,51) e colacor 3 eventos (R$ 2.954,43) saem das atividades, visíveis. Inclui `12097272930`.
 
+## 3 — `fluxo_linha` na projeção de 13 semanas
+- **Medido:** a projeção NÃO agrupava por categoria. O único código cru era `desc` das linhas `cp_omie`, e nenhuma tela o lê.
+- **Decisão do founder:** só a edge, sem tela nova.
+- **O que mudou:** cada linha `cr_omie`/`cp_omie` ganha `fluxo_linha` do mesmo mapa do DFC.
+  - ausente/espaços ⇒ null
+  - fora do mapa ⇒ `nao_classificado`
+  - comparação exata do código, como o PCO e o DFC
+  - valores, NCG e PCO idênticos
+- **Prod:** 100% do CR/CP aberto está no mapa.
+- **Prova:** Deno 96/96 e 4 sabotagens vermelhas, com controle verde antes e depois. `sem-codex` (cota 100% até 02/12): substituído por revisão adversarial independente (0 P1/P2, 3 nits corrigidos).
+- **Lições:**
+  - `$T` com espaços no zsh não é quebrado em palavras ⇒ exit 127 em TODAS as rodadas. O controle vermelho pegou.
+  - `sed` que não casa (recuo diferente) produz "sabotagem" verde ⇒ exigir `cmp` antes de rodar.
+  - `git checkout --` de sabotagem desfaz correção NÃO commitada ⇒ commitar antes de falsificar (de novo).
+
 ## 5 — CMV de novembro
 CMV competência = compras do CP (`2.01.01`) por emissão, sem variação de estoque.
 - oben nov = R$ 54,6k. No mesmo ponto do mês (visto até o dia 26), ago–out tinham R$ 115–167k.
 - Fonte independente `nfe_recebimentos`: nov R$ 57,5k × out R$ 260,9k.
 - ⇒ compra menor + mês aberto. A margem de 76,5% vem do método, não é bug.
+
+## ⚠️ Atropelo do #4247 (achado no /fecho, 2026-11-28)
+O squash do item 1 foi feito com `git rebase origin/main` (saída engolida pelo `| tail`) seguido de
+`git reset --soft origin/main`. O rebase NÃO tinha aplicado, e o reset sobre a main NOVA deixou no índice
+a árvore da branch VELHA. O commit levou **27 arquivos** em vez de 6: ressuscitou a edge `omie-os-sync` e
+a migration `20261126233000_omie_os_espelho` (revertidas no #4241, "opção C cancelada") e apagou
+`20261126235000_caca_candidatos…`, entre outros.
+- **Consertado** por outra sessão em `5bc4349f3`. O diff entre a main de antes do merge e `5bc4349f3` é
+  vazio nos arquivos de terceiros.
+- **Prod intacta:** sem `omie_os_espelho`, sem função `omie_os*`, sem recibo; `deriva:corpo:prod` verde (685).
+- **Regra para squash por `reset --soft`:** só depois de um rebase CONFIRMADO, e conferindo
+  `git diff --stat origin/main` ANTES de commitar. Lista com arquivo que não é seu = pare. No item 2 o
+  mesmo erro foi pego a tempo por essa conferência; no item 1, não.

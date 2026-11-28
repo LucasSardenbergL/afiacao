@@ -681,7 +681,13 @@ const UnifiedOrder = () => {
             <UnifiedAIAssistant
               products={catalogoIA}
               userTools={h.userTools}
-              onItemsIdentified={h.handleUnifiedAIResult}
+              // PR 3.1: a base tintométrica que a IA achou entra na MESMA fila de cor do "Repetir
+              // pedido" (um diálogo por vez) — nunca direto no carrinho sem cor.
+              onItemsIdentified={(resultado) => {
+                const relatorio = h.handleUnifiedAIResult(resultado);
+                if (relatorio.tintas.length > 0) setTintQueue(fila => [...fila, ...relatorio.tintas]);
+                return relatorio;
+              }}
               onCustomerIdentified={h.handleAICustomerSelect}
               customerUserId={h.customerUserId}
               hasCustomerSelected={!!h.selectedCustomer}

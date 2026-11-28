@@ -153,10 +153,12 @@ const BASELINE = new Map<string, number>([
   ["src/pages/FinanceiroMapping.tsx", 1],
   ["src/pages/GovernanceMathParams.tsx", 1],
   ["src/pages/GovernancePermissions.tsx", 1],
-  // 6→4 na revisão /sales leva 2 por MUDANÇA DE FORMA (o enriquecimento virou laço `for` em vez de
-  // `.map` sobre `salesOrders`/`afiacaoOrders`), NÃO por correção: as duas queries seguem sem ler o
-  // erro antes de mostrar a folha vazia. A dívida continua — só saiu do alcance do detector.
-  ["src/pages/SalesPrintDashboard.tsx", 4],
+  // QUITADO (revisão /sales leva 3 A2, L2-d): 6→4 na leva 2 tinha sido MUDANÇA DE FORMA; o 4→0 agora é
+  // CONSERTO. As 4 leituras que o detector via (formas, contato, nomes, endereços Omie), a dos códigos Omie
+  // e as duas do dia (vendas, OS) ligam `isError`/`error` e RENDERIZAM a falha: aviso com "Tentar de novo",
+  // e nome/contato que não leram travam a impressão. Prova: SalesPrintDashboard.leituras.test.tsx, um caso
+  // por leitura, com controle verde. Resíduo honesto: a queryFn de FORMAS degrada conta a conta e não lança
+  // — o `isError` dela só cobre exceção inesperada; a falha real já chegava como `contasDegradadas`.
   ["src/pages/Training.tsx", 2],
 ]);
 
