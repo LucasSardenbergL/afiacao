@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { type AIProduct, type AIService, type Product, type UserTool } from './types';
 import { getToolName } from './helpers';
 import { PrecoNascimentoIA } from './PrecoNascimentoIA';
+import { SeloQuantidadeInferida } from './RelatorioIA';
 
 interface IdentifiedProductsListProps {
   items: AIProduct[];
@@ -42,6 +43,7 @@ export function IdentifiedProductsList({
                 {item.notes && <p className="text-xs text-muted-foreground mt-1 italic">Obs: {item.notes}</p>}
               </div>
               <div className="flex items-center gap-1.5">
+                <SeloQuantidadeInferida inferida={item.quantidade_inferida} />
                 <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
                   Qtd: {item.quantity}
                 </span>
@@ -83,9 +85,12 @@ export function IdentifiedServicesList({ items, userTools }: IdentifiedServicesL
                 <p className="text-xs text-muted-foreground">Serviço: {item.servico_descricao}</p>
                 {item.notes && <p className="text-xs text-muted-foreground mt-1 italic">Obs: {item.notes}</p>}
               </div>
-              <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
-                Qtd: {item.quantity}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <SeloQuantidadeInferida inferida={item.quantidade_inferida} />
+                <span className="bg-primary/10 text-primary text-xs font-medium px-2 py-1 rounded">
+                  Qtd: {item.quantity}
+                </span>
+              </div>
             </div>
           </div>
         );
