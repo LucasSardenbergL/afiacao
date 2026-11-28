@@ -329,6 +329,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useUnifiedOrder.followups4068.test.ts",
       "src/hooks/__tests__/useUnifiedOrder.vendedorFechado.test.ts",
       "src/hooks/__tests__/useUnifiedOrder.cadastroConfirmado.test.ts",
+      "src/hooks/__tests__/useUnifiedOrder.followups4271.test.ts",
       "src/hooks/unifiedOrder/__tests__/validacao-vendedor.test.ts",
       "src/hooks/unifiedOrder/__tests__/sensor-funil.test.ts",
       "src/hooks/unifiedOrder/__tests__/revelar-cliente.test.ts",

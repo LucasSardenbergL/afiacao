@@ -769,6 +769,10 @@ export function useCustomerSelection({
     return retained.token === selectionTokenRef.current ? cliente : null;
   }, []);
 
+  /** Token da seleção corrente — quem grava DEPOIS de um await compara com o token que leu antes
+   *  (P0-4 do #4271: resposta atrasada de um fluxo do cliente A não pode carimbar o cliente B). */
+  const tokenDaSelecao = useCallback(() => selectionTokenRef.current, []);
+
   const clearCustomer = useCallback(() => {
     // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
     // ressuscitam o cliente que estamos limpando. Como o finally da seleção pula
@@ -826,6 +830,6 @@ export function useCustomerSelection({
     vendedorDivergencias, validatingVendedor, estadoVendedor,
     estadoCadastro,
     // Actions
-    selectCustomer, clearCustomer, waitForAccountEnsure,
+    selectCustomer, clearCustomer, waitForAccountEnsure, tokenDaSelecao,
   };
 }

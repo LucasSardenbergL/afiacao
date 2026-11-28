@@ -271,7 +271,7 @@ export function useUnifiedOrder() {
     vendedorDivergencias, validatingVendedor, estadoVendedor,
     estadoCadastro,
     selectCustomer, clearCustomer: clearCustomerInternal,
-    waitForAccountEnsure,
+    waitForAccountEnsure, tokenDaSelecao,
   } = customerSel;
 
   // User tools (afiação) — react-query, 2min stale; auto-loads quando customerUserId muda
@@ -784,6 +784,10 @@ export function useUnifiedOrder() {
   const handleStaffAddTool = async () => {
     if (!selectedCustomer) return;
     if (customerUserId) { setAddToolDialogOpen(true); return; }
+    // P0-4 (follow-up Codex do #4271): cada `await` abaixo é uma janela em que o vendedor pode trocar
+    // de cliente. A resposta atrasada do cliente A não pode gravar o user de A sobre a seleção de B.
+    const tokenInicial = tokenDaSelecao();
+    const seTrocou = () => tokenDaSelecao() !== tokenInicial;
     setCreatingLocalProfile(true);
     try {
       // #11 (P0-B-bis PR-4): resolve codigo->user_id pela view fresca account=oben. selectedCustomer.codigo_cliente
@@ -793,6 +797,7 @@ export function useUnifiedOrder() {
       const { data: existingMapping } = await supabase
         .from('omie_customer_account_map_fresco').select('user_id')
         .eq('omie_codigo_cliente', selectedCustomer.codigo_cliente).eq('account', 'oben').maybeSingle();
+      if (seTrocou()) return;
       // user_id da view é string|null (view nulável); null → trata como miss e cai no fallback por documento.
       if (existingMapping?.user_id) {
         setCustomerUserId(existingMapping.user_id);
@@ -807,6 +812,7 @@ export function useUnifiedOrder() {
           // `criar_perfil_local`, que refaz a busca por documento no servidor (sem perfil duplicado).
           const { data: profile } = await supabase
             .from('v_perfil_contato').select('user_id').eq('document', docClean).maybeSingle();
+          if (seTrocou()) return;
           if (profile?.user_id) {
             setCustomerUserId(profile.user_id);
             loadUserTools(profile.user_id);
@@ -827,6 +833,7 @@ export function useUnifiedOrder() {
           },
         },
       });
+      if (seTrocou()) return; // o perfil criado fica no servidor (idempotente por documento); só não carimba B
       if (error) throw error;
       const localUserId = result?.user_id;
       if (!localUserId) throw new Error('Falha ao criar perfil');
@@ -835,6 +842,7 @@ export function useUnifiedOrder() {
       toast.success('Perfil criado', { description: 'Agora cadastre as ferramentas.' });
       setAddToolDialogOpen(true);
     } catch (e) {
+      if (seTrocou()) return; // erro do cliente anterior não vira toast na tela do cliente novo
       logger.error('Failed to prepare local profile for staff add-tool flow', {
         mode: 'staff',
         stage: 'create_local_profile',
@@ -1031,6 +1039,10 @@ export function useUnifiedOrder() {
         });
         return;
       }
+      // P0-7 (follow-up Codex do #4271): o envelope só protege se estiver no DISCO. Sem a gravação
+      // (localStorage cheio/bloqueado), uma recarga no meio do envio perde o checkoutId e o
+      // reenvio nasce com outro — 2º PV. Fail-closed: nada sai; a memória volta ao que era.
+      const envelopeAnterior = checkoutEnvRef.current;
       if (decision === 'new') {
         // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
         // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
@@ -1058,7 +1070,14 @@ export function useUnifiedOrder() {
         // mesmo pedido, só a forma da chave muda; o checkoutId é o que dá a idempotência.
         checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true } as CheckoutEnvelope;
       }
-      persistCheckoutEnv(checkoutEnvRef.current);
+      if (!persistCheckoutEnv(checkoutEnvRef.current)) {
+        checkoutEnvRef.current = envelopeAnterior;
+        falhouLocal('envelope_nao_gravado');
+        toast.error('Não foi possível proteger o envio contra duplicidade', {
+          description: 'O navegador recusou gravar os dados do envio (armazenamento cheio ou bloqueado). Libere espaço ou saia da janela anônima e tente de novo — nada foi enviado.',
+        });
+        return;
+      }
       cicloRascunhoRef.current.aoComprometer?.();
       const checkoutId = checkoutEnvRef.current.checkoutId;
       try {
