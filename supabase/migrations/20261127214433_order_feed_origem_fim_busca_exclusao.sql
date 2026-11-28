@@ -20,7 +20,7 @@
 --       · sales_orders_exclusao_marca registra a marca que um usuário (role authenticated) grava —
 --         e só ela. O deleted_at que o cron omie-pv-exclusao-reconciliar grava (service_role, PV
 --         excluído no Omie) é baixa LEGÍTIMA e NUNCA é desfeito daqui.
---       · private.sales_orders_exclusao_recuperar() desfaz a marca que segue igual depois de 30 min
+--       · private.sales_orders_exclusao_recuperar() desfaz a marca que segue igual depois de 2 h
 --         com o pedido ainda existindo (a edge, no sucesso, APAGA a linha — a marca some junto).
 --       · cron a cada 10 min (SQL puro, sem net.http_post).
 --     A edge omie-vendas-sync NÃO muda (fatia C).
@@ -85,8 +85,9 @@ $fn$;
 COMMENT ON FUNCTION private.busca_base_pedido(text, jsonb, text, numeric) IS
   'Parte da coluna order_feed.busca que não depende do cliente: \n número \n itens \n total \n total com vírgula, em minúsculas e sem acento. Base da coluna gerada sales_orders.busca_base.';
 
-REVOKE ALL ON FUNCTION private.busca_base_pedido(text, jsonb, text, numeric) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION private.busca_base_pedido(text, jsonb, text, numeric) TO authenticated, service_role;
+-- EXECUTE fica no padrão (PUBLIC) de propósito: função pura sobre os próprios argumentos, e TODO papel
+-- que grava sales_orders (recalcula a coluna) ou lê order_feed (linha de afiação) precisa dela —
+-- authenticated, service_role, claude_ro, o conector do Lovable. Fechar daria 42501 a quem não se listou.
 
 ALTER TABLE public.sales_orders
   ADD COLUMN IF NOT EXISTS busca_base text
@@ -240,12 +241,12 @@ CREATE TABLE IF NOT EXISTS public.sales_orders_exclusao_marca (
   carimbo        timestamptz NOT NULL,
   marcado_por    uuid,
   marcado_em     timestamptz NOT NULL DEFAULT now(),
-  desfecho       text CHECK (desfecho IN ('desfeito', 'recuperado')),
+  desfecho       text CHECK (desfecho IN ('desfeito', 'recuperado', 'mantido')),
   resolvido_em   timestamptz
 );
 
 COMMENT ON TABLE public.sales_orders_exclusao_marca IS
-  'Marca de exclusão gravada por um USUÁRIO (deleted_at via PostgREST, role authenticated) em sales_orders. desfecho NULL = em curso. Sucesso da edge apaga o pedido e a marca (cascade); desfeito = o navegador desfez; recuperado = o servidor desfez (private.sales_orders_exclusao_recuperar). 1 escritor: o trigger trg_sales_orders_exclusao_marca + a recuperação.';
+  'Marca de exclusão gravada por um USUÁRIO (deleted_at via PostgREST, role authenticated) em sales_orders. desfecho NULL = em curso. Sucesso da edge apaga o pedido e a marca (cascade); desfeito = o navegador desfez; recuperado = o servidor desfez (private.sales_orders_exclusao_recuperar); mantido = o servidor tentou e a baixa do Omie (trg_sales_orders_pv_excluido_omie) manteve oculto. 1 escritor: o trigger trg_sales_orders_exclusao_marca + a recuperação.';
 
 CREATE INDEX IF NOT EXISTS idx_sales_orders_exclusao_marca_em_curso
   ON public.sales_orders_exclusao_marca (marcado_em) WHERE desfecho IS NULL;
@@ -296,17 +297,20 @@ CREATE TRIGGER trg_sales_orders_exclusao_marca
   EXECUTE FUNCTION public.sales_orders_exclusao_marca_registrar();
 
 -- Desfaz a marca do usuário que ficou para trás: segue IGUAL depois de p_idade e o pedido existe.
+-- 2 h: o lote do navegador marca tudo no início e chama a edge pedido a pedido (com consulta ao Omie);
+-- um lote de centenas não pode reaparecer na lista dos outros enquanto ainda corre.
 -- Ordem de lock = a do front (sales_orders → marca); SKIP LOCKED pula o pedido que a edge está
--- apagando agora. Devolve quantos pedidos voltaram para a lista.
-CREATE OR REPLACE FUNCTION private.sales_orders_exclusao_recuperar(p_idade interval DEFAULT interval '30 minutes')
+-- apagando agora. Devolve quantos pedidos voltaram DE FATO para a lista: o trigger durável do
+-- reconciliador (PV excluído no Omie) pode manter o deleted_at — esse vira 'mantido', não conta.
+CREATE OR REPLACE FUNCTION private.sales_orders_exclusao_recuperar(p_idade interval DEFAULT interval '2 hours')
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $fn$
 DECLARE
-  v_ids uuid[];
-  v_n   integer;
+  v_ids    uuid[];
+  v_voltou uuid[];
 BEGIN
   IF p_idade IS NULL OR p_idade < interval '10 minutes' THEN
     RAISE EXCEPTION 'EXCLUSAO_RECUPERAR_PARAM: idade minima de 10 min (a edge pode estar no meio)' USING ERRCODE = '22023';
@@ -323,15 +327,21 @@ BEGIN
   IF v_ids IS NULL THEN
     RETURN 0;
   END IF;
+  -- RETURNING devolve a linha DEPOIS dos BEFORE triggers: deleted_at ainda preenchido = a baixa manteve.
+  WITH upd AS (
+    UPDATE public.sales_orders so
+       SET deleted_at = NULL
+      FROM public.sales_orders_exclusao_marca m
+     WHERE so.id = ANY (v_ids) AND m.sales_order_id = so.id AND so.deleted_at = m.carimbo
+    RETURNING so.id, so.deleted_at
+  )
+  SELECT array_agg(id) FILTER (WHERE deleted_at IS NULL) INTO v_voltou FROM upd;
+  -- O trigger já gravou 'desfeito' em quem voltou; o desfecho do servidor sobrescreve.
   UPDATE public.sales_orders_exclusao_marca
-     SET desfecho = 'recuperado', resolvido_em = now()
-   WHERE sales_order_id = ANY (v_ids) AND desfecho IS NULL;
-  UPDATE public.sales_orders so
-     SET deleted_at = NULL
-    FROM public.sales_orders_exclusao_marca m
-   WHERE so.id = ANY (v_ids) AND m.sales_order_id = so.id AND so.deleted_at = m.carimbo;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-  RETURN v_n;
+     SET desfecho = CASE WHEN sales_order_id = ANY (COALESCE(v_voltou, '{}'::uuid[])) THEN 'recuperado' ELSE 'mantido' END,
+         resolvido_em = now()
+   WHERE sales_order_id = ANY (v_ids) AND (desfecho IS NULL OR desfecho = 'desfeito');
+  RETURN COALESCE(cardinality(v_voltou), 0);
 END
 $fn$;
 
@@ -423,9 +433,28 @@ BEGIN
      OR has_table_privilege('anon', 'public.sales_orders_exclusao_marca', 'SELECT') THEN
     RAISE EXCEPTION 'POS_FALHOU: sales_orders_exclusao_marca legível pelo app';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger
-                 WHERE tgrelid = 'public.sales_orders'::regclass AND tgname = 'trg_sales_orders_exclusao_marca' AND tgenabled = 'O') THEN
-    RAISE EXCEPTION 'POS_FALHOU: trigger trg_sales_orders_exclusao_marca ausente ou desligado';
+  -- Forma, não só existência (CREATE TABLE IF NOT EXISTS não corrige um rascunho colado antes):
+  -- sem CASCADE o DELETE da edge daria 23503 em todo pedido marcado.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
+                 WHERE conrelid = 'public.sales_orders_exclusao_marca'::regclass AND contype = 'f'
+                   AND confrelid = 'public.sales_orders'::regclass AND confdeltype = 'c') THEN
+    RAISE EXCEPTION 'POS_FALHOU: a marca não apaga junto com o pedido (FK sem ON DELETE CASCADE) — a exclusão da edge daria 23503';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
+                 WHERE conrelid = 'public.sales_orders_exclusao_marca'::regclass AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%mantido%') THEN
+    RAISE EXCEPTION 'POS_FALHOU: o CHECK de desfecho não aceita mantido (tabela de um rascunho anterior)';
+  END IF;
+  IF (SELECT pg_get_triggerdef(t.oid) FROM pg_catalog.pg_trigger t
+      WHERE t.tgrelid = 'public.sales_orders'::regclass AND t.tgname = 'trg_sales_orders_exclusao_marca' AND t.tgenabled = 'O')
+     NOT LIKE 'CREATE TRIGGER trg_sales_orders_exclusao_marca AFTER UPDATE OF deleted_at ON public.sales_orders FOR EACH ROW WHEN ((old.deleted_at IS DISTINCT FROM new.deleted_at)) EXECUTE FUNCTION %sales_orders_exclusao_marca_registrar()'
+     OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger
+                    WHERE tgrelid = 'public.sales_orders'::regclass AND tgname = 'trg_sales_orders_exclusao_marca' AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'POS_FALHOU: trigger trg_sales_orders_exclusao_marca ausente, desligado ou com outra forma';
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc WHERE oid = 'private.sales_orders_exclusao_recuperar(interval)'::regprocedure)
+     OR NOT (SELECT prosecdef FROM pg_catalog.pg_proc WHERE oid = 'public.sales_orders_exclusao_marca_registrar()'::regprocedure) THEN
+    RAISE EXCEPTION 'POS_FALHOU: recuperação/registro da marca sem SECURITY DEFINER (o app não escreve a marca)';
   END IF;
   IF has_function_privilege('anon', 'private.sales_orders_exclusao_recuperar(interval)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'private.sales_orders_exclusao_recuperar(interval)', 'EXECUTE') THEN

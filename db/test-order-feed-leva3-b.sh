@@ -42,7 +42,7 @@ MIG_VENDEDOR="$REPO_ROOT/supabase/migrations/20261113120000_vendedor_pedido_omie
 MIG_VIEW="$REPO_ROOT/supabase/migrations/20261102160821_order_feed_sem_cte.sql"
 MIG_TOTAL="$REPO_ROOT/supabase/migrations/20261123120000_order_feed_vendedor_total.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=27
+TOTAL_ESPERADO=28
 
 if [ "${1:-}" = "--falsificar" ]; then
   # nome:VERMELHOS:VERDES-de-controle   (ID!MARCA = vermelho de execução com a marca)
@@ -54,7 +54,9 @@ if [ "${1:-}" = "--falsificar" ]; then
               marca_qualquer_role:E2,E4:E1
               recupera_sem_idade:E5:E1,E3
               recupera_sem_carimbo:E6:E1
-              sem_cascade:E7:E1
+              recupera_conta_tudo:E4,E11:E1
+              sem_cascade:MIG!POS_FALHOU
+              sem_definer_recuperar:MIG!POS_FALHOU
               sem_grant_busca:MIG!POS_FALHOU
               invoker_off:MIG!POS_FALHOU
               total_anon:MIG!POS_FALHOU
@@ -242,6 +244,8 @@ case "${SABOTAGEM:-}" in
   marca_qualquer_role)  sabotar "s/IF coalesce\\(auth\\.role\\(\\), ''\\) = 'authenticated' THEN/IF true THEN/" ;;
   recupera_sem_idade)   sabotar 's/AND m\.marcado_em < now\(\) - p_idade/AND true/' ;;
   recupera_sem_carimbo) sabotar 's/SET carimbo = NEW\.deleted_at, marcado_em = now\(\)/SET marcado_em = marcado_em/' ;;
+  recupera_conta_tudo)  sabotar 's/array_agg\(id\) FILTER \(WHERE deleted_at IS NULL\)/array_agg(id)/' ;;
+  sem_definer_recuperar) sabotar 's/(RETURNS integer\nLANGUAGE plpgsql\n)SECURITY DEFINER/${1}SECURITY INVOKER/' ;;
   sem_cascade)          sabotar 's/REFERENCES public\.sales_orders\(id\) ON DELETE CASCADE,/,/' ;;
   sem_grant_busca)      sabotar 's/^GRANT SELECT \(busca_base\) ON public\.sales_orders TO authenticated;$//m' ;;
   invoker_off)          sabotar 's/(CREATE OR REPLACE VIEW public\.order_feed\n)WITH \(security_invoker = true\)\n/$1/' ;;
@@ -272,7 +276,8 @@ eq PB "14 colunas antigas iguais (antes−depois + depois−antes)" "$(Pq -c "
        + (SELECT count(*) FROM (SELECT origin, id, created_at, account, order_number, omie_pedido_id, customer_user_id, customer_name,
                    item_names, item_quantity, status, subtotal, total, busca FROM public.order_feed EXCEPT ALL
             SELECT * FROM public.feed_antes) b)")" "0"
-P -q -c "UPDATE public.sales_orders SET items = '[{\"descricao\":\"Catalisador Ômega\",\"quantidade\":1}]' WHERE id = '20000000-0000-0000-0000-000000000002'"
+# Como o APP grava (authenticated): a coluna gerada recalcula sem 42501 (EXECUTE na função privada).
+como "$F" "UPDATE public.sales_orders SET items = '[{\"descricao\":\"Catalisador Ômega\",\"quantidade\":1}]' WHERE id = '20000000-0000-0000-0000-000000000002'" >/dev/null
 eq B2 "busca acha o item trocado" "$(como "$F" "SELECT count(*) FROM public.order_feed WHERE busca ILIKE '%catalisador omega%'")" "1"
 
 # ── #5 procedência ───────────────────────────────────────────────────────────────────────────────
@@ -315,14 +320,22 @@ P -q -c "SET test.role = 'service_role'; UPDATE public.sales_orders SET deleted_
 eq E2 "service_role (reconciliador) marca → nenhuma" "$(marca "$X9")" "nenhuma"
 como "$F" "UPDATE public.sales_orders SET deleted_at = NULL WHERE id = '$X2'" >/dev/null
 eq E3 "authenticated desfaz → desfeito" "$(marca "$X2")" "desfeito"
-# x1/x4/x5 envelhecem 31 min; x3 fica recente. x4 é re-carimbado DEPOIS (o carimbo da marca precisa seguir).
-P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '31 minutes' WHERE sales_order_id IN ('$X1', '$X4', '$X5');
-         UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '31 minutes' WHERE sales_order_id = '$X9';"
+# x1/x4/x5 envelhecem 2h01; x3 fica recente. x4 é re-carimbado DEPOIS (o carimbo da marca precisa seguir).
+# x5 imita o trigger durável do reconciliador (trg_sales_orders_pv_excluido_omie): a baixa do Omie
+# chegou no meio e o BEFORE devolve o deleted_at — a recuperação não pode contá-lo como de volta.
+P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '121 minutes' WHERE sales_order_id IN ('$X1', '$X4', '$X5');"
 como "$F" "UPDATE public.sales_orders SET deleted_at = now() + interval '1 second' WHERE id = '$X4'" >/dev/null
-P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '31 minutes' WHERE sales_order_id = '$X4'"
+P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '121 minutes' WHERE sales_order_id = '$X4'"
+P -q <<SQL >/dev/null
+CREATE FUNCTION public.harness_baixa_duravel() RETURNS trigger LANGUAGE plpgsql AS \$f\$
+BEGIN IF NEW.id = '$X5' AND NEW.deleted_at IS NULL THEN NEW.deleted_at := OLD.deleted_at; END IF; RETURN NEW; END \$f\$;
+CREATE TRIGGER harness_baixa_duravel BEFORE UPDATE OF deleted_at ON public.sales_orders FOR EACH ROW EXECUTE FUNCTION public.harness_baixa_duravel();
+SQL
 REC="$(Pq -c "SELECT private.sales_orders_exclusao_recuperar()")"
-eq E4 "recupera x1/x4/x5, mantém a baixa do reconciliador (n · x1 · x9 oculto)" \
-  "${REC}·$(Pq -c "SELECT (deleted_at IS NULL) FROM public.sales_orders WHERE id = '$X1'")·$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X9'")·$(marca "$X1")" "3·t·t·recuperado"
+eq E4 "recupera x1/x4 (n · x1 de volta · x9 do reconciliador oculto · desfecho x1)" \
+  "${REC}·$(Pq -c "SELECT (deleted_at IS NULL) FROM public.sales_orders WHERE id = '$X1'")·$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X9'")·$(marca "$X1")" "2·t·t·recuperado"
+eq E11 "baixa durável no meio: x5 segue oculto e a marca diz 'mantido'" \
+  "$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X5'")·$(marca "$X5")" "t·mantido"
 eq E5 "marca recente não é recuperada" "$(marca "$X3")·$(Pq -c "SELECT (deleted_at IS NOT NULL) FROM public.sales_orders WHERE id = '$X3'")" "em_curso·t"
 eq E6 "re-carimbo segue a marca (x4 voltou)" "$(Pq -c "SELECT (deleted_at IS NULL) FROM public.sales_orders WHERE id = '$X4'")·$(marca "$X4")" "t·recuperado"
 P -q -c "DELETE FROM public.sales_orders WHERE id = '$X3'" 2>"$TMPD/del.err" || true
