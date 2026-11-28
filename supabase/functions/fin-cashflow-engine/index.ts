@@ -43,6 +43,7 @@ import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type 
 import { colunasCpVencidoFora, medirCpVencidoForaProjecao, type CpVencidoForaProjecao } from "./cp-vencido.ts";
 import { colunasComposicaoNcg } from "./ncg-composicao.ts";
 import { classificarPcoNcg, type LinhaMapa } from "./ncg-folha-tributos.ts";
+import { criarResolverLinhaFluxo } from "./linha-fluxo.ts";
 import { expandirRecorrenteDeno } from "./recorrente.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -778,6 +779,8 @@ type LinhaCashflow = {
   data: string;
   valor: number;
   id_origem: string;
+  /** Linha do mapa de fluxo (v2.8): null = título sem categoria; 'nao_classificado' = fora do mapa. Só em cr_omie/cp_omie. */
+  fluxo_linha?: string | null;
 };
 
 type Semana = {
@@ -988,6 +991,7 @@ function gerarSemanas(
   let apos_horizonte = 0;
   let ar_impaired = 0;
   const crPorSemana: LinhaCashflow[][] = Array.from({ length: horizon }, () => []);
+  const linhaFluxo = criarResolverLinhaFluxo(dados.mapa_fluxo_ncg);
   for (const cr of dados.crs) {
     if (!cr.data_vencimento || cr.saldo <= 0) continue;
     if (!isOpenTitleStatus(cr.status_titulo)) continue;
@@ -1014,6 +1018,7 @@ function gerarSemanas(
       data: dataEsp,
       valor,
       id_origem: cr.id,
+      fluxo_linha: linhaFluxo(cr.categoria_codigo),
     });
   }
 
@@ -1040,6 +1045,7 @@ function gerarSemanas(
         data: cp.data_vencimento,
         valor: cp.saldo,
         id_origem: cp.id,
+        fluxo_linha: linhaFluxo(cp.categoria_codigo),
       });
     }
 
