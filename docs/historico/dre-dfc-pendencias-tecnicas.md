@@ -65,3 +65,16 @@ CMV competência = compras do CP (`2.01.01`) por emissão, sem variação de est
 - oben nov = R$ 54,6k. No mesmo ponto do mês (visto até o dia 26), ago–out tinham R$ 115–167k.
 - Fonte independente `nfe_recebimentos`: nov R$ 57,5k × out R$ 260,9k.
 - ⇒ compra menor + mês aberto. A margem de 76,5% vem do método, não é bug.
+
+## ⚠️ Atropelo do #4247 (achado no /fecho, 2026-11-28)
+O squash do item 1 foi feito com `git rebase origin/main` (saída engolida pelo `| tail`) seguido de
+`git reset --soft origin/main`. O rebase NÃO tinha aplicado, e o reset sobre a main NOVA deixou no índice
+a árvore da branch VELHA. O commit levou **27 arquivos** em vez de 6: ressuscitou a edge `omie-os-sync` e
+a migration `20261126233000_omie_os_espelho` (revertidas no #4241, "opção C cancelada") e apagou
+`20261126235000_caca_candidatos…`, entre outros.
+- **Consertado** por outra sessão em `5bc4349f3`. O diff entre a main de antes do merge e `5bc4349f3` é
+  vazio nos arquivos de terceiros.
+- **Prod intacta:** sem `omie_os_espelho`, sem função `omie_os*`, sem recibo; `deriva:corpo:prod` verde (685).
+- **Regra para squash por `reset --soft`:** só depois de um rebase CONFIRMADO, e conferindo
+  `git diff --stat origin/main` ANTES de commitar. Lista com arquivo que não é seu = pare. No item 2 o
+  mesmo erro foi pego a tempo por essa conferência; no item 1, não.
