@@ -157,7 +157,10 @@ fi
 FORA_TX="$(sed 's/--.*$//' "$SNAP" | tr '\n' ' ' | grep -oEi \
   'CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX[[:space:]]+CONCURRENTLY|DROP[[:space:]]+INDEX[[:space:]]+CONCURRENTLY|REINDEX[^;]{0,80}CONCURRENTLY' \
   | head -2 | tr '\n' ' ' || true)"
-if [ -n "$FORA_TX" ] && [ "$ATESTAR" -eq 0 ]; then
+# o --atestar NÃO executa o arquivo: a migration com CONCURRENTLY (que só vai pelo SQL Editor) é o caso dele.
+# Zerado ANTES do `if` (não dentro da condição): a S6 do db/test-db-aplicar.sh sabota esta linha pelo texto.
+[ "$ATESTAR" -eq 0 ] || FORA_TX=""
+if [ -n "$FORA_TX" ]; then
   morre 2 "RECUSA_FORA_DE_TRANSACAO — comando que não roda dentro de transação nenhuma (nem a
    deste script): $FORA_TX
    Não é ajustável aqui: o recibo só é atômico porque há uma transação, e este comando a proíbe.
