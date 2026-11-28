@@ -28,7 +28,10 @@ const LT_COLA: CandidatoCatalogo = { id: "lt-c", codigo: "DR.4403LT", descricao:
 const L5_OBEN: CandidatoCatalogo = { id: "l5-o", codigo: "DR.4403L5", descricao: "THINNER DR.4403L5", account: "oben", estoque: 9 };
 const GL_OBEN: CandidatoCatalogo = { id: "gl-o", codigo: "DR.4403GL", descricao: "THINNER DR.4403GL", account: "oben", estoque: 9 };
 
-const catalogo = new Map([LT_OBEN, LT_COLA, L5_OBEN, GL_OBEN].map((c) => [c.id, c]));
+const FO5_BH: CandidatoCatalogo = { id: "fo5", codigo: "FO5.6717.00BH", descricao: "VERNIZ PU FOSCO FO5.6717.00BH", account: "oben", estoque: 3 };
+const FO10_BH: CandidatoCatalogo = { id: "fo10", codigo: "FO10.6717.00BH", descricao: "VERNIZ PU FOSCO FO10.6717.00BH", account: "oben", estoque: 3 };
+
+const catalogo = new Map([LT_OBEN, LT_COLA, L5_OBEN, GL_OBEN, FO5_BH, FO10_BH].map((c) => [c.id, c]));
 
 // ─────────────────────────── representantes / resolver ───────────────────────────
 
@@ -156,4 +159,24 @@ Deno.test("resolverEmbalagens: item sozinho no grupo passa intacto", () => {
   const { mantidos, sugestoes } = resolverEmbalagens([{ product_id: "lt-o", quantity: 1 }], catalogo, "4403");
   assertEquals(mantidos.map((m) => m.product_id), ["lt-o"]);
   assertEquals(sugestoes, []);
+});
+
+Deno.test("resolverEmbalagens: mesmo número e MESMO sufixo com códigos distintos são linhas diferentes — os dois ficam", () => {
+  const { mantidos, sugestoes, ambiguos } = resolverEmbalagens([
+    { product_id: "fo5", quantity: 2 },
+    { product_id: "fo10", quantity: 3 },
+  ], catalogo, "2 baldes FO5.6717 e 3 baldes FO10.6717");
+  assertEquals(mantidos.map((m) => m.product_id), ["fo5", "fo10"]);
+  assertEquals(sugestoes, []);
+  assertEquals(ambiguos, 0);
+});
+
+Deno.test("resolverEmbalagens: a pista mantém TODAS as linhas da embalagem pedida", () => {
+  const { mantidos, sugestoes } = resolverEmbalagens([
+    { product_id: "fo5", quantity: 1 },
+    { product_id: "fo10", quantity: 1 },
+    { product_id: "lt-6717", quantity: 1 },
+  ], new Map([...catalogo, ["lt-6717", { id: "lt-6717", codigo: "FO5.6717.00LT", descricao: "VERNIZ PU FOSCO FO5.6717.00LT", account: "oben" }]]), "balde de 6717");
+  assertEquals(mantidos.map((m) => m.product_id), ["fo5", "fo10"]);
+  assertEquals(sugestoes.map((s) => s.product_id), ["lt-6717"]);
 });

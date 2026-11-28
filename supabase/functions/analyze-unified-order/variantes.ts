@@ -234,9 +234,9 @@ export function embalagensPedidas(texto: string): Set<string> {
 }
 
 /**
- * Embalagens do MESMO produto base (mesmo número de 4+ dígitos, códigos distintos). Fica com uma só
- * quando o texto do vendedor pede exatamente a embalagem de UMA delas; caso contrário todas viram
- * sugestão. O texto é só o do VENDEDOR: a `message` da própria IA não é pista (seria a IA
+ * Embalagens do MESMO produto base (mesmo número de 4+ dígitos, SUFIXOS distintos). Fica com a
+ * embalagem que o texto do vendedor pede, quando ele pede exatamente UMA das presentes; caso contrário
+ * todas viram sugestão. Mesmo sufixo com códigos distintos não é conflito (linhas diferentes). O texto é só o do VENDEDOR: a `message` da própria IA não é pista (seria a IA
  * confirmando a si mesma).
  */
 export function resolverEmbalagens<P extends ItemProdutoIA>(
@@ -260,18 +260,23 @@ export function resolverEmbalagens<P extends ItemProdutoIA>(
   const sugestoes: SugestaoProduto[] = [];
   let ambiguos = 0;
   for (const [base, grupo] of grupos) {
-    if (grupo.length <= 1) continue;
-    const casam = grupo.filter((g) => pedidas.has(g.sufixo));
-    const vencedor = casam.length === 1 ? casam[0] : null;
-    if (!vencedor) ambiguos += 1;
+    // Conflito de EMBALAGEM só existe entre sufixos DIFERENTES. O mesmo número com o mesmo sufixo e
+    // códigos distintos (FO5.6717.00BH e FO10.6717.00BH) são linhas diferentes, pedidas de propósito:
+    // nada a decidir, os dois ficam.
+    const sufixos = new Set(grupo.map((g) => g.sufixo));
+    if (sufixos.size <= 1) continue;
+    const pedidosNoGrupo = [...sufixos].filter((s) => pedidas.has(s));
+    const sufixoVencedor = pedidosNoGrupo.length === 1 ? pedidosNoGrupo[0] : null;
+    if (!sufixoVencedor) ambiguos += 1;
+    const vencedores = grupo.filter((g) => g.sufixo === sufixoVencedor);
     for (const g of grupo) {
-      if (g === vencedor) continue;
+      if (g.sufixo === sufixoVencedor) continue;
       fora.add(g.item);
       sugestoes.push(...sugestoesDeAmbiguo(
         g.item,
         [g.prod],
-        vencedor
-          ? `Outra embalagem do ${base} — o pedido fala em ${vencedor.sufixo}, então entrou ${vencedor.prod.descricao}`
+        sufixoVencedor
+          ? `Outra embalagem do ${base} — o pedido fala em ${sufixoVencedor}, então entrou ${vencedores.map((v) => v.prod.descricao).join(", ")}`
           : `O ${base} tem mais de uma embalagem e o pedido não diz qual — escolha a certa`,
       ));
     }
