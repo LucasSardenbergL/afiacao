@@ -28,19 +28,29 @@ Publish). A1 (#4275) e A2 (#4284) foram só front; C (edge L2-a) vem depois.
   na prod (read-only, antes do apply) e a PÓS repete a comparação no apply.
 - **#19** `sales_orders_exclusao_marca` registra só a marca do USUÁRIO (trigger, `auth.role()='authenticated'`).
   `private.sales_orders_exclusao_recuperar()` (cron `*/10`, SQL puro) devolve à lista o pedido cuja marca
-  segue igual após 30 min. Sucesso da edge apaga pedido e marca (cascade). Edge intocada.
+  segue igual após **2 h** (o lote marca tudo no início e chama a edge pedido a pedido). Se o trigger durável
+  do reconciliador mantiver o `deleted_at`, a marca vira `mantido` e não conta como devolvida. Sucesso da edge
+  apaga pedido e marca (cascade). Edge intocada.
 
 ## Prova
-- `db/test-order-feed-leva3-b.sh` (PG17): 27 asserts executando view/RPCs/trigger/recuperação, negativos por
-  SQLSTATE+marca, RLS sob `SET ROLE authenticated`, `reloptions` conferido. Falsificação com 13 sabotagens
+- `db/test-order-feed-leva3-b.sh` (PG17): 28 asserts executando view/RPCs/trigger/recuperação, negativos por
+  SQLSTATE+marca, RLS sob `SET ROLE authenticated`, `reloptions` conferido. Falsificação com 15 sabotagens
   e controle verde na mesma invocação, em `LC_ALL=C` e `pt_BR.UTF-8`.
 - **Lição do harness:** em `pt_BR.UTF-8` o bash 3.2 do macOS leu `"$REC·"` como nome de variável, abortou
   por `set -u` — **e saiu 0** (com `set -e`, o `$?` dentro do trap EXIT vem 0). Só o contador de asserts
   da falsificação pegou. Correção: `${REC}` + marcador `FIM=1` no fim; sem ele o trap força exit 1.
 - Front: testes novos (procedência no card/painel, fim do período no `feed` e no hook, paridade do fake com
   `p_ate`) e falsificação de 7 sabotagens nos dois locales.
-- Codex sem cota (até 02/12): **sem-codex**, Caminho B (revisão adversarial por subagente).
+- Codex sem cota (até 02/12): **sem-codex**, Caminho B (revisão adversarial por subagente, sem a minha
+  conclusão no prompt): "BLOQUEANTE: não". Corrigidos: PÓS confere a FORMA (FK em cascata, definição do
+  trigger, SECURITY DEFINER) e não só a existência; recuperação conta só o que voltou (`mantido`); idade 2 h;
+  `busca_base_pedido` executável por todo papel (quem grava `sales_orders` ou lê a view precisa); B2 grava
+  como `authenticated`. Ficaram de fora: o lote não reaplica `podeExcluirPedido` (a edge recusa; mudar
+  reescreveria as fixtures do lote); T2 é paridade escrita no harness (a do front é o fake do hook); pedido do
+  app às 00:00:00.000Z exato vale como data-pura (convenção de `diaDoPedido`); marcas resolvidas não são purgadas.
 
 ## Ordem de deploy
 1. 🟣 migration no SQL Editor (reescreve `sales_orders` para a coluna gerada: lock curto da tabela).
-2. Publish do front (lê `origem_omie` e passa `p_ate`). Front velho segue funcionando com o banco novo.
+2. Publish do front (lê `origem_omie` e passa `p_ate`) **só depois da PÓS verde**: publicado antes, a lista
+   pede uma coluna que não existe (42703) e `/sales` fica vazia. O inverso é seguro: front velho segue
+   funcionando com o banco novo (13 colunas; a chamada de 7 parâmetros casa a função nova).

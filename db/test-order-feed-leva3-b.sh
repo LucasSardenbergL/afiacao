@@ -324,6 +324,9 @@ eq E3 "authenticated desfaz → desfeito" "$(marca "$X2")" "desfeito"
 # x5 imita o trigger durável do reconciliador (trg_sales_orders_pv_excluido_omie): a baixa do Omie
 # chegou no meio e o BEFORE devolve o deleted_at — a recuperação não pode contá-lo como de volta.
 P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '121 minutes' WHERE sales_order_id IN ('$X1', '$X4', '$X5');"
+# x9 (baixa do reconciliador) NÃO tem marca: este UPDATE é no-op DE PROPÓSITO no caminho certo. Ele dá
+# dente ao E4 quando a sabotagem registra marca de qualquer papel — aí a baixa envelhece e ressuscitaria.
+P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '121 minutes' WHERE sales_order_id = '$X9'"
 como "$F" "UPDATE public.sales_orders SET deleted_at = now() + interval '1 second' WHERE id = '$X4'" >/dev/null
 P -q -c "UPDATE public.sales_orders_exclusao_marca SET marcado_em = now() - interval '121 minutes' WHERE sales_order_id = '$X4'"
 P -q <<SQL >/dev/null
