@@ -36,9 +36,13 @@ export function calcularNOPAT(input: NopatInput): NopatResult {
   const imposto_operacional_nopat = input.regime === 'presumido' ? input.irpj_ttm + input.csll_ttm : 0;
   // Sem clamp: NOPAT pode ser negativo honestamente.
   const nopat = ebit - imposto_operacional_nopat;
+  // Simples: DAS + o que foi pago FORA dele (ICMS-ST/DIFAL/antecipação, IPI de importação…). No
+  // Simples a heurística da DRE nunca gera `ded_*` (keyword vira `das`), então `ded_*` só existe por
+  // mapeamento explícito = tributo fora do DAS. Medido colacor_sc 2025: DAS R$ 9,1k + ICMS R$ 10,3k
+  // — a carga exibia menos da metade. Informacional: já está nas deduções, nunca re-subtraída.
   const carga_tributaria_regime_total =
     input.regime === 'simples'
-      ? input.das_ttm
+      ? input.das_ttm + input.icms_ttm + input.iss_ttm + input.ipi_ttm + input.pis_ttm + input.cofins_ttm
       : input.irpj_ttm + input.csll_ttm + input.pis_ttm + input.cofins_ttm + input.icms_ttm + input.iss_ttm + input.ipi_ttm;
   return { ebit, imposto_operacional_nopat, nopat, carga_tributaria_regime_total };
 }

@@ -19,7 +19,9 @@ export const respostaSonda = criarRespostaSonda("fin-valor-engine");
 // v1.0 → v1.1: NCG lido por DUAS leituras pontuais (o snapshot mais recente + os vizinhos do alvo
 // −12m) em vez de `order desc limit 400` sem janela e com o `error` descartado — o limite cortava o
 // ponto −12m do ROIC incremental para sempre; falha de leitura agora é 500/motivo (plano v3, item 3).
-export const VERSAO = "v1.1-ncg-leitura-pontual";
+// v1.1 → v1.2: carga tributária do Simples soma os tributos pagos FORA do DAS (ICMS-ST/DIFAL…),
+// antes ignorados (colacor_sc 2025: ICMS R$ 10,3k > DAS R$ 9,1k).
+export const VERSAO = "v1.2-carga-simples-fora-do-das";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
