@@ -48,3 +48,39 @@ migration `20261122140000` → edges `omie-financeiro` v1.13 **e** `fin-suggest-
 | colacor | −141 → −141 | 238 → 238 | 54 → 54 | 382 → 372 | 12 → 12 | 0 → 0 |
 
 ⚠️ O salto da oben é o **principal + juros** de empréstimo (R$ 612k) e de parcelamento (R$ 154k) saindo da despesa: o lucro operacional agora está certo, mas os 12 meses ficam **provisórios** porque os juros dentro da parcela são despesa financeira que o Omie não separa. A captação registrada é quase nula (R$ 18,9k em 1.04.03) contra R$ 612k pagos — vale conciliar a dívida da oben (mútuo? antecipação não lançada?).
+
+## Andamento das pendências técnicas (2026-11-28)
+
+| # | Pendência | PR | Deploy | Evidência |
+|---|---|---|---|---|
+| 2 | Linha redutora de CMV + sinal por natureza + `composicao_cmv` versionada (`cmv-v1`) | #4302 | edge `omie-financeiro` **v1.17** · mapa `db/2026-11-27-fin-dre-cmv-redutora.sql` (recibo #1554) · recálculo `db/2026-11-28-dre-v1.17-recalculo-*.sql` · Publish | sonda `DEPLOY CONFIRMADO` (fonte `a18c0d00…`); 1.03.01 = `cmv` em colacor e oben; antes→depois abaixo |
+| 3 | `fin-suggest-mapping` só sugere entre empresas com a mesma descrição | #4299 | edge **v1.3** | sonda `DEPLOY CONFIRMADO` (fonte `3bab9de0…`) |
+| 4 | `fin-valor-engine`: carga do Simples = DAS + ICMS/ISS/IPI/PIS/COFINS pagos fora | #4298 | edge **v1.2** | sonda `DEPLOY CONFIRMADO` (fonte `a683b68b…`) |
+| 5 | DRETab, CSV e comparativo mostram outras receitas/despesas e o resultado antes dos impostos | #4295 | Publish (só front) | Lovable publish `success` em `248ab2418` |
+| 1 | Extrato sem título na DRE (Onda B) | — | — | **sessão nova** (com os itens 6, 7 e 8) — medição em `onda-b-extrato-medicao` da pasta de notas: sem mapa, a heurística manda EXTR para `receita_bruta` (ex.: oben 1.02.02 Rendimentos R$ 338k) ⇒ precisa de mapa + fail-closed |
+
+Registradas, **sem decisão** (founder): rateio da folha OBEN↔SC · colacor_sc 1.04.04 mútuo × empréstimo · oben R$ 612k de amortização sem captação · principal × juros.
+
+Codex fechado até 02/12 (exit 75) ⇒ os PRs #4298, #4299 e #4302 levam `sem-codex:` e revisão adversarial por subagente (Caminho B). **Revisão Codex independente segue pendente** nos três.
+
+### Item 2 — antes → depois do recálculo (soma anual, R$)
+
+Anos fechados: o CMV cai e as outras receitas caem o mesmo valor (= `composicao_cmv.devolucoes_compra`), o lucro bruto e o resultado operacional sobem esse valor, e o **resultado antes dos impostos não muda**.
+
+| empresa · regime · ano | Δ CMV | Δ outras receitas | Δ lucro bruto = Δ res. operacional | Δ res. antes dos impostos |
+|---|---:|---:|---:|---:|
+| colacor · competência · 2023 | −101.619,34 | −101.619,34 | +101.619,34 | 0,00 |
+| colacor · competência · 2024 | −59.058,35 | −59.058,35 | +59.058,35 | 0,00 |
+| colacor · competência · 2025 | −4.296,00 | −4.296,00 | +4.296,00 | 0,00 |
+| colacor · competência · 2026 | −533,51 | −533,51 | +1.375,01 | +841,50 ¹ |
+| colacor · caixa · 2026 | 0,00 | 0,00 | +1.397,83 | +1.397,83 ¹ |
+| oben · competência · 2024 | −2.729,16 | −2.729,16 | +2.729,16 | 0,00 |
+| oben · competência · 2025 | −7.861,70 | −7.861,70 | +7.861,70 | 0,00 |
+| oben · competência · 2026 | −9.951,82 | −9.951,82 | +10.150,72 | +198,90 ¹ |
+| oben · caixa · 2026 | −548,83 | −548,83 | +31.326,64 | +30.777,81 ¹ |
+
+¹ Em 2026 o "antes" era o snapshot do cron de 27/11 15:30; até o recálculo o sync atualizou 1.040 CR e 2.274 CP de 2026 nas duas empresas. A diferença além do mapa é **dado novo**, não efeito da v1.17 — a prova do efeito está nos anos fechados. Caixa só tem snapshot em 2026 (série não estendida). colacor_sc não foi recalculada (mapa inalterado; o sinal não muda número publicado — medido no #4302).
+
+### Achado para a DFC (vindo da sessão-mãe)
+
+BAXP caiu de 195 (jun/26) para 96 (out) e 1 (nov), e TRAP está ~0 desde jul: a DFC recente **subestima as saídas**. Não é efeito desta leva — registrar e medir antes de usar a DFC de jul/26 em diante.
