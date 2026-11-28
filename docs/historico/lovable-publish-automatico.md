@@ -491,3 +491,51 @@ O teste antigo `dec_shared_ledger0`, em que `_shared` com ledger=0 ficava RETIDO
   `PROVA_LEDGER=0`.
 
 Os dois teriam ido ao ledger em vez de esperar 74 min por um `liberar`.
+### PR D — M2, recibo de migration aplicada fora do envelope (`db:aplicar --atestar`) — MONEY-PATH
+
+**O buraco.** O vigia só libera o front por migration com recibo `aplicada` em `public.db_aplicacoes`, e só o
+`db:aplicar` gravava recibo. Migration colada no SQL Editor (ou aplicada pelo MCP) nunca ganhava recibo: o
+front ficava RETIDO até um `liberar` à mão, ou até alguém publicar por fora.
+
+**A correção, sem virar declaração.** O comando é
+`bun run db:aplicar <migration.sql> --atestar [--autor <nome>] [--pos <prova.sql>]`. O recibo só nasce depois que
+o BANCO mostra o efeito, numa sessão READ ONLY:
+- `scripts/db-atestar-poscondicao.ts` separa os comandos (respeitando comentário, string e dollar-quote) e gera
+  uma checagem por efeito:
+  - função pelo **corpo exato** (`md5(prosrc)`): "existe" não prova nada quando o corpo velho é o drift;
+  - tabela, coluna, índice **válido** (`indisvalid`), view com `security_invoker` quando o arquivo a declara,
+    policy, trigger, constraint, RLS e extensão;
+  - DROP sem recriação vira checagem de ausência;
+  - **ACL no estado final** por (objeto, papel, privilégio), pela entrada direta no `aclexplode`.
+- Cada bloco `DO` roda de novo na sessão READ ONLY. O idempotente que acha o estado certo não escreve e passa.
+  O que precisaria escrever, o próprio banco recusa (`cannot execute … in a read-only transaction`).
+- O que não tem prova automática (DML, GRANT em schema, `SELECT cron.*`…) faz o `--atestar` RECUSAR (exit 2),
+  a menos que venha um `--pos` **commitado** que rode read-only e imprima `POSCONDICAO_OK`.
+- Recibo: `estado='aplicada'`, `ator='manual:<autor>'`, sem migration nova (a coluna `ator` já existia).
+  Depois, o cache de recibos do vigia é invalidado (M4).
+
+**READ ONLY em três camadas, redundantes de propósito.** O `psqlrc-ro` do wrapper, um
+`BEGIN TRANSACTION READ ONLY` do próprio script com a conferência `RO_ATIVO:on`, e o `ROLLBACK` final. Sabotada
+sozinha, cada camada fica verde porque as outras seguram. Por isso a falsificação `read_only` tira as três de uma
+vez sob um wrapper quebrado (sessão READ WRITE) e exige vermelho.
+
+**O exit do psql nunca vale sozinho** (`psql-ro -f` sai 0 com ERROR,
+`docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md`). Cada leitura exige rc 0, o marcador positivo,
+`POSCONDICAO_FIM n=<checagens>` e zero linha `ERROR:`/`ERRO:`/`FATAL:` do servidor.
+
+**Calibração em produção (read-only).** As 2 migrations de 26–27/11 aplicadas fora do envelope e que travavam o
+recibo (#4278):
+- `20261126190127_sales_orders_claim_envio_conferido`: **10/10 OK**, com o corpo das 2 funções batendo por md5.
+- `20261127120100_pedido_edicao_omie_posse_duravel`: **92/92 OK**, com 20+ funções pelo corpo, tabela, índices,
+  RLS, trigger e ACL. Dos 4 blocos `DO`, 2 têm `GRANT` incondicional: o READ ONLY os recusa e essa migration
+  exige `--pos`. É o comportamento certo, porque o efeito deles não se prova reexecutando.
+
+**Prova.**
+- `db/test-db-atestar.sh` (PG17 descartável, `db:aplicar` REAL, bootstrap real): 12 cenários (feliz, duplicado,
+  corpo velho, policy ausente, ACL, `security_invoker` resetado, DO que escreveria, DO idempotente, wrapper RO
+  quebrado, DML sem `--pos`, `--pos` que prova/não prova, `--pos` sem o efeito).
+- 8 sabotagens, cada uma com o controle verde na mesma invocação, em `lc_messages` C e pt_BR. Está no núcleo do
+  CI (`db/nucleo-ci.d/test-db-atestar.txt`: 12 asserts, falsificar=8).
+- `scripts/db-atestar-poscondicao.test.ts`: 18 testes do parser.
+- Codex: cota esgotada até 02/12 10:54. Caminho B (PG17 falsificável) e **REVISÃO INDEPENDENTE PENDENTE**: o
+  PR fica DRAFT até o Codex rodar.

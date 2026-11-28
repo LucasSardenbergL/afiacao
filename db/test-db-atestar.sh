@@ -136,6 +136,6 @@ else
   # shellcheck disable=SC2016
   sabota read_only bash 's/BEGIN TRANSACTION READ ONLY;/BEGIN;/; s/^    grep -qx .RO_ATIVO:on. "\$3" || return 1$/    true/; s/\\nROLLBACK;\\n"/\\nCOMMIT;\\n"/' c_ro_quebrado
 fi
-echo "PASS=$PASS FAIL=$FAIL"
+if [ "$FALSIFICAR" = 1 ]; then echo "SABOTAGENS: $PASS vermelhas / $FAIL falhas"; else echo "PASS=$PASS FAIL=$FAIL"; fi
 [ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ] && echo "DB_ATESTAR_OK"
 [ "$FAIL" = 0 ] && [ "$PASS" -gt 0 ]
