@@ -23,3 +23,5 @@ PEGA      | --head le a ARVORE em vez da rev (VERSAO)      | s/const fonteHead =
 PEGA      | --head cru, sem resolver (furo #2 do bump)     | s/if \(iHead >= 0\) \{/if (iHead >= 999) {/
 PEGA      | resumo mente a contagem de SEM_BUMP            | s/SEM_BUMP=\$\{conta\('SEM_BUMP'\)\}/SEM_BUMP=0/
 SOBREVIVE | largura do sha no rotulo da fatia (cosmetico)  | s/base\.slice\(0, 9\)/base.slice(0, 7)/
+PEGA      | prova-ledger: consumidora fora do mapa conta  | s/const rot = e\.instrumentada && e\.noMapa \? 'LEDGER' : 'FORA_DO_MAPA';/const rot = 'LEDGER' as string;/
+PEGA      | prova-ledger: arquivo nao consumido some       | s/for \(const m of mudados\) if \(!consumido\.has\(m\)\) linhas\.push/for (const m of mudados) if (consumido.has(m)) linhas.push/

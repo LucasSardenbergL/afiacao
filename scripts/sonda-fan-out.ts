@@ -396,12 +396,13 @@ export function provaPeloLedger(alterados: ArquivoAlterado[], edges: EdgeParaPro
       linhas.push(`ILEGIVEL ${e.edge} ${(e.erroFecho ?? 'sem mensagem').replace(/\s+/g, ' ').slice(0, 160)}`);
       continue;
     }
-    const causas = e.fecho.filter((f) => mudou.has(f)).sort();
-    if (causas.length === 0) continue;
-    for (const c of causas) consumido.add(c);
+    // `consome`, não `causas`: o .mut do calcularFanOut casa a linha `const causas = …` pelo texto (contrato único)
+    const consome = e.fecho.filter((arq) => mudou.has(arq)).sort();
+    if (consome.length === 0) continue;
+    for (const c of consome) consumido.add(c);
     const rot = e.instrumentada && e.noMapa ? 'LEDGER' : 'FORA_DO_MAPA';
     if (rot === 'FORA_DO_MAPA') prova = false;
-    linhas.push(`${rot} ${e.edge} ${causas.map(curto).join(',')}`);
+    linhas.push(`${rot} ${e.edge} ${consome.map(curto).join(',')}`);
   }
   for (const m of mudados) if (!consumido.has(m)) linhas.push(`SEM_CONSUMIDORA ${curto(m)}`);
   return { prova, linhas };
