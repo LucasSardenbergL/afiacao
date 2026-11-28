@@ -10,7 +10,7 @@
 // fora_dre/nao_resultado não passam por aqui (seus acumuladores já separam entradas/saídas).
 // ESPELHO VERBATIM em src/lib/financeiro/dre-helpers.ts (teste de paridade em dre-helpers.test.ts).
 
-export const LINHAS_CREDORAS = new Set<string>(["receita_bruta", "receitas_financeiras", "outras_receitas"]);
+const LINHAS_CREDORAS = new Set<string>(["receita_bruta", "receitas_financeiras", "outras_receitas"]);
 
 /** Valor com sinal da natureza da linha: oposto ao lado do título ⇒ negativo. */
 export function valorComSinal(valor: number, isReceita: boolean, linha: string): number {
@@ -18,7 +18,7 @@ export function valorComSinal(valor: number, isReceita: boolean, linha: string):
 }
 
 /** Contrato VERSIONADO da composição do CMV no `detalhamento` (líquido = compras − devoluções). */
-export const VERSAO_COMPOSICAO_CMV = "cmv-v1";
+const VERSAO_COMPOSICAO_CMV = "cmv-v1";
 export type ComposicaoCmv = { versao: string; compras: number; devolucoes_compra: number; liquido: number };
 
 export function novaComposicaoCmv(): ComposicaoCmv {

@@ -30,7 +30,7 @@ describe('DRE v1.17 — sinal por natureza', () => {
     const norm = (s: string) => s.replace(/\s+/g, '');
     const edge = norm(readFileSync('supabase/functions/omie-financeiro/sinal-natureza.ts', 'utf8'));
     const helper = norm(readFileSync('src/lib/financeiro/dre-helpers.ts', 'utf8'));
-    const ini = edge.indexOf('exportconstLINHAS_CREDORAS');
+    const ini = edge.indexOf('constLINHAS_CREDORAS');
     expect(ini).toBeGreaterThan(-1);
     const corpo = edge.slice(ini).replace(/\/\*\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, '');
     expect(helper.replace(/\/\*\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, '')).toContain(corpo);

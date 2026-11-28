@@ -27,7 +27,7 @@
 DO $pre$
 DECLARE
   v_versao_esperada constant text := 'v1.17-sinal-natureza-cmv-redutora';
-  v_fonte_esperada  constant text := 'ddbbae4e3ea80fdd74923092ccf3a5e7210cd21eb575c55f906d67d71a37f317';
+  v_fonte_esperada  constant text := 'a18c0d00d12d11ecbffb84b10e21e2243f03b49ed2192c90f87cbad6f6bb3ed8';
   v record;
 BEGIN
   SELECT t.versao, t.fonte, t.via, t.observado_em INTO v

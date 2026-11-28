@@ -511,7 +511,7 @@ export function impostoTeoricoTotal(teorico: Record<string, number | null | unde
 
 // ── DRE v1.17 — sinal por natureza + composição do CMV. ESPELHO VERBATIM de
 // supabase/functions/omie-financeiro/sinal-natureza.ts (paridade em __tests__/dre-sinal-natureza.test.ts).
-export const LINHAS_CREDORAS = new Set<string>(["receita_bruta", "receitas_financeiras", "outras_receitas"]);
+const LINHAS_CREDORAS = new Set<string>(["receita_bruta", "receitas_financeiras", "outras_receitas"]);
 
 /** Valor com sinal da natureza da linha: oposto ao lado do título ⇒ negativo. */
 export function valorComSinal(valor: number, isReceita: boolean, linha: string): number {
@@ -519,7 +519,7 @@ export function valorComSinal(valor: number, isReceita: boolean, linha: string):
 }
 
 /** Contrato VERSIONADO da composição do CMV no `detalhamento` (líquido = compras − devoluções). */
-export const VERSAO_COMPOSICAO_CMV = "cmv-v1";
+const VERSAO_COMPOSICAO_CMV = "cmv-v1";
 export type ComposicaoCmv = { versao: string; compras: number; devolucoes_compra: number; liquido: number };
 
 export function novaComposicaoCmv(): ComposicaoCmv {
