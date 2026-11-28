@@ -15,6 +15,7 @@ import { numero, objeto, registro, type ObjetoJson } from '@/lib/financeiro/bord
 import { paraCustoTipo, type CustoTipoRow } from '@/lib/financeiro/borda-tabelas';
 import { lerComposicaoDespesas } from '@/lib/financeiro/dre-borda';
 import {
+  cmvBrutoDeCompras,
   pontoEquilibrio,
   somaCodigosPorPrefixo,
   despesasNoDRE,
@@ -81,7 +82,8 @@ function useSnapshotsTTM(company: string | null) {
           receita_bruta: row.receita_bruta,
           deducoes_col: row.deducoes,
           despesas: registro(numero)(detalhamento.despesas, `${onde}.detalhamento.despesas`),
-          linha_cmv: row.cmv,
+          // v1.17: o PE usa o CMV BRUTO de compras (snapshot grava o líquido de devolução).
+          linha_cmv: cmvBrutoDeCompras(row.cmv, detalhamento.composicao_cmv),
           linha_operacionais: row.despesas_operacionais,
           linha_administrativas: row.despesas_administrativas,
           linha_comerciais: row.despesas_comerciais,

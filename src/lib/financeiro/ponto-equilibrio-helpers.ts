@@ -430,3 +430,23 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     detalhes: [],
   };
 }
+
+/**
+ * DRE v1.17: o `cmv` do snapshot é LÍQUIDO de devolução de compra (sinal por natureza). O PE segue no
+ * CMV BRUTO de compras — exatamente o que via antes (a devolução estava em `outras_receitas`, fora do PE)
+ * e a composição de `despesas` que ele concilia não contém a devolução (ela é título CR). Custo variável
+ * maior ⇒ PE maior: o lado conservador. `composicao_cmv` ausente (snapshot ≤ v1.16) ⇒ `cmv` como está;
+ * versão desconhecida ou número inválido ⇒ LANÇA (contrato versionado — nunca adivinhar).
+ */
+export function cmvBrutoDeCompras(cmv: number, composicaoCmv: unknown): number {
+  if (composicaoCmv == null) return cmv;
+  const c = composicaoCmv as { versao?: unknown; devolucoes_compra?: unknown };
+  if (typeof composicaoCmv !== 'object' || c.versao !== 'cmv-v1') {
+    throw new Error(`composicao_cmv com contrato desconhecido: ${JSON.stringify(c.versao ?? null)}`);
+  }
+  const dev = c.devolucoes_compra;
+  if (typeof dev !== 'number' || !Number.isFinite(dev)) {
+    throw new Error('composicao_cmv.devolucoes_compra ausente ou não numérico');
+  }
+  return cmv + dev;
+}

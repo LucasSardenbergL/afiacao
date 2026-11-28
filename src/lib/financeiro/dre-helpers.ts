@@ -150,6 +150,9 @@ export function classificarLinhaDRE(input: {
 function heuristicaDRE(desc: string, cod: string, isReceita: boolean, regime: RegimeTributario): Omit<ResultadoClassificacao, 'mapeamentoInvalido'> {
   const upper = (desc + ' ' + cod).toUpperCase();
   if (isReceita) {
+    // v1.17: devolução de COMPRA (CR) reduz o CMV (linha redutora, sinal por natureza). Os demais CR
+    // DEVOL/CANCEL seguem em `deducoes`, onde o sinal por natureza faz o CR REDUZIR as deduções.
+    if (upper.includes('DEVOL') && upper.includes('COMPRA')) return { linha: 'cmv', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('DEVOL') || upper.includes('CANCEL')) return { linha: 'deducoes', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     if (upper.includes('FINANC') || upper.includes('REND') || upper.includes('JUROS REC')) return { linha: 'receitas_financeiras', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
     return { linha: 'receita_bruta', mapeado: false, viaFallback: true, impostoNaoMapeado: false };
@@ -504,4 +507,28 @@ export function impostoTeoricoTotal(teorico: Record<string, number | null | unde
   if ('total' in teorico) return typeof teorico.total === 'number' && Number.isFinite(teorico.total) ? teorico.total : null;
   const valores = Object.values(teorico).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   return valores.length === 0 ? null : valores.reduce((s, v) => s + v, 0);
+}
+
+// ── DRE v1.17 — sinal por natureza + composição do CMV. ESPELHO VERBATIM de
+// supabase/functions/omie-financeiro/sinal-natureza.ts (paridade em __tests__/dre-sinal-natureza.test.ts).
+const LINHAS_CREDORAS = new Set<string>(["receita_bruta", "receitas_financeiras", "outras_receitas"]);
+
+/** Valor com sinal da natureza da linha: oposto ao lado do título ⇒ negativo. */
+export function valorComSinal(valor: number, isReceita: boolean, linha: string): number {
+  return isReceita === LINHAS_CREDORAS.has(linha) ? valor : -valor;
+}
+
+/** Contrato VERSIONADO da composição do CMV no `detalhamento` (líquido = compras − devoluções). */
+const VERSAO_COMPOSICAO_CMV = "cmv-v1";
+export type ComposicaoCmv = { versao: string; compras: number; devolucoes_compra: number; liquido: number };
+
+export function novaComposicaoCmv(): ComposicaoCmv {
+  return { versao: VERSAO_COMPOSICAO_CMV, compras: 0, devolucoes_compra: 0, liquido: 0 };
+}
+
+/** Só para títulos classificados em `cmv`. Devolução (CR) entra positiva em `devolucoes_compra`. */
+export function acumularComposicaoCmv(acc: ComposicaoCmv, valor: number, isReceita: boolean): void {
+  if (isReceita) acc.devolucoes_compra += valor;
+  else acc.compras += valor;
+  acc.liquido = acc.compras - acc.devolucoes_compra;
 }
