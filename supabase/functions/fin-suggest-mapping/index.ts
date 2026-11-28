@@ -3,6 +3,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { decidirSugestaoCruzada, normalizarDescricao } from "./sugestao-cruzada.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -138,7 +139,7 @@ Deno.serve(async (req: Request) => {
         'fin_categorias (descrição por empresa)',
       );
     } catch (e) {
-      return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
+      return new Response(JSON.stringify({ error: mensagemDeErro(e) ?? 'fin_categorias: falha de leitura' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
