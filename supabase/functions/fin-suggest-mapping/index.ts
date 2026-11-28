@@ -160,8 +160,8 @@ Deno.serve(async (req: Request) => {
     // Nome do ALVO pelo cadastro da própria empresa; o do título só se o cadastro não tiver.
     const nomeCadastro = descricaoDe(company, p0.omie_codigo);
     const p = { ...p0, categoria_nome: normalizarDescricao(nomeCadastro) != null ? nomeCadastro! : (p0.categoria_nome ?? '') };
-    const candidatos = byCodigo.get(p.omie_codigo)?.filter(m => m.company !== company && sugerivelPara(m.dre_linha, company)) ?? [];
-    const top = decidirSugestaoCruzada(p.categoria_nome, candidatos, p.omie_codigo, descricaoDe) as { dre_linha: DreLinha; company: string } | null;
+    const candidatos = byCodigo.get(p.omie_codigo)?.filter(m => m.company !== company) ?? [];
+    const top = decidirSugestaoCruzada(p.categoria_nome, candidatos, p.omie_codigo, descricaoDe, l => sugerivelPara(l, company)) as { dre_linha: DreLinha; company: string } | null;
     if (top) {
       return {
         ...p,

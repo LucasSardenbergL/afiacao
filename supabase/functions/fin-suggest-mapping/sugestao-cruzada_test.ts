@@ -52,11 +52,21 @@ Deno.test("descrição ausente (fonte ou alvo) ⇒ nada", () => {
 Deno.test("fontes com mesma descrição mas linhas DIFERENTES ⇒ sem sugestão (nada de sorteio)", () => {
   const d2 = (c: string, _k: string) => (c === "colacor" || c === "oben" ? "Outros" : undefined);
   assertEquals(
-    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "despesas_administrativas" }, { company: "oben", dre_linha: "outras_despesas" }], "2.99", d2),
+    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "despesas_administrativas" }, { company: "oben", dre_linha: "outras_despesas" }], "2.99", d2, () => true),
     null,
   );
   assertEquals(
-    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "outras_despesas" }, { company: "oben", dre_linha: "outras_despesas" }], "2.99", d2),
+    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "outras_despesas" }, { company: "oben", dre_linha: "outras_despesas" }], "2.99", d2, () => true),
     { company: "colacor", dre_linha: "outras_despesas" },
   );
+});
+
+Deno.test("divergência com fonte NÃO sugerível ainda conta (filtro só depois do desempate)", () => {
+  const d2 = (c: string, _k: string) => (c === "colacor" || c === "colacor_sc" ? "Outros" : undefined);
+  const naoFora = (l: string) => l !== "fora_dre" && l !== "nao_resultado";
+  assertEquals(
+    decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "fora_dre" }, { company: "colacor_sc", dre_linha: "despesas_administrativas" }], "2.99", d2, naoFora),
+    null,
+  );
+  assertEquals(decidirSugestaoCruzada("Outros", [{ company: "colacor", dre_linha: "fora_dre" }], "2.99", d2, naoFora), null);
 });

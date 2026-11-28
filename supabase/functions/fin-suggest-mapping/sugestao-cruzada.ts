@@ -44,9 +44,14 @@ export function decidirSugestaoCruzada(
   candidatos: MapeamentoOutraEmpresa[],
   codigo: string,
   descricaoDe: (company: string, codigo: string) => string | null | undefined,
+  sugerivel: (linha: string) => boolean,
 ): MapeamentoOutraEmpresa | null {
+  // A divergência decide-se sobre TODAS as fontes (inclusive quem mapeou fora_dre/nao_resultado);
+  // só a linha vencedora passa por `sugerivel`. Filtrar antes esconderia a divergência e
+  // entregaria a outra linha como `alta`.
   const iguais = mapeamentosComMesmaDescricao(categoriaNome, candidatos, codigo, descricaoDe);
   if (iguais.length === 0) return null;
   const linhas = new Set(iguais.map((m) => m.dre_linha));
-  return linhas.size === 1 ? iguais[0] : null;
+  if (linhas.size !== 1) return null;
+  return sugerivel(iguais[0].dre_linha) ? iguais[0] : null;
 }
