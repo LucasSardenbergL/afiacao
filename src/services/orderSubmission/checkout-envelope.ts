@@ -76,6 +76,84 @@ export function decideCheckoutEnvelope(stored: CheckoutEnvelope | null, fingerpr
   return 'new';
 }
 
+/** Identidade do cliente no momento do envio — o que entra na chave do fingerprint. */
+export interface IdentidadeClienteCheckout {
+  /** Usuário local CONFIRMADO do cliente (8.2: o staff só envia com ele). */
+  customerUserId: string | null | undefined;
+  /** Vínculo vindo da linha da busca (mapa em lote) — pode faltar numa seleção e vir na outra. */
+  localUserId: string | null | undefined;
+  /** Código Omie (Oben) do cliente selecionado; 0 = não identifica ninguém. */
+  codigoCliente: number | null | undefined;
+}
+
+const textoOuNulo = (v: string | null | undefined): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+const codigoOuNulo = (c: number | null | undefined): string | null =>
+  (typeof c === 'number' && Number.isSafeInteger(c) && c > 0 ? String(c) : null);
+
+/**
+ * Chaves do cliente no fingerprint (Codex r5 do #4236, defeito 2). A chave antiga era
+ * `local_user_id || codigo_cliente`: na 1ª seleção o mapa em lote podia não trazer o vínculo (o id
+ * vinha depois, por mapa/documento → chave = código); numa nova seleção o mapa trazia → chave = UUID.
+ * Mesmo cliente, mesmos itens → `conflict`, cuja saída (limpar o cliente) perde a proteção do 2º PV.
+ *
+ *  - `canonica`: a do envelope NOVO — o usuário CONFIRMADO (estável entre seleções); sem ele, a regra
+ *    antiga (autoatendimento/legado).
+ *  - `aliases`: as outras formas com que um envelope JÁ persistido pode ter sido gravado para ESTE
+ *    cliente — o código Oben (> 0) e o `local_user_id` só quando ele É o confirmado (um vínculo
+ *    divergente do confirmado não é prova de ser o mesmo cliente → não vira alias).
+ * UUID e inteiro positivo não colidem entre si; código 0 nunca entra (não identifica ninguém).
+ */
+export function chavesClienteCheckout(id: IdentidadeClienteCheckout): { canonica: string; aliases: string[] } {
+  const confirmado = textoOuNulo(id.customerUserId);
+  const vinculo = textoOuNulo(id.localUserId);
+  const codigo = codigoOuNulo(id.codigoCliente);
+  const canonica = confirmado ?? vinculo ?? codigo ?? '';
+  const aliases = [vinculo === confirmado ? vinculo : null, codigo].filter(
+    (k): k is string => k !== null && k !== canonica,
+  );
+  return { canonica, aliases: [...new Set(aliases)] };
+}
+
+/** A parte dos ITENS da fp (`<chave>#<itens>`): chave é UUID ou inteiro, nunca contém `#`. */
+const itensDaFingerprint = (fp: string): string | null => {
+  const i = fp.indexOf('#');
+  return i < 0 ? null : fp.slice(i + 1);
+};
+
+/**
+ * Decide o envelope pelo cliente (chave estável + formato antigo). Devolve a decisão e a fp a gravar
+ * num envelope NOVO (sempre a canônica). Ordem, toda fail-closed (na dúvida cai na regra de sempre:
+ * `conflict` se committed — nunca reusa o checkoutId de outro cliente):
+ *  1. o envelope congelou OUTRO usuário (`customerUserId` da criação ≠ o confirmado agora) → nunca
+ *     reusa, nem por fp igual (Codex r1 do #4271: a chave antiga e o titular eram campos distintos);
+ *  2. mesma fp canônica → reuse;
+ *  3. o envelope congelou ESTE usuário e os itens batem → reuse, qualquer que seja a chave antiga (o
+ *     código Oben pode faltar na seleção de agora — cliente reaberto pelo 360, PV só da Colacor);
+ *  4. envelope sem usuário congelado (legado) → reuse só por alias (código Oben > 0 / vínculo igual).
+ */
+export function decidirEnvelopeDoCliente(
+  stored: CheckoutEnvelope | null,
+  id: IdentidadeClienteCheckout,
+  items: Parameters<typeof computeCheckoutFingerprint>[1],
+): { decision: CheckoutDecision; fingerprint: string } {
+  const { canonica, aliases } = chavesClienteCheckout(id);
+  const fingerprint = computeCheckoutFingerprint(canonica, items);
+  if (!stored) return { decision: 'new', fingerprint };
+  const semReuso: CheckoutDecision = stored.committed ? 'conflict' : 'new';
+  const congelado = textoOuNulo(stored.customerUserId ?? null);
+  const atual = textoOuNulo(id.customerUserId);
+  if (congelado !== null && congelado !== atual) return { decision: semReuso, fingerprint };
+  if (stored.fingerprint === fingerprint) return { decision: 'reuse', fingerprint };
+  if (congelado !== null) {
+    const mesmosItens = itensDaFingerprint(stored.fingerprint) === itensDaFingerprint(fingerprint);
+    return { decision: mesmosItens ? 'reuse' : semReuso, fingerprint };
+  }
+  if (aliases.some(k => computeCheckoutFingerprint(k, items) === stored.fingerprint)) {
+    return { decision: 'reuse', fingerprint };
+  }
+  return { decision: semReuso, fingerprint };
+}
+
 /**
  * Ciclo de vida ÚNICO envelope × rascunho (follow-up Codex do #4042). O envelope só existe enquanto
  * há um envio amarrado (o sucesso TOTAL o zera); se ele sobrevive ao descarte do rascunho, o

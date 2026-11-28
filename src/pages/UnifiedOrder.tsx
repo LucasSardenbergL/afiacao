@@ -363,11 +363,15 @@ const UnifiedOrder = () => {
   });
 
   // Oferece restore se houver draft pendente E o cart atual estiver vazio (entrou novo na tela).
+  // Restore ESPERANDO o cliente (Codex r5 do #4236): o carrinho segue vazio e o draft segue
+  // presente até a seleção — sem esta trava o diálogo reabria por cima da busca e o "Descartar
+  // mesmo assim" apagava o envelope do envio pendente (2º PV no reenvio).
+  const [restoreEsperandoCliente, setRestoreEsperandoCliente] = useState(false);
   useEffect(() => {
-    if (draft && h.cart.length === 0 && !restoreOpen) {
+    if (draft && h.cart.length === 0 && !restoreOpen && !restoreEsperandoCliente) {
       setRestoreOpen(true);
     }
-  }, [draft, h.cart.length, restoreOpen]);
+  }, [draft, h.cart.length, restoreOpen, restoreEsperandoCliente]);
 
   // Sensor do funil no LEDGER (PR 9.1): jornada por pedido em montagem; o envio avisa pela ref.
   const sensorFunil = useSensorFunilPedido({
@@ -457,12 +461,30 @@ const UnifiedOrder = () => {
     if (!pendente) return;
     const decisao = resolverRestorePendente(pendente.codigoCliente, codigoClienteSelecionado);
     if (decisao === 'esperar') return;
-    restorePendenteRef.current = null;
-    if (decisao === 'aplicar') { aplicarDadosRef.current(pendente.dados, true); return; }
+    if (decisao === 'aplicar') {
+      restorePendenteRef.current = null;
+      setRestoreEsperandoCliente(false);
+      aplicarDadosRef.current(pendente.dados, true);
+      return;
+    }
+    // Cliente ERRADO selecionado (Codex r1 do #4271): a pendência CONTINUA à espera do cliente do
+    // rascunho. Soltá-la reabria o diálogo por cima de "Trocar cliente" e a única saída nele era o
+    // "Descartar mesmo assim", que apaga o envelope do envio pendente (2º PV no reenvio).
     toast.info('Rascunho não restaurado', {
-      description: `Ele é de ${pendente.nome ?? 'outro cliente'}. Selecione esse cliente e restaure de novo.`,
+      description: `Ele é de ${pendente.nome ?? 'outro cliente'}. Troque para esse cliente — o carrinho volta quando ele for selecionado.`,
     });
   }, [codigoClienteSelecionado]);
+  // A vendedora começou OUTRO carrinho (no cliente errado): o rascunho em disco passa a ser esse, e a
+  // pendência em memória (o carrinho antigo) não pode voltar por cima dele numa troca futura.
+  // A oferta EM MEMÓRIA (o rascunho do outro cliente) sai junto: o autosave já grava este carrinho
+  // em disco, e esvaziá-lo reabria o diálogo do outro sobre esta seleção — com "Descartar mesmo
+  // assim" apagando o envelope do envio pendente dele (Codex r2 do #4271). O envelope fica.
+  useEffect(() => {
+    if (h.cart.length === 0 || !restorePendenteRef.current) return;
+    restorePendenteRef.current = null;
+    setRestoreEsperandoCliente(false);
+    dismissDraft(); // a oferta do outro cliente sai da memória
+  }, [h.cart.length, dismissDraft]);
 
   const handleRestore = () => {
     if (!draft) return;
@@ -486,6 +508,7 @@ const UnifiedOrder = () => {
     if (decisao === 'esperarCliente' && codigoClienteIdentifica(codigoRascunho)) {
       // Sem cliente na tela: pré-busca o cliente do rascunho e ESPERA a seleção dele.
       restorePendenteRef.current = { codigoCliente: codigoRascunho, nome: state.customerName ?? null, dados };
+      setRestoreEsperandoCliente(true);
       toast.info('Selecione o cliente para restaurar', {
         description: `O rascunho é de ${state.customerName ?? 'outro cliente'} — o carrinho volta quando ele for selecionado.`,
       });
@@ -505,6 +528,7 @@ const UnifiedOrder = () => {
   const handleDiscardDraft = () => {
     sensorFunil.registrar('novo_pedido.rascunho_descartado', { itens: draft?.state.cart.length ?? null });
     restorePendenteRef.current = null;
+    setRestoreEsperandoCliente(false);
     clearDraft();
     h.descartarEnvelope();
     dismissDraft();
@@ -514,7 +538,18 @@ const UnifiedOrder = () => {
   // "Trocar e limpar": o hook zera carrinho + envelope; o rascunho em disco vai junto — restaurá-lo
   // depois e reenviar criaria checkout NOVO e duplicaria o PV/OS já enviados.
   const handleClearCustomer = () => {
-    if (h.clearCustomer()) clearDraft(); // barrada com envio em voo → nada é apagado
+    // Restore esperando o cliente do rascunho (cliente ERRADO na tela, carrinho vazio): trocar só
+    // desfaz a seleção — rascunho, envelope e pendência ficam, e o carrinho volta quando o cliente
+    // certo for selecionado. Apagá-los aqui e reaplicar a pendência depois punha o carrinho do envio
+    // pendente na tela SEM o checkoutId (2º PV no reenvio) — Codex r2 do #4271.
+    if (restoreEsperandoCliente && h.cart.length === 0) {
+      h.clearCustomer({ preservarEnvioPendente: true });
+      return;
+    }
+    if (!h.clearCustomer()) return; // barrada com envio em voo → nada é apagado
+    clearDraft();
+    restorePendenteRef.current = null; // o rascunho foi apagado: a pendência dele não pode voltar
+    setRestoreEsperandoCliente(false);
   };
 
   // Orçamento: o rascunho segue o desfecho NA HORA (sem esperar o debounce de 600 ms).
@@ -533,6 +568,7 @@ const UnifiedOrder = () => {
     if (!h.ultimoEnvioConfirmado) return;
     if (!h.iniciarNovoPedido()) return; // envio em voo ou envelope vivo → nada é apagado
     restorePendenteRef.current = null; // rascunho "esperando o cliente" do pedido anterior não volta
+    setRestoreEsperandoCliente(false);
     coresDoCliente.setBusca('');
     h.setOrderSuccessOpen(false);
     // Sem os parâmetros do pedido anterior (?customer, ?repeat, ?origem…): recarregar não pode
@@ -616,7 +652,10 @@ const UnifiedOrder = () => {
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
               estadoVendedor={h.estadoVendedor}
-              estadoCadastro={h.estadoCadastro} envioPendente={h.envioPendente}
+              estadoCadastro={h.estadoCadastro}
+              // Restore esperando o cliente: "Trocar" PRESERVA o envio pendente (handleClearCustomer),
+              // então não há ligação a desfazer nem confirmação a pedir.
+              envioPendente={h.envioPendente && !(restoreEsperandoCliente && h.cart.length === 0)}
               onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />

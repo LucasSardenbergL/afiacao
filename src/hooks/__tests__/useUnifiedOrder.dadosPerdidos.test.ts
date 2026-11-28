@@ -72,7 +72,12 @@ describe('Novo Pedido — fiação do PR B', () => {
     expect(ramoEspera).not.toContain('h.setCart(');
     // A seleção resolve a pendência: só o cliente DO rascunho aplica.
     expect(pagina).toContain('const decisao = resolverRestorePendente(pendente.codigoCliente, codigoClienteSelecionado);');
-    expect(pagina).toContain("if (decisao === 'aplicar') { aplicarDadosRef.current(pendente.dados, true); return; }");
+    // Só o ramo 'aplicar' solta a pendência e aplica (o cliente errado a MANTÉM — #4271; o render
+    // disso é provado em src/pages/__tests__/UnifiedOrder.restore-pendente.test.tsx).
+    const efeito = pagina.slice(pagina.indexOf('const decisao = resolverRestorePendente('), pagina.indexOf('}, [codigoClienteSelecionado]);'));
+    const ramoAplicar = efeito.slice(efeito.indexOf("if (decisao === 'aplicar') {"), efeito.indexOf('return;', efeito.indexOf("if (decisao === 'aplicar') {")));
+    expect(ramoAplicar).toContain('aplicarDadosRef.current(pendente.dados, true);');
+    expect(ramoAplicar).toContain('restorePendenteRef.current = null;');
   });
 
   it('B4: o carrinho trata serviço com preço ≤0 como A orçar e rotula Subtotal conhecido', () => {
@@ -86,4 +91,15 @@ describe('Novo Pedido — fiação do PR B', () => {
     expect(busca).toContain('seloEstoque(product.estoque)');
     expect(busca).toContain('rotuloPrecoProduto(');
   });
+
+  // Codex r2 do #4271 (P2): o caso 173 → U decide `reuse`, mas a proteção dos envios SEGUINTES depende
+  // de o envelope ser regravado com a fingerprint CANÔNICA (senão um 2º reenvio com a seleção sem o
+  // código 173 já não acharia o alias legado). A decisão é provada no helper; aqui, que o hook grava.
+  it('reuso migra a fingerprint do envelope para a chave canônica devolvida pelo helper', () => {
+    const ini = hook.indexOf('const { decision, fingerprint } = decidirEnvelopeDoCliente(checkoutEnvRef.current');
+    expect(ini, 'chamada do helper (desestruturando a fingerprint) não encontrada').toBeGreaterThan(-1);
+    const trecho = hook.slice(ini, ini + 3000);
+    expect(trecho).toContain('checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true }');
+  });
 });
+

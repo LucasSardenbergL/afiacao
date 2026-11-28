@@ -33,7 +33,7 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
-import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import { decidirEnvelopeDoCliente, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -432,13 +432,17 @@ export function useUnifiedOrder() {
   // Wrap clearCustomer to also clear cart + ordem de compra
   // Retorna false quando BARRADA: com envio/orçamento em voo, a troca apagaria o envelope antes de
   // `aoConfirmarOsAfiacao` carimbar a OS e a resposta atrasada ressuscitaria o rascunho (Codex P1).
-  const clearCustomer = useCallback((): boolean => {
+  // `preservarEnvioPendente` (Codex r2 do #4271): a página está com o restore ESPERANDO o cliente do
+  // rascunho e a seleção é a errada — o carrinho está vazio, não há nada deste cliente a descartar, e
+  // o envelope é do envio pendente do OUTRO. Só a seleção sai; envelope (e rascunho) ficam.
+  const clearCustomer = useCallback((opcoes?: { preservarEnvioPendente?: boolean }): boolean => {
     if (submittingRef.current) { avisarCarrinhoTravado(); return false; }
     prazoDecisaoRef.current = {};
     clearCustomerInternal();
     setCart([]);
     // B2 (Codex P2): trocar de cliente leva junto os campos DO pedido — antes só a OC era limpa.
     setOrdemCompra(''); setNotes(''); setReadyByDate(''); setSelectedTimeSlot('');
+    if (opcoes?.preservarEnvioPendente) return true;
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
     // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
@@ -1009,13 +1013,17 @@ export function useUnifiedOrder() {
     // abaixo fazia `return` sem soltar a ref e todo envio seguinte morria calado.
     await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
       // Impressão digital do pedido de produto (oben+colacor) + cliente.
-      const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+      // Chave ESTÁVEL do cliente (Codex r5 do #4236): o usuário confirmado, com o código Oben e o
+      // vínculo da busca como aliases do formato antigo — a mesma seleção não vira `conflict`.
       const fpItems = [
         ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
         ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
       ];
-      const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
-      const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
+      const { decision, fingerprint } = decidirEnvelopeDoCliente(checkoutEnvRef.current, {
+        customerUserId,
+        localUserId: selectedCustomer.local_user_id,
+        codigoCliente: selectedCustomer.codigo_cliente,
+      }, fpItems);
       if (decision === 'conflict') {
         if (tentativa) sensor?.envioFalhou(tentativa, 'conflito_envelope');
         toast.error('Há um envio pendente para este cliente com outro carrinho', {
@@ -1046,7 +1054,9 @@ export function useUnifiedOrder() {
         // reuse: mantém o MESMO checkoutId E a metadata da ponte CONGELADA na criação (não
         // re-capturar da URL — o spread preserva origem/atendimento/customerUserId originais).
         // commit trava a fp (editar o carrinho depois = conflito).
-        checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
+        // A fp passa à chave canônica (migra o envelope do formato antigo, casado por alias) — o
+        // mesmo pedido, só a forma da chave muda; o checkoutId é o que dá a idempotência.
+        checkoutEnvRef.current = { ...checkoutEnvRef.current, fingerprint, committed: true } as CheckoutEnvelope;
       }
       persistCheckoutEnv(checkoutEnvRef.current);
       cicloRascunhoRef.current.aoComprometer?.();
